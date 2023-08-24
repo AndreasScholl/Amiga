@@ -9,10 +9,13 @@
 src_adr		= 	$6e000	; scroll buffer source adress
 src_line 	= 	$32		; source line width
 
+screen		=	$70000			; single color bitplane start
 ss		 	=	$6e014
-ds		 	=	$70014	; destination start
-li			=	$2e		; dst line size in bytes
-ho			=	li*23	; dst height start offset
+ds		 	=	screen+$14		; destination start	of scroller turn
+li			=	$2e				; dst line size in bytes
+ho			=	li*23			; dst height start offset
+
+numPoints	=	128
 
 		section "code",data,chip
 
@@ -37,20 +40,28 @@ st:
 		move.w	#$2700,sr
 		move.l	#clist,$dff080
 		clr.w	$dff088
+
+		lea		$dff000,a6
+
 		bsr		mctab
+		bsr		initPoints
+
 		move.w	#$0020,$dff096
 
 begin:	
-		lea		$dff000,a6
 rwait:		
-		cmp.b	#$50,$006(a6)
+		cmp.b	#$2c,$006(a6)
 		bne.s	rwait
-;rwait2:		cmp.b	#$30,$006(a6)
+;rwait2:		
+;		cmp.b	#$30,$006(a6)
 ;		bne.s	rwait2
 		
 ;		move.w	#-1,$dff180
 		bsr		scroll
 		bsr		postEffect
+
+		bsr		addPoints
+		bsr		drawPoints
 ;		move.w	#0,$dff180
 
 .pause:		
@@ -61,9 +72,127 @@ rwait:
 		rte
 
 ;-------
+initPoints:
+		lea		points,a5
+		moveq	#0,d1
+		moveq	#numPoints-1,d7		
+.loop:	
+		move.w	d1,obj_life(a5)	
+
+		lea		obj_len(a5),a5
+		dbf		d7,.loop
+		rts
+
+;-------
+drawPoints:
+		lea		screen,a0
+		lea		points,a5
+		moveq	#numPoints-1,d7	
+.loop:
+		move.w	obj_life(a5),d0
+		beq		.next
+		subq	#1,d0
+		move.w	d0,obj_life(a5)
+
+		move.w	obj_xvelo(a5),d2
+		move.w	obj_xfloat(a5),d0	; x fixed
+		add.w	d2,d0				; + x velocity
+		move.w	d0,obj_xfloat(a5)	; store x
+		lsr.w	#7,d0				; convert to integer
+
+		add.w	#$07,d2				; accelerate
+		move.w	d2,obj_xvelo(a5)
+
+		move.w	obj_yvelo(a5),d2
+		move.w	obj_yfloat(a5),d1	; y fixed
+		add.w	d2,d1				; + y velocity
+		move.w	d1,obj_yfloat(a5)	; store y
+		lsr.w	#7,d1				; convert to integer
+
+		add.w	#$2,d2				; accelerate
+		move.w	d2,obj_yvelo(a5)
+
+		bsr		set_point
+.next:
+		lea		obj_len(a5),a5
+		dbf		d7,.loop
+		rts
+
+;-------
+addPoints:
+		lea		$70008,a1
+		moveq	#0,d7
+.addloop:		
+		move.b	(a1),d0
+		btst	#7,d0
+		beq		.nopixel
+		bsr		addPoint
+.nopixel
+		lea		li(a1),a1	; next line
+
+		addq	#1,d7
+		cmp.w	#7,d7
+		bne		.addloop
+
+		rts
+;-------
+addPoint:				; add single point at y offset d7
+
+		lea		freePoint(pc),a0
+		move.w	(a0),d0
+		move.w	d0,d1
+		mulu	#obj_len,d1
+		addq.w	#1,d0
+		cmp.w	#numPoints,d0
+		bne		.notend
+		clr.w	d0
+.notend:
+		move.w	d0,(a0)
+		lea		points,a5
+		add.w	d1,a5
+		move.w	#60,obj_life(a5)
+
+		move.w	#(8*8)+1,d0
+		lsl.w	#7,d0
+		move.w	d0,obj_xfloat(a5)
+
+		move.w	d7,d0			; y offset
+		lsl.w	#7,d0
+		move.w	d0,obj_yfloat(a5)
+
+		moveq	#0,d0			; x speed
+		bsr		getRandomNumber
+		and.w	#$7f,d0
+		add.w	#$60,d0
+;		move.w	#$80,d0
+		neg.w	d0
+		move.w	d0,obj_xvelo(a5)
+
+		move.w	#0,d0			; test y speed
+		bsr		getRandomNumber
+		and.w	#$03,d0
+;		sub.w	#16,d0
+;		sub.w	d1,d0
+		move.w	d0,obj_yvelo(a5)
+
+; 		add.w	#1,postest
+; 		cmp.w	#7,postest
+; 		bne		.nopostestend
+; 		move.w	#0,postest
+; .nopostestend:
+
+		moveq	#0,d0
+		rts
+
+freePoint:					; index of next free point
+		dc.w	0			
+
+postest:	
+		dc.w	0
+;-------
 postEffect:
 		lea		$70000,a0
-		move.l	#$2e*8,d7
+		move.l	#li*8,d7
 clear:		
 		clr.l	(a0)+
 ;		move.l 	#-1,(a0)+
@@ -95,9 +224,12 @@ copyloop2:
 ;		rts
 ; copy rest of scroller (for now with processor)
 
-leftblock_words = 10
-		lea		src_adr,a0
-		lea 	$70000,a1
+; leftblock_words = 10
+; 		lea		src_adr,a0
+; 		lea 	$70000,a1
+leftblock_words = 6
+ 		lea		src_adr+8,a0
+ 		lea 	$70000+8,a1
 		move.l	#src_line-(leftblock_words*2),d4	; src modulo
 		move.l	#li-(leftblock_words*2),d5			; dst modulo
 		moveq	#7-1,d6			; height
@@ -203,6 +335,18 @@ copyColumnShift:
 		or.w	d0,$2e*5(a1)		
 
 		rts
+;-----
+getRandomNumber: 
+		move.l 	seed,d0
+		mulu 	#$a57b,d0
+		addi.l 	#$bb40e62d,d0
+ 		rol.l	#6,d0
+		move.l 	d0,seed
+		rts
+
+
+seed: 
+		dc.l	$fc091337
 
 table:		
 		dc.l ss
@@ -475,11 +619,40 @@ textfin2:
 		move.b	250(a2),5*src_line(a1)
 		rts	
 
+		rsreset
+obj_life:	rs.w	1		;life time
+;obj_x:		rs.w	1		;x-coordinate
+;obj_y:		rs.w	1		;y-coordinate
+obj_xfloat:	rs.w	1		;x-coordinate (floating)
+obj_yfloat:	rs.w	1		;y-coordinate (floating)
+obj_xvelo:	rs.w	1		;x velocity
+obj_yvelo:	rs.w	1		;y velocity
+obj_len:	rs.w	0
+
+points:		ds.b	obj_len*numPoints
+
+set_point:
+		cmp.w	#320-1,d0	; range check
+		bhi.s	.npoint
+		cmp.w	#100-1,d1
+		bhi.s	.npoint
+
+		mulu	#li,d1		; y * linesize	-> todo: use table to optimize
+		move.w	d0,d2
+		eor.w	#$07,d2
+		lsr.w	#3,d0
+		add.l	d0,d1
+		move.l	a0,a1
+		add.l	d1,a1
+		bset	d2,(a1)
+.npoint:
+		rts
+
 text:
 ;		dc.b	"                                                               "
-		dc.b    "hi, this is zeronine on the waescheline calling out to everyone in the kraeckertalk chat --- "
-		dc.b    " i fixed the scroller and added some copper colors to make it look like real 3d --- "
-		dc.b	" shout out to equalizer for intruducing me to the visual studio code workflow --- ",0
+		dc.b    "quadlite and thrust present the next iteration of the scroller --- "
+		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
+		dc.b	"falk -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
 		even
 
 chartab:
