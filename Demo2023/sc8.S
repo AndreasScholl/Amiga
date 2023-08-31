@@ -38,6 +38,28 @@ lib:	dc.b	'graphics.library',0
 
 st:		
 		move.w	#$2700,sr
+
+		move.l	#logo,d0
+		move.l	#(320/8)*44,d1
+		move.w	d0,logobp0l
+		swap	d0
+		move.w	d0,logobp0h
+		swap	d0
+		add.l	d1,d0
+		move.w	d0,logobp1l
+		swap	d0
+		move.w	d0,logobp1h
+		swap	d0
+		add.l	d1,d0
+		move.w	d0,logobp2l
+		swap	d0
+		move.w	d0,logobp2h
+		swap	d0
+		add.l	d1,d0
+		move.w	d0,logobp3l
+		swap	d0
+		move.w	d0,logobp3h
+
 		move.l	#clist,$dff080
 		clr.w	$dff088
 
@@ -62,6 +84,7 @@ rwait:
 
 		bsr		addPoints
 		bsr		drawPoints
+		; bsr		colortest
 ;		move.w	#0,$dff180
 
 .pause:		
@@ -675,10 +698,96 @@ char:
 		dc.l $00000000,$00000000,$00000000,$00000000,$00000000,$000000c0
 		dc.l $00000000,$00000000,$00000000,$00000000,$00000000,$00000000
 
+; colortest:
+; 		lea		clistcolors+6,a0
+
+; 		moveq	#0,d0
+; 		moveq	#6,d6
+; 		move.w	coloradd,d5
+; .lines
+; 		moveq	#45-1,d7
+; .line
+; 		move.w	d7,d0
+; 		lsl.w	#4,d0
+; 		add.w	d6,d0
+; 		add.w	d5,d0
+; 		move.w	d0,(a0)
+; 		lea		4(a0),a0
+; 		dbf		d7,.line
+; 		lea		4(a0),a0
+; 		dbf		d6,.lines
+
+; 		add.w	#1,coloradd
+; 		rts
+
+; coloradd:
+; 		dc.w	0
+
+
+logo:
+	INCBIN	"thrust-quadlite_green_lo4.bin"
+
+; logo_low = logo>>16
+; blabla = 123
+
 clist:		
-		dc.w	$0180,$0000
+		; dc.w	blabla
 
 		dc.w	$0100,$0200		; bitplanes off
+
+		;	palette for: thrust-quadlite_green
+		dc.w	$0182,$0120
+		dc.w	$0184,$0251
+		dc.w	$0186,$0381
+		dc.w	$0188,$04b2
+		dc.w	$018a,$05c3
+		dc.w	$018c,$06d5
+		dc.w	$018e,$08d6
+		dc.w	$0190,$09e8
+		dc.w	$0192,$0ae9
+		dc.w	$0194,$0bea
+		dc.w	$0196,$0cfb
+		dc.w	$0198,$0dfd
+		dc.w	$019a,$0efe
+		dc.w	$019c,$0fff
+
+		dc.w	$0108,$0000		; even bitplanes modulo
+		dc.w	$010a,$0000		; odd bitplanes modulo
+
+		dc.w	DDFSTRT,$0038
+		dc.w	DDFSTOP,$00d0
+
+ 		dc.w	$6001,$fffe
+		dc.w	$0100,$4200		; 4 bitplanes
+		dc.w	$00e0
+logobp0h:	
+		dc.w	0	
+		dc.w	$00e2
+logobp0l:	
+		dc.w	0	
+		dc.w	$00e4
+logobp1h:	
+		dc.w	0	
+		dc.w	$00e6
+logobp1l:	
+		dc.w	0	
+		dc.w	$00e8
+logobp2h:	
+		dc.w	0	
+		dc.w	$00ea
+logobp2l:	
+		dc.w	0	
+		dc.w	$00ec
+logobp3h:	
+		dc.w	0	
+		dc.w	$00ee
+logobp3l:	
+		dc.w	0	
+
+ 		dc.w	$8c01,$fffe
+		dc.w	BPLCON0,$0200		; bitplanes off
+
+		dc.w	$0180,$0000
 
 		dc.w	$c001,$fffe
 		dc.w	$0100,$1200		; 1 bitplanes on
