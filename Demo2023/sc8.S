@@ -60,6 +60,8 @@ st:
 		swap	d0
 		move.w	d0,logobp3h
 
+		bsr		buildLogoColors
+
 		move.l	#clist,$dff080
 		clr.w	$dff088
 
@@ -79,11 +81,15 @@ rwait:
 ;		bne.s	rwait2
 		
 ;		move.w	#-1,$dff180
+
 		bsr		scroll
 		bsr		postEffect
 
 		bsr		addPoints
 		bsr		drawPoints
+
+		; bsr		updateLogoColors		; super slow :(
+		bsr		updateLogoPos
 		; bsr		colortest
 ;		move.w	#0,$dff180
 
@@ -675,7 +681,7 @@ text:
 ;		dc.b	"                                                               "
 		dc.b    "quadlite and thrust present the next iteration of the scroller --- "
 		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
-		dc.b	"falk -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
+		dc.b	"dandee -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
 		even
 
 chartab:
@@ -723,19 +729,257 @@ char:
 ; coloradd:
 ; 		dc.w	0
 
+;		input:   d0: color
+;				 d7: fade level (0-256)
+;				 d6: output color
+colorFade:
+			; move.w	d0,d6
+			move.w	d0,d1
+			lsr.w	#8,d1		; r (nibble)
+			mulu.w	d7,d1		; * fade level
+			lsr.w	#8,d1		; / 256
+			lsl.w	#8,d1		; shift r into right spot
+			move.w	d1,d6			
+
+			move.w	d0,d1
+			lsr.w	#4,d1		; g (nibble)
+			and.w	#$0f,d1
+			mulu.w	d7,d1		; * fade level
+			lsr.w	#8,d1		; / 256
+			lsl.w	#4,d1		; shift g into right spot
+			or.w	d1,d6
+
+			move.w	d0,d1
+			and.w	#$0f,d1		; b (nibble)
+			mulu.w	d7,d1		; * fade level
+			lsr.w	#8,d1		; / 256
+			or.w	d1,d6
+			rts
+
+fadeIncrease = 4
+
+buildLogoColors:
+			lea		logoColors,a1
+			lea		colorAdd,a2
+			lea		fadeLevel,a3
+
+			move.w	#$6101,d4						; wait start
+;			move.w	#256-(44*fadeIncrease),d7		; fade level
+
+			move.w	#44-1,d5
+			bra		.skipWait				; first entry has no wait
+.loop:
+			move.w	d4,(a1)+				; copper wait
+			move.w	#$fffe,(a1)+			;
+			add.w	#$0100,d4
+.skipWait:			
+			move.w	(a2)+,d2				; color add test
+			move.w	(a3)+,d7				; fade level
+;			move.w	#256,d7
+
+			lea		logoColorsOrig,a0
+			move.w	#14-1,d3
+.colorLoop:
+			move.w	(a0)+,(a1)+				; color reg
+			move.w	(a0)+,d0
+			or.w	d2,d0
+			bsr		colorFade
+;			or.w	d2,d6
+			move.w	d6,(a1)+				; color reg
+			dbf		d3,.colorLoop
+
+			dbf		d5,.loop
+			rts
+
+updateLogoColors:
+			lea		logoColors+2,a1
+			lea		colorAdd,a2
+			lea		fadeLevel,a3
+
+			move.w	#44-1,d5
+			bra		.noWait				; first entry has no wait
+.loop:
+			lea		4(a1),a1				; skip wait
+.noWait:			
+			clr.w	d2
+			move.w	(a2)+,d2				; color add
+			add.w	colorAddVar,d2
+
+			move.w	(a3)+,d7				; fade level
+			add.w	colorFadeVar,d7
+			cmp.w	#256,d7
+			ble		.noHighFade
+			move.w	#256,d7
+.noHighFade
+
+			lea		logoColorsOrig+2,a0
+			move.w	#14-1,d3
+.colorLoop:
+			move.w	(a0),d0
+			lea		4(a0),a0				; next source color value
+			or.w	d2,d0
+			bsr		colorFade
+			move.w	d6,(a1)					; color value
+			lea		4(a1),a1
+			dbf		d3,.colorLoop
+
+			dbf		d5,.loop
+
+			add.w	#$001,colorAddVar
+
+			move.w	colorFadeDir,d0
+			add.w	d0,colorFadeVar
+
+			add.w	#1,colorFadeDirCount
+			cmp.w	#32,colorFadeDirCount
+			bne		.noColFadeToggle
+			move.w	#0,colorFadeDirCount
+			neg.w	colorFadeDir
+.noColFadeToggle
+			rts
+
+colorFadeDir:
+			dc.w	4
+
+colorFadeDirCount:
+			dc.w	1
+
+colorFadeVar:
+			dc.w	0
+
+colorAddVar:
+			dc.w	0
+
+colorAdd:
+			dc.w	$00		; 0
+			dc.w	$00
+			dc.w	$00
+			dc.w	$01
+			dc.w	$01
+			dc.w	$01
+			dc.w	$02
+			dc.w	$02
+			dc.w	$02
+			dc.w	$03
+			dc.w	$03		; 10
+			dc.w	$03
+			dc.w	$04
+			dc.w	$04
+			dc.w	$04
+			dc.w	$05
+			dc.w	$05
+			dc.w	$05
+			dc.w	$06
+			dc.w	$06
+			dc.w	$06		; 20
+			dc.w	$07
+			dc.w	$07
+			dc.w	$07
+			dc.w	$08
+			dc.w	$08
+			dc.w	$08
+			dc.w	$09
+			dc.w	$09
+			dc.w	$09
+			dc.w	$0a		; 30
+			dc.w	$0a
+			dc.w	$0a
+			dc.w	$0b
+			dc.w	$0b
+			dc.w	$0b
+			dc.w	$0c
+			dc.w	$0c
+			dc.w	$0c
+			dc.w	$0d
+			dc.w	$0d		; 40
+			dc.w	$0d
+			dc.w	$0e
+			dc.w	$0e
+			dc.w	$0e
+
+fadeLevel:
+			dc.w	11*1		; 0
+			dc.w	11*2
+			dc.w	11*3
+			dc.w	11*4
+			dc.w	11*5
+			dc.w	11*6
+			dc.w	11*7
+			dc.w	11*8
+			dc.w	11*9
+			dc.w	11*10
+			dc.w	11*11		; 10
+			dc.w	11*12
+			dc.w	11*13
+			dc.w	11*14
+			dc.w	11*15
+			dc.w	11*16
+			dc.w	11*17
+			dc.w	11*18
+			dc.w	11*19
+			dc.w	11*20
+			dc.w	11*21		; 20
+			dc.w	11*21
+			dc.w	11*21
+			dc.w	11*21
+			dc.w	11*21
+			dc.w	11*20
+			dc.w	11*19
+			dc.w	11*18
+			dc.w	11*17
+			dc.w	11*16
+			dc.w	11*15		; 30
+			dc.w	11*14
+			dc.w	11*13
+			dc.w	11*12
+			dc.w	11*11
+			dc.w	11*10
+			dc.w	11*9
+			dc.w	11*8
+			dc.w	11*7
+			dc.w	11*6
+			dc.w	11*5		; 40
+			dc.w	11*4
+			dc.w	11*3
+			dc.w	11*2
+			dc.w	11*1
+
+updateLogoPos:
+			move.w	logoMoveDir,d0
+			add.w	d0,logoMoveSpeed
+
+			move.w	logoMoveSpeed,d0
+			add.w	d0,logoPos
+
+			add.w	#1,logoMoveDirCount
+			cmp.w	#48,logoMoveDirCount
+			bne		.noToggle
+			move.w	#0,logoMoveDirCount
+			neg.w	logoMoveDir
+.noToggle
+			move.w	logoPos,d0
+			add.w	#8,d0
+			lsr.w	#4,d0
+			add.w	#$60,d0
+			move.b	d0,logoStartWait
+			add.w	#44,d0
+			move.b	d0,logoEndWait
+			rts
+
+logoMoveDir:
+			dc.w	1
+logoMoveDirCount:
+			dc.w	24
+logoMoveSpeed:
+			dc.w	0
+logoPos:
+			dc.w	0
 
 logo:
-	INCBIN	"thrust-quadlite_green_lo4.bin"
+			INCBIN	"thrust-quadlite_green_lo4.bin"
 
-; logo_low = logo>>16
-; blabla = 123
-
-clist:		
-		; dc.w	blabla
-
-		dc.w	$0100,$0200		; bitplanes off
-
-		;	palette for: thrust-quadlite_green
+; palette for: thrust-quadlite_green
+logoColorsOrig:
 		dc.w	$0182,$0120
 		dc.w	$0184,$0251
 		dc.w	$0186,$0381
@@ -750,6 +994,10 @@ clist:
 		dc.w	$0198,$0dfd
 		dc.w	$019a,$0efe
 		dc.w	$019c,$0fff
+		; dc.w	$019e,$0fff
+
+clist:		
+		dc.w	$0100,$0200		; bitplanes off
 
 		dc.w	$0108,$0000		; even bitplanes modulo
 		dc.w	$010a,$0000		; odd bitplanes modulo
@@ -757,8 +1005,6 @@ clist:
 		dc.w	DDFSTRT,$0038
 		dc.w	DDFSTOP,$00d0
 
- 		dc.w	$6001,$fffe
-		dc.w	$0100,$4200		; 4 bitplanes
 		dc.w	$00e0
 logobp0h:	
 		dc.w	0	
@@ -784,7 +1030,14 @@ logobp3h:
 logobp3l:	
 		dc.w	0	
 
- 		dc.w	$8c01,$fffe
+logoStartWait:
+ 		dc.w	$6001,$fffe
+		dc.w	$0100,$4200		; 4 bitplanes
+
+logoColors:
+		blk.w	((2+(14*2))*44)-2,0
+logoEndWait:
+ 		dc.w	$8c01,$fffe			; logo end wait
 		dc.w	BPLCON0,$0200		; bitplanes off
 
 		dc.w	$0180,$0000
