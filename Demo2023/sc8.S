@@ -40,7 +40,7 @@ st:
 		move.w	#$2700,sr
 
 		move.l	#logo,d0
-		move.l	#(320/8)*44,d1
+		move.l	#(320/8)*64,d1
 		move.w	d0,logobp0l
 		swap	d0
 		move.w	d0,logobp0h
@@ -782,9 +782,12 @@ buildLogoColors:
 .colorLoop:
 			move.w	(a0)+,(a1)+				; color reg
 			move.w	(a0)+,d0
-			or.w	d2,d0
-			bsr		colorFade
-;			or.w	d2,d6
+;			or.w	d2,d0
+
+			; bsr		colorFade
+			; or.w	d2,d6
+			move.w	d0,d6
+
 			move.w	d6,(a1)+				; color reg
 			dbf		d3,.colorLoop
 
@@ -853,49 +856,49 @@ colorAddVar:
 colorAdd:
 			dc.w	$00		; 0
 			dc.w	$00
-			dc.w	$00
-			dc.w	$01
-			dc.w	$01
-			dc.w	$01
-			dc.w	$02
-			dc.w	$02
-			dc.w	$02
-			dc.w	$03
-			dc.w	$03		; 10
-			dc.w	$03
-			dc.w	$04
-			dc.w	$04
-			dc.w	$04
-			dc.w	$05
-			dc.w	$05
-			dc.w	$05
+			dc.w	$100
+			dc.w	$101
+			dc.w	$101
+			dc.w	$201
+			dc.w	$201
+			dc.w	$202
+			dc.w	$202
+			dc.w	$202
+			dc.w	$202		; 10
+			dc.w	$203
+			dc.w	$303
+			dc.w	$303
+			dc.w	$303
+			dc.w	$304
+			dc.w	$304
+			dc.w	$304
+			dc.w	$304
+			dc.w	$305
+			dc.w	$205		; 20
+			dc.w	$205
+			dc.w	$205
+			dc.w	$206
+			dc.w	$206
+			dc.w	$206
+			dc.w	$206
+			dc.w	$207
+			dc.w	$207
+			dc.w	$107
+			dc.w	$107		; 30
+			dc.w	$108
+			dc.w	$108
+			dc.w	$108
+			dc.w	$108
+			dc.w	$108
+			dc.w	$109
+			dc.w	$09
+			dc.w	$09
+			dc.w	$09
+			dc.w	$09		; 40
+			dc.w	$09
+			dc.w	$08
+			dc.w	$07
 			dc.w	$06
-			dc.w	$06
-			dc.w	$06		; 20
-			dc.w	$07
-			dc.w	$07
-			dc.w	$07
-			dc.w	$08
-			dc.w	$08
-			dc.w	$08
-			dc.w	$09
-			dc.w	$09
-			dc.w	$09
-			dc.w	$0a		; 30
-			dc.w	$0a
-			dc.w	$0a
-			dc.w	$0b
-			dc.w	$0b
-			dc.w	$0b
-			dc.w	$0c
-			dc.w	$0c
-			dc.w	$0c
-			dc.w	$0d
-			dc.w	$0d		; 40
-			dc.w	$0d
-			dc.w	$0e
-			dc.w	$0e
-			dc.w	$0e
 
 fadeLevel:
 			dc.w	11*1		; 0
@@ -922,14 +925,13 @@ fadeLevel:
 			dc.w	11*21
 			dc.w	11*21
 			dc.w	11*21
-			dc.w	11*21
 			dc.w	11*20
 			dc.w	11*19
 			dc.w	11*18
 			dc.w	11*17
 			dc.w	11*16
-			dc.w	11*15		; 30
-			dc.w	11*14
+			dc.w	11*15
+			dc.w	11*14		; 30
 			dc.w	11*13
 			dc.w	11*12
 			dc.w	11*11
@@ -938,11 +940,12 @@ fadeLevel:
 			dc.w	11*8
 			dc.w	11*7
 			dc.w	11*6
-			dc.w	11*5		; 40
-			dc.w	11*4
+			dc.w	11*5
+			dc.w	11*4		; 40
 			dc.w	11*3
 			dc.w	11*2
 			dc.w	11*1
+			dc.w	11*0
 
 updateLogoPos:
 			move.w	logoMoveDir,d0
@@ -952,7 +955,7 @@ updateLogoPos:
 			add.w	d0,logoPos
 
 			add.w	#1,logoMoveDirCount
-			cmp.w	#48,logoMoveDirCount
+			cmp.w	#24,logoMoveDirCount
 			bne		.noToggle
 			move.w	#0,logoMoveDirCount
 			neg.w	logoMoveDir
@@ -960,16 +963,16 @@ updateLogoPos:
 			move.w	logoPos,d0
 			add.w	#8,d0
 			lsr.w	#4,d0
-			add.w	#$60,d0
+			add.w	#$60-8,d0
 			move.b	d0,logoStartWait
 			add.w	#44,d0
 			move.b	d0,logoEndWait
 			rts
 
 logoMoveDir:
-			dc.w	1
+			dc.w	2
 logoMoveDirCount:
-			dc.w	24
+			dc.w	12
 logoMoveSpeed:
 			dc.w	0
 logoPos:
