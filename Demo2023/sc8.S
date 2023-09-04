@@ -11,18 +11,18 @@ logoY			= $40
 src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
-screen			= $70000		; single color bitplane start
+;screen			= $70000		; single color bitplane start
 screenHeight	= 128
 li				= $2e			; screen line size in bytes
 
 ; ho				= li*23		; dst height start offset
-sc_offset		= 52			; scroller y offset
+sc_offset		= 82			; scroller y offset
 ho				= li*sc_offset	; dst height start offset
 yTop			= sc_offset-23	; scroller top y pos (for copy and pixel effect)
 sc_top			= yTop*li		;
 
 ss		 		= $6e014		; source start of scoller turn
-ds		 		= screen+$14	; destination start	of scroller turn
+ds		 		= $14			; destination start	of scroller turn
 
 
 numPoints		= 128
@@ -49,6 +49,8 @@ lib:	dc.b	'graphics.library',0
 st:		
 		move.w	#$2700,sr
 
+		lea		$dff000,a6
+
 		move.l	#logo,d0
 		move.l	#(320/8)*64,d1
 		move.w	d0,logobp0l
@@ -72,49 +74,138 @@ st:
 
 		bsr		buildLogoColors
 
-		move.l	#clist,$dff080
-		clr.w	$dff088
-
-		lea		$dff000,a6
-
 		bsr		mctab
 		bsr		initPoints
+		bsr		game_init
 
-		move.w	#$0020,$dff096
+;		move.w	#$0020,$dff096
 
-begin:	
-rwait:		
-		cmp.b	#$2c,$006(a6)
-		bne.s	rwait
-;rwait2:		
-;		cmp.b	#$30,$006(a6)
-;		bne.s	rwait2
-		
-;		move.w	#-1,$dff180
+		move.w	$dff01c,d0			;get intena
+		or.w	#$8000,d0
+		move.w	d0,intenaStore
+		move.w	#$7fff,$dff09a		;disable ints.
+		move.w	#$7fff,$dff09c
+		move.l	$6c.w,lev3		;save level 3
+		move.l	#vblank,$6c.w		;set my level 3
+		move.w	#$c020,$dff09a		;allow level 3
+		move.w	#$2200,sr
 
-		bsr		scroll
-		bsr		postEffect
+ 		move.l	#clist,$dff080
+		clr.w	$dff088
 
-		bsr		addPoints
-		bsr		drawPoints
+		bsr		main
 
-		; bsr		updateLogoColors		; super slow :(
-		bsr		updateLogoPos
-		; bsr		colortest
+		move.w	#$7fff,$dff09a
+		move.w	#$7fff,$dff09c
+		move.l	lev3,$6c
+		move.w	intenaStore,$dff09a
+
+		rte
+
+;--------------------------------------------------------------
+lev3:		
+		dc.l	0
+intenaStore:		
+		dc.w	0
+
+;--------------------------------------------------------------
+main:		
+		cmp.b	#$ff,$dff006
+		bne.s	main
+
+		btst	#6,$bfe001
+		bne.s	main
+		rts
+;--------------------------------------------------------------
+vblank:		
+		btst	#5,$dff01f		;vbl int.?
+		beq.s	.nvbl
+		move.w	#$0020,$dff096	; disable sprite dma
+
+		; cmp.w	#1,lockblank
+		; beq		.nvbl
+		; move.w	#1,lockblank
+
+		movem.l	d0-d7/a0-a6,-(a7)
+
+		cmp.b	#$50,kcode
+		bne.s	.ncol
+		move.w	#$444,$dff180
+.ncol:		
+		bsr		getkey
+
+		bsr		clear			;clear screen
+		bsr		game
+		; bsr		game
 ;		move.w	#0,$dff180
 
-.pause:		
-		btst	#6,$bfe001
-		beq		.pause
+		tst.l	enemy_con
+		bne.s	.hmm
+		bsr		game_init
+.hmm:
+		lea		$dff000,a6
+		bsr		scroll
 
-		bra		begin
+		; move.w	#$424,$180(a6)
+		bsr		postEffect
+
+		; ; ; move.w	#$266,$180(a6)
+		lea		$dff000,a6
+		bsr		addPoints
+		bsr		drawPoints
+		; ; move.w	#$882,$180(a6)
+		; ; bsr		updateLogoColors		; super slow :(
+		bsr		updateLogoPos
+
+; 		move.l	#20000,d7
+; .delay:
+; 		sub.l	#1,d7
+; 		bne		.delay
+
+		movem.l	(a7)+,d0-d7/a0-a6
+		move.w	#$0020,$dff09c
+		; move.w	#0,lockblank
+.nvbl:		
 		rte
+
+lockblank:
+		dc.w	0
+
+;--------------------------------------------------------------
+; begin:	
+; rwait:		
+; 		cmp.b	#$2c,$006(a6)
+; 		bne.s	rwait
+		
+; 		; move.w	#-1,$180(a6)
+
+; 		bsr		scroll
+; 		; move.w	#$424,$180(a6)
+; 		bsr		postEffect
+; 		; move.w	#$266,$180(a6)
+
+; 		; bsr		addPoints
+; 		; bsr		drawPoints
+
+; 		; move.w	#$882,$180(a6)
+
+; 		; bsr		updateLogoColors		; super slow :(
+; 		bsr		updateLogoPos
+; 		; bsr		colortest
+; 		; move.w	#0,$180(a6)
+
+; .pause:		
+; 		btst	#6,$bfe001
+; 		beq		.pause
+
+; 		bra		begin
+; 		rte
 
 ;-------
 initPoints:
 		lea		points,a5
 		moveq	#0,d1
-		moveq	#numPoints-1,d7		
+		move.l	#numPoints-1,d7		
 .loop:	
 		move.w	d1,point_life(a5)	
 
@@ -124,9 +215,11 @@ initPoints:
 
 ;-------
 drawPoints:
-		lea		screen,a0
+		move.l	screenloc,a0
 		lea		points,a5
-		moveq	#numPoints-1,d7	
+		move.l	#numPoints-1,d7	
+		moveq	#0,d0
+		moveq	#0,d1
 .loop:
 		move.w	point_life(a5),d0
 		beq		.next
@@ -153,6 +246,7 @@ drawPoints:
 		move.w	d2,point_yvelo(a5)
 
 		bsr		setPointScroller
+
 .next:
 		lea		point_len(a5),a5
 		dbf		d7,.loop
@@ -160,7 +254,8 @@ drawPoints:
 
 ;-------
 addPoints:
-		lea		screen+sc_top+8,a1
+		move.l	screenloc,a1
+		add.l	#sc_top+8,a1
 		moveq	#yTop,d7
 		moveq	#6-1,d6
 .addloop:		
@@ -238,23 +333,14 @@ postest:
 		dc.w	0
 ;-------
 postEffect:
-; 		lea		$70000,a0
-; 		move.l	#li*8,d7
-; clear:		
-; 		clr.l	(a0)+
-; 		dbf		d7,clear
-
-		bsr		bbusy
-		move.l	#screen,$54(a6)
-		move.l	#-1,$44(a6)
-		move.l	#0,$64(a6)
-		move.l	#$01000000,$40(a6)
-;		move.w	#256*64+$14,$58(a6)
-		move.w	#(screenHeight<<6)+(li/2),$58(a6)
-
-
-;---
-		bsr		bbusy
+; 		bsr		bbusy
+; 		move.l	#screen,$54(a6)
+; 		move.l	#-1,$44(a6)
+; 		move.l	#0,$64(a6)
+; 		move.l	#$01000000,$40(a6)
+; 		move.w	#(screenHeight<<6)+(li/2),$58(a6)
+; ;---
+; 		bsr		bbusy
 
 ; 		lea		table,a2
 ; 		moveq	#((tabend-table)/10)-1,d7
@@ -266,12 +352,15 @@ postEffect:
 ; 		dbf		d7,copyloop
 
 ; backwards pixels and rest
+
 		lea		table2,a2
 		moveq	#((tabend2-table2)/12)-1,d7
+		move.l	screenloc,d6
 copyloop2:
 		move.l	(a2)+,a0
 		move.w	(a2)+,d1
 		move.l	(a2)+,a1
+		add.l	d6,a1
 		move.w	(a2)+,d2
 		bsr		copyColumnShift
 		dbf		d7,copyloop2
@@ -285,7 +374,8 @@ copyloop2:
 leftblock_words = 6
  		lea		src_adr+8,a0
  		;  lea 	$70000+8,a1							; dst
-		lea 	screen+sc_top+8,a1						; dest
+		move.l	screenloc,a1
+		add.l 	#sc_top+8,a1						; dest
 		move.l	#src_line-(leftblock_words*2),d4	; src modulo
 		move.l	#li-(leftblock_words*2),d5			; dst modulo
 		moveq	#7-1,d6			; height
@@ -305,7 +395,8 @@ rowloop:
 rightblock_words = 12
 		lea		ss+6,a0				; source
 ;		lea 	$70016+ho,a1		; dest
-		lea 	ds+ho-(li*1)+2+1,a1	; dest
+		move.l	screenloc,a1
+		add.l 	#ds+ho-(li*1)+2+1,a1	; dest
 		move.l	#src_line-(rightblock_words*2),d4	; src modulo
 		move.l	#li-(rightblock_words*2),d5			; dst modulo
 		moveq	#7-1,d6			; height
@@ -330,23 +421,23 @@ copyColumn:
 
 		move.w	src_line*1(a0),d0
 		and.w	d1,d0
-		or.w	d0,$2e*1(a1)		
+		or.w	d0,li*1(a1)		
 
 		move.w	src_line*2(a0),d0
 		and.w	d1,d0
-		or.w	d0,$2e*2(a1)		
+		or.w	d0,li*2(a1)		
 
 		move.w	src_line*3(a0),d0
 		and.w	d1,d0
-		or.w	d0,$2e*3(a1)		
+		or.w	d0,li*3(a1)		
 
 		move.w	src_line*4(a0),d0
 		and.w	d1,d0
-		or.w	d0,$2e*4(a1)		
+		or.w	d0,li*4(a1)		
 
 		move.w	src_line*5(a0),d0
 		and.w	d1,d0
-		or.w	d0,$2e*5(a1)		
+		or.w	d0,li*5(a1)		
 
 		rts
 
@@ -368,27 +459,27 @@ copyColumnShift:
 		move.w	src_line*1(a0),d0
 		and.w	d1,d0
 		ror.w	d2,d0
-		or.w	d0,$2e*1(a1)		
+		or.w	d0,li*1(a1)		
 
 		move.w	src_line*2(a0),d0
 		and.w	d1,d0
 		ror.w	d2,d0
-		or.w	d0,$2e*2(a1)		
+		or.w	d0,li*2(a1)		
 
 		move.w	src_line*3(a0),d0
 		and.w	d1,d0
 		ror.w	d2,d0
-		or.w	d0,$2e*3(a1)		
+		or.w	d0,li*3(a1)		
 
 		move.w	src_line*4(a0),d0
 		and.w	d1,d0
 		ror.w	d2,d0
-		or.w	d0,$2e*4(a1)		
+		or.w	d0,li*4(a1)		
 
 		move.w	src_line*5(a0),d0
 		and.w	d1,d0
 		ror.w	d2,d0
-		or.w	d0,$2e*5(a1)		
+		or.w	d0,li*5(a1)		
 
 		rts
 ;-----
@@ -399,7 +490,6 @@ getRandomNumber:
  		rol.l	#6,d0
 		move.l 	d0,seed
 		rts
-
 
 seed: 
 		dc.l	$fc091337
@@ -676,7 +766,7 @@ textfin2:
 		rts	
 
 		rsreset
-point_life:	rs.w	1		;life time
+point_life:	rs.w	1			;life time
 point_xfloat:	rs.w	1		;x-coordinate (floating)
 point_yfloat:	rs.w	1		;y-coordinate (floating)
 point_xvelo:	rs.w	1		;x velocity
@@ -1072,7 +1162,7 @@ logoEndWait:
 
 ;		dc.w	$0180,$0000
 
-		dc.w	$a001,$fffe		; start of "game" area
+		dc.w	$8401,$fffe		; start of "game" area
 		dc.w	$0100,$1200		; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
 bp0:	dc.w	$00e2,$0000		;
@@ -1095,7 +1185,8 @@ bp0:	dc.w	$00e2,$0000		;
 		dc.w	$0182,$0bbb
 		dc.w	$0100,$2600				; 2 bitplanes on	(dual playfield mode)
 		dc.w	$00e4,$0007				; bitplane 01
-		dc.w	$00e6,($002e*15)-2		; + lines offset to adjust shadow pos
+		; dc.w	$00e6,(li*15)-2		 ; + lines offset to adjust shadow pos
+		dc.w	$00e6,(li*75)-2		 ; + lines offset to adjust shadow pos
 		dc.w	$0192,$0000		; shadow color
 
 		dc.w	$c501,$fffe
@@ -1266,73 +1357,35 @@ bp0:	dc.w	$00e2,$0000		;
 rchartab:	
 		blk.w	256,0
 
-main:		
-		cmp.b	#$ff,$dff006
-		bne.s	main
-
-		btst	#6,$bfe001
-		bne.s	main
-		rts
 ;--------------------------------------------------------------
-vblank:		
-		btst	#5,$dff01f		;vbl int.?
-		beq.s	.nvbl
-		move.w	#$0020,$dff096
-
-		movem.l	d0-d7/a0-a6,-(a7)
-
-		cmp.b	#$50,kcode
-		bne.s	.ncol
-		move.w	#$444,$dff180
-.ncol:		
-		bsr		getkey
-		bsr		game
-		move.w	#0,$dff180
-
-		tst.l	enemy_con
-		bne.s	.hmm
-		bsr	game_init
-.hmm:
-		movem.l	(a7)+,d0-d7/a0-a6
-		move.w	#$0020,$dff09c
-.nvbl:		
-		rte
-;---------------------------------------------------
-lev3:		
-		dc.l	0
-;intena:		
-		; dc.w	0
-
-;---------------------------------------------
 game:		
-		bsr	clear			;clear screen
-
-					;<enemys>
-		lea	linetab(pc),a6		
-		bsr	enemys_set
+		;<enemys>
+		lea		linetab(pc),a6		
+		bsr		enemys_set
 		clr.w	(a6)		
-		bsr	objects_draw
+		bsr		objects_draw
 
-		lea	linetab(pc),a6
+		lea		linetab(pc),a6
 
 		tst.b	ship_next
 		bne.s	.nsdraw
 		move.l	a6,-(a7)
-		bsr	shipcoll		;collision
+		bsr		shipcoll		;collision
 		move.l	(a7)+,a6
-		bsr	ship_set
-.nsdraw:	bsr	ship_explode
-		bsr	shots_set
+		bsr		ship_set
+.nsdraw:	
+		bsr		ship_explode
+		bsr		shots_set
 		clr.w	(a6)
-		bsr	objects_draw
+		bsr		objects_draw
 
 		cmp.b	#$45,kcode
 		bne.s	.nrestart
 		clr.b	kcode
 		tst.b	ship_next
 		beq.s	.nrestart
-		sf	ship_next
-		bsr	game_init
+		sf		ship_next
+		bsr		game_init
 .nrestart:
 
 		rts
@@ -1374,28 +1427,33 @@ obj_slowdown:
 		bpl.s	.xvp2
 		addq.w	#1,obj_xvelo(a0)
 		bra.s	.xng
-.xvp2:		subq.w	#1,obj_xvelo(a0)
+.xvp2:		
+		subq.w	#1,obj_xvelo(a0)
 .xng:
 		tst.w	obj_yvelo(a0)
 		beq.s	.yng
 		bpl.s	.yvp2
 		addq.w	#1,obj_yvelo(a0)
 		bra.s	.yng
-.yvp2:		subq.w	#1,obj_yvelo(a0)
-.yng:		rts
+.yvp2:		
+		subq.w	#1,obj_yvelo(a0)
+.yng:		
+		rts
 ;---------------------------------------------
 obj_addangle:				;<increase angle>
 		add.w	d1,obj_angle(a0)
 		cmp.w	#360,obj_angle(a0)
 		blt.s	.angleok
 		sub.w	#360,obj_angle(a0)
-.angleok:	rts
+.angleok:	
+		rts
 ;---------------------------------------------
 obj_subangle:				;<decrease angle>
 		sub.w	d1,obj_angle(a0)
 		bpl.s	.angleok
 		add.w	#360,obj_angle(a0)
-.angleok:	rts
+.angleok:	
+		rts
 ;---------------------------------------------
 obj_thrust:				;<accelerate object, value in d2>
 		move.w	obj_angle(a0),d1
@@ -1484,41 +1542,43 @@ obj_move:				;<calculate new object coords>
 		bne.s	.lineobj		;point or lines ?
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d1
-		bsr	set_point
+		bsr		set_point
 		rts
 .lineobj:	
 		move.w	obj_angle(a0),d0
-		cmp.w	#$8000,d0		;rotate?
-		beq.s	.norotobj
+		cmp.w	#$8000,d0			;rotate?
+		beq		.norotobj
 		lsl.w	#2,d0
-		lea	sctab(pc),a3
+		lea		sctab(pc),a3
 		movem.w	(a3,d0.w),d4/d5		;sin,cos
 
 		move.w	(a1)+,d7
 		subq.w	#1,d7
-.lines:		movem.w	(a1)+,d0-d3
+.lines:		
+		movem.w	(a1)+,d0-d3
 		move.w	d7,-(a7)
-		bsr	rotate
+		bsr		rotate
 		add.w	obj_xc(a0),d0
 		add.w	obj_xc(a0),d2
 		add.w	obj_yc(a0),d1
 		add.w	obj_yc(a0),d3
-		bsr	set_line
+		bsr		set_line
 		move.w	(a7)+,d7
-		dbf	d7,.lines
+		dbf		d7,.lines
 		rts
 .norotobj:				;<object without rotation>
 		move.w	(a1)+,d7
 		subq.w	#1,d7
-.norotlines:	movem.w	(a1)+,d0-d3
+.norotlines:	
+		movem.w	(a1)+,d0-d3
 		add.w	obj_xc(a0),d0
 		add.w	obj_xc(a0),d2
 		add.w	obj_yc(a0),d1
 		add.w	obj_yc(a0),d3
 		move.w	d7,-(a7)
-		bsr	set_line
+		bsr		set_line
 		move.w	(a7)+,d7
-		dbf	d7,.norotlines
+		dbf		d7,.norotlines
 		rts
 *                                                                    *
 **********************************************************************
@@ -1526,7 +1586,7 @@ obj_move:				;<calculate new object coords>
 *object names
 ship	=	0		;own spaceship
 shot	=	1		;own shot
-big	=	2		;big asteroid
+big		=	2		;big asteroid
 medium	=	3		;medium asteroid
 small	=	4		;small asteroid
 ;---------------------------------------------
@@ -1538,14 +1598,14 @@ coord_tabs:
 		dc.l	asts_coords
 		dc.l	0
 ;---------------------------------------------
-shot_con:	dc.w	0
-shot_times:	ds.w	16
+shot_con:		dc.w	0
+shot_times:		ds.w	16
 shot_structs:	ds.b	obj_len*16
-enemy_con:	dc.l	0
+enemy_con:		dc.l	0
 enemy_structs:	ds.b	obj_len*32
 ship_struct:	ds.b	obj_len
 ship_estruct:	ds.b	obj_len*$15
-ship_next:	dc.b	0
+ship_next:		dc.b	0
 ship_exploding:	dc.b	0
 even
 ;---------------------------------------------
@@ -1583,14 +1643,16 @@ asts_coords:	dc.w	5
 ;---------------------------------------------
 enemys_set:
 		move.l	enemy_con(pc),d0
-		lea	enemy_structs(pc),a0
+		lea		enemy_structs(pc),a0
 		moveq	#31,d7
-.setenemys:	btst	d7,d0
+.setenemys:	
+		btst	d7,d0
 		beq.s	.nenemy
 		movem.l	d0/d7,-(a7)
-		bsr	obj_move
+		bsr		obj_move
 		movem.l	(a7)+,d0/d7
-.nenemy:	lea	obj_len(a0),a0
+.nenemy:	
+		lea	obj_len(a0),a0
 		dbf	d7,.setenemys
 		rts
 ;---------------------------------------------
@@ -1649,8 +1711,8 @@ shots_set:
 .flying:
 		movem.w	d0/d7,-(a7)
 		move.l	a1,-(a7)
-		bsr	obj_move
-		bsr	shot_collision
+		bsr		obj_move
+		bsr		shot_collision
 		move.l	(a7)+,a1
 		movem.w	(a7)+,d0/d7
 		
@@ -1738,7 +1800,7 @@ ship_explode:
 		tst.b	ship_exploding
 		bne.s	.noinit
 
-		lea	ship_struct(pc),a0
+		lea		ship_struct(pc),a0
 		move.w	obj_xc(a0),d5
 		move.w	obj_yc(a0),d6
 		move.w	obj_xvelo(a0),d3
@@ -1747,20 +1809,21 @@ ship_explode:
 		moveq	#0,d4
 		move.w	obj_angle(a0),a4
 
-		lea	ship_estruct(pc),a0
-		lea	ship_ptab(pc),a1
-		lea	sctab(pc),a3
+		lea		ship_estruct(pc),a0
+		lea		ship_ptab(pc),a1
+		lea		sctab(pc),a3
 
 		move.w	(a1)+,d7
 		subq.w	#1,d7
 		move.w	#270,d2			;angle
-.initpoints:	move.w	(a1)+,d0
+.initpoints:	
+		move.w	(a1)+,d0
 		move.w	(a1)+,d1
 		movem.l	d4-d7,-(a7)
 		move.w	a4,d6
 		lsl.w	#2,d6
 		movem.w	(a3,d6.w),d4/d5
-		bsr	point_rotate
+		bsr		point_rotate
 		movem.l	(a7)+,d4-d7
 
 		add.w	d5,d0
@@ -1769,9 +1832,9 @@ ship_explode:
 		movem.l	d0-a3,-(a7)
 
 		moveq	#shot,d5
-		bsr	obj_init
+		bsr		obj_init
 		moveq	#50,d2
-		bsr	obj_thrust
+		bsr		obj_thrust
 		movem.l	(a7)+,d0-a3
 
 		add.w	#23,d2
@@ -1779,16 +1842,15 @@ ship_explode:
 		blt.s	.hang
 		sub.w	#360,d2
 .hang:
-		lea	obj_len(a0),a0
-		dbf	d7,.initpoints
+		lea		obj_len(a0),a0
+		dbf		d7,.initpoints
 
-		st	ship_exploding
+		st		ship_exploding
 .noinit:
-
 		tst.b	ship_exploding
 		beq.s	.noexplosion
 
-		lea	ship_estruct(pc),a0		
+		lea		ship_estruct(pc),a0		
 		move.w	ship_ptab(pc),d7
 		subq.w	#1,d7
 .setpoints:	
@@ -1797,31 +1859,32 @@ ship_explode:
 		tst.w	obj_yvelo(a0)
 		beq.s	.next
 .set:
-		bsr	obj_move
-		bsr	obj_slowdown
+		bsr		obj_move
+		bsr		obj_slowdown
 .next:		
-		lea	obj_len(a0),a0
-		dbf	d7,.setpoints
-.noexplosion:	rts
+		lea		obj_len(a0),a0
+		dbf		d7,.setpoints
+.noexplosion:	
+		rts
 ;---------------------------------------------
 ship_set:				;<set ship, keyboard control>
-		lea	ship_struct(pc),a0
+		lea		ship_struct(pc),a0
 
 		move.b	jkcode(pc),d0
 		btst	#3,d0
 		beq.s	.ntleft
 		moveq	#4,d1
-		bsr	obj_subangle
+		bsr		obj_subangle
 .ntleft:
 		btst	#1,d0
 		beq.s	.ntright
 		moveq	#4,d1
-		bsr	obj_addangle
+		bsr		obj_addangle
 .ntright:
 		btst	#2,d0
 		beq.s	.nthrust
 		moveq	#8,d2
-		bsr	obj_thrust
+		bsr		obj_thrust
 .nthrust:
 		tst.b	jkbutt
 		beq.s	.nfire
@@ -1859,11 +1922,11 @@ ship_set:				;<set ship, keyboard control>
 		rts
 ;---------------------------------------------
 game_init:				;<initialize game>
-		bsr	shots_init
-		bsr	ship_init
+		bsr		shots_init
+		bsr		ship_init
 		clr.l	enemy_con
-		sf	ship_exploding
-		bsr	asteroids_init
+		sf		ship_exploding
+		bsr		asteroids_init
 		rts
 ;---------------------------------------------
 asteroids_init:
@@ -1873,28 +1936,28 @@ asteroids_init:
 		move.w	#40,d3			;x velo
 		move.w	#20,d4			;y velo
 		moveq	#big,d5			;name
-		bsr	enemy_init
+		bsr		enemy_init
 
 		move.w	#280,d0			;x
 		move.w	#128,d1			;y
 		move.w	#-25,d3			;x velo
 		move.w	#10,d4			;y velo
 		moveq	#big,d5			;name
-		bsr	enemy_init
+		bsr		enemy_init
 
 		move.w	#145,d0			;x
 		move.w	#13,d1			;y
 		move.w	#-12,d3			;x velo
 		move.w	#14,d4			;y velo
 		moveq	#big,d5			;name
-		bsr	enemy_init
+		bsr		enemy_init
 
 		move.w	#14,d0			;x
 		move.w	#942,d1			;y
 		move.w	#32,d3			;x velo
 		move.w	#5,d4			;y velo
 		moveq	#big,d5			;name
-		bsr	enemy_init
+		bsr		enemy_init
 		rts
 ;---------------------------------------------
 shots_init:				;<initialize shot status>
@@ -1902,22 +1965,22 @@ shots_init:				;<initialize shot status>
 		rts
 ;---------------------------------------------
 ship_pcoords:				;<get point coords>
-		lea	ship_struct(pc),a0
+		lea		ship_struct(pc),a0
 		move.w	#16,d0			;x
 		move.w	#16,d1			;y
 		move.w	#0,d2			;angle
 		move.w	#0,d3			;x velo
 		move.w	#0,d4			;y velo
 		moveq	#ship,d5
-		bsr	obj_init
+		bsr		obj_init
 
-		lea	linetab(pc),a6
-		bsr	obj_move
+		lea		linetab(pc),a6
+		bsr		obj_move
 		clr.w	(a6)
-		bsr	objects_draw
+		bsr		objects_draw
 
-		lea	ship_ptab,a1
-		bsr	get_pcoords
+		lea		ship_ptab,a1
+		bsr		get_pcoords
 		rts
 ;---------------------------------------------
 get_pcoords:
@@ -1925,8 +1988,10 @@ get_pcoords:
 		clr.w	(a1)+
 
 		moveq	#0,d1			;ycoord
-.vert:		moveq	#0,d0			;xcoord
-.horiz:		bsr	check_point
+.vert:		
+		moveq	#0,d0			;xcoord
+.horiz:		
+		bsr		check_point
 		beq.s	.nopoint
 		move.w	d0,d2
 		move.w	d1,d3
@@ -1949,7 +2014,7 @@ check_point:				;<check if point is set in bitmap>
 		movem.l	d0-d2/a2,-(a7)
 
 		move.l	screenloc(pc),a2
-		mulu	#40,d1
+		mulu	#li,d1
 		move.w	d0,d2
 		eor.w	#$0f,d2
 		lsr.w	#3,d0
@@ -1990,7 +2055,7 @@ clear:					;<switch screens and clear>
 		move.w	#$8000,bp0+2
 		move.l	#$70000,screenloc
 .s1:
-		bsr	bbusy
+		bsr		bbusy
 		move.l	screenloc,$54(a6)
 		move.l	#-1,$44(a6)
 		move.l	#0,$64(a6)
@@ -1998,8 +2063,10 @@ clear:					;<switch screens and clear>
 		move.w	#256*64+$14,$58(a6)
 		rts
 ;---------------------------------------------
-screenToggle:		dc.w	0
-screenloc:			dc.l	$70000
+screenToggle:		
+		dc.w	0
+screenloc:			
+		dc.l	$70000
 ;---------------------------------------------
 set_line:
 		movem.w	d4-d5,-(a7)
@@ -2010,9 +2077,9 @@ onceag:
 		tst.w	d3			;y2 < 0 ?
 		bmi.s	.y12
 		move.w	#255,d6
-		cmp.w	d6,d1			;y1 > 255 ?
+		cmp.w	d6,d1		;y1 > 255 ?
 		bgt.s	.y21
-		cmp.w	d6,d3			;y2 > 255 ?
+		cmp.w	d6,d3		;y2 > 255 ?
 		bgt.s	.y22
 
 		moveq	#0,d6
@@ -2021,22 +2088,22 @@ onceag:
 		tst.w	d2			;x2 < 0 ?
 		bmi.s	.x12
 		move.w	#319,d6
-		cmp.w	d6,d0			;x1 > 319 ?
+		cmp.w	d6,d0		;x1 > 319 ?
 		bgt.s	.x21
-		cmp.w	d6,d2			;x2 > 319 ?
+		cmp.w	d6,d2		;x2 > 319 ?
 		bgt.s	.x22
-		bra.s	drawline		
+		bra.s	drawline	
 .y11:
 		tst.w	d3			;y2 auch < 0 ?
-		bmi.s	clpend			;dann gar nix
+		bmi.s	clpend		;dann gar nix
 		bsr.s	clipy
-		move.w	d4,d0			;neues x1
-		moveq	#0,d1			;y1 = 0
+		move.w	d4,d0		;neues x1
+		moveq	#0,d1		;y1 = 0
 		bra.s	onceag
 .y12:		
 		bsr.s	clipy
-		move.w	d4,d2			;neues x2
-		moveq	#0,d3			;y2 = 0
+		move.w	d4,d2		;neues x2
+		moveq	#0,d3		;y2 = 0
 		bra.s	onceag
 .y21:
 		cmp.w	d6,d3
@@ -2119,38 +2186,45 @@ drawline:
 		bge.s	.l3
 		moveq	#17,d7
 		bra.s	.l4
-.l3:		moveq	#1,d7
+.l3:		
+		moveq	#1,d7
 		exg	d1,d0
 		bra.s	.l4
-.l2:		neg.w	d1
+.l2:		
+		neg.w	d1
 		cmp.w	d0,d1
 		bge.s	.l5
 		moveq	#$19,d7
 		bra.s	.l4
-.l5:		moveq	#$5,d7
+.l5:		
+		moveq	#$5,d7
 		exg	d1,d0
 		bra.s	.l4
-.l1:		neg.w	d0
+.l1:		
+		neg.w	d0
 		tst.w	d1
 		blt.s	.l6
 		cmp.w	d0,d1
 		bge.s	.l7
 		moveq	#$15,d7
 		bra.s	.l4
-.l7:		moveq	#$9,d7
+.l7:		
+		moveq	#$9,d7
 		exg	d1,d0
 		bra.s	.l4
-.l6:		neg.w	d1
+.l6:		
+		neg.w	d1
 		cmp.w	d0,d1
 		bge.s	.l8
 		moveq	#$1d,d7
 		bra.s	.l4
-.l8:		moveq	#$0d,d7
+.l8:		
+		moveq	#$0d,d7
 		exg	d1,d0
 						;BltStart nach d6
 .l4:		
 		move.l	screenloc(pc),a4
-		mulu	#$28,d3
+		mulu	#li,d3
 		and.w	#$fff0,d2
 		lsr.w	#3,d2
 		add.w	d3,a4
@@ -2192,7 +2266,7 @@ set_point:
 		bhi.s	.npoint
 
 		move.w	#-1,(a6)		;set flag for point (not line)
-		mulu	#40,d1
+		mulu	#li,d1
 		move.w	d0,d2
 		eor.w	#$07,d2
 		lsr.w	#3,d0
@@ -2200,7 +2274,7 @@ set_point:
 		add.l	screenloc(pc),d1
 		move.l	d1,2(a6)
 		move.w	d2,6(a6)
-		lea	16(a6),a6
+		lea		16(a6),a6
 .npoint:	
 		rts
 ;-------------------------------------------------------
@@ -2265,10 +2339,10 @@ rotate:					;<rotation>
 		rts
 ;-------------------------------------------------------
 shipcoll:
-		lea	$dff000,a6
-		bsr	bbusy
+		lea		$dff000,a6
+		bsr		bbusy
 		move.l	screenloc(pc),a0
-		lea	ship_struct(pc),a1
+		lea		ship_struct(pc),a1
 		movem.w	obj_xc(a1),d0/d1
 		subq.w	#2,d0
 		cmp.w	#319,d0
@@ -2279,50 +2353,53 @@ shipcoll:
 		moveq	#$0f,d3
 		and.w	d0,d3
 		lsr.w	#3,d0
-		mulu	#40,d1
+		mulu	#li,d1
 		add.w	d0,d1
 		add.w	d1,a0
 
 		move.l	a0,$4c(a6)
 ;		move.l	a0,$54(a6)
 		move.l	#$04c00000,$40(a6)		;$5fc for or!
-		move.l	#$f0000000,d4
+		move.l	#$f0000000,d4			; src mask
 		lsr.l	d3,d4
 		move.l	d4,$44(a6)
-		move.w	#$0024,$62(a6)
+		move.w	#li-4,$62(a6)			; modulo
+; 		move.w	#$0024,$62(a6)
 ;		move.w	#$0024,$66(a6)
 		move.w	#-1,$74(a6)
 		move.w	#5*64+2,$58(a6)
 
-		bsr	bbusy
+		bsr		bbusy
 
 		btst	#5,$02(a6)
 		bne.w	.nc
 		tst.b	ship_next
 		bne.s	.nc
-		st	ship_next
+		st		ship_next
 .nc:
 		rts
 ;-------------------------------------------------------
 objects_draw:
-		lea	linetab(pc),a0
+		lea		linetab(pc),a0
 
-		lea	$dff000,a6
-		bsr	bbusy
-		move.w	#$28,$60(a6)
-		move.w	#$28,$66(a6)
+		lea		$dff000,a6
+		bsr		bbusy
+		move.w	#li,$60(a6)
+		move.w	#li,$66(a6)
+		; move.w	#$28,$60(a6)
+		; move.w	#$28,$66(a6)
 		move.l  #$ffff0000,$44(a6)
 		move.w	#$8000,$74(a6)
 		move.w	#-1,$72(a6)
-
-.objects:	tst.w	(a0)
-		beq.s	.end		
+.objects:	
+		tst.w	(a0)
+		beq.s	.end
 		bpl.s	.line			;point or line?
 					;<draw point>
 		move.l	2(a0),a4
 		move.w	6(a0),d3
 		bset	d3,(a4)
-		lea	16(a0),a0
+		lea		16(a0),a0
 		bra.s	.objects
 .line:
 					;<draw line>
@@ -2334,19 +2411,19 @@ objects_draw:
 		move.w	(a0)+,a5
 		move.w	(a0)+,d5
 
-		bsr	bbusy
+		bsr		bbusy
 		move.l	a4,$48(a6)
 		move.l	a4,$54(a6)
 		move.w	d3,$52(a6)
 		movem.w	d4/d7,$40(a6)
 		movem.w	d1/a5,$62(a6)
 		move.w	d5,$58(a6)		;zeinchen der linie
-		bra.s	.objects		
-	
-.end:		rts
+		bra.s	.objects
+.end:		
+		rts
 ;----------------------------------------
 getkey:					;<get rawkey routine>
-		lea	$bfe000,a5
+		lea		$bfe000,a5
 		btst	#3,$d01(a5)
 		beq.w	.nkpress
 
@@ -2368,46 +2445,57 @@ getkey:					;<get rawkey routine>
 		bne.s	.nok1
 		bset	#2,d7
 		bclr	#0,d7
-.nok1:		cmp.b	#$4d,d0			;$4d ?
+.nok1:		
+		cmp.b	#$4d,d0			;$4d ?
 		bne.s	.nok2
 		bset	#0,d7
 		bclr	#2,d7
-.nok2:		cmp.b	#$32,d0			;$4e ?
+.nok2:		
+		cmp.b	#$32,d0			;$4e ?
 		bne.s	.nok3
 		bset	#1,d7
 		bclr	#3,d7
-.nok3:		cmp.b	#$31,d0			;$4f ?
+.nok3:		
+		cmp.b	#$31,d0			;$4f ?
 		bne.s	.nok4
 		bset	#3,d7
 		bclr	#1,d7
-.nok4:		bra.s	.norelease
+.nok4:		
+		bra.s	.norelease
 
 .release:				;<key released!>
 		bclr	#7,d0
 		cmp.b	#$3a,d0			;return
 		bne.s	.nojkr
-		sf	jkbutt
-.nojkr:		cmp.b	#$39,d0			;$4c ?
+		sf		jkbutt
+.nojkr:		
+		cmp.b	#$39,d0			;$4c ?
 		bne.s	.nokr1
 		bclr	#2,d7
-.nokr1:		cmp.b	#$4d,d0			;$4d ?
+.nokr1:		
+		cmp.b	#$4d,d0			;$4d ?
 		bne.s	.nokr2
 		bclr	#0,d7
-.nokr2:		cmp.b	#$32,d0			;$4e ?
+.nokr2:		
+		cmp.b	#$32,d0			;$4e ?
 		bne.s	.nokr3
 		bclr	#1,d7
-.nokr3:		cmp.b	#$31,d0			;$4f ?
+.nokr3:		
+		cmp.b	#$31,d0			;$4f ?
 		bne.s	.nokr4
 		bclr	#3,d7
 .nokr4:		
-.norelease:	move.b	d7,jkcode
+.norelease:	
+		move.b	d7,jkcode
 
 		bset	#6,$e01(a5) 
 		move.w	#$80,d1		
-.shake:		dbf	d1,.shake	 
+.shake:		
+		dbf	d1,.shake	 
 		bclr	#6,$e01(a5)
 		move.b	kcode(pc),d0
-.nkpress:	rts
+.nkpress:	
+		rts
 ;-----------------------------------------
 kcode:		dc.b	0
 jkcode:		dc.b	0
