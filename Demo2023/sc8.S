@@ -24,6 +24,9 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
+game_width		= 352
+game_height		= 160
+
 
 numPoints		= 128
 
@@ -776,9 +779,9 @@ point_len:	rs.w	0
 points:		ds.b	point_len*numPoints
 
 setPointScroller:
-		cmp.w	#320-1,d0	; range check
+		cmp.w	#game_width-1,d0	; range check
 		bhi.s	.npoint
-		cmp.w	#100-1,d1
+		cmp.w	#game_height-1,d1
 		bhi.s	.npoint
 
 		mulu	#li,d1		; y * linesize	-> todo: use table to optimize
@@ -1499,17 +1502,17 @@ obj_move:				;<calculate new object coords>
 		move.w	obj_xfloat(a0),d0	;x floating
 		add.w	obj_xvelo(a0),d0	;+ x velocity
 
-		cmp.w	#(320+16)*128,d0	;x coord too high?
+		cmp.w	#(game_width+16)*128,d0	;x coord too high?
 		bls.s	.nhx
-		cmp.w	#(320+16+16)*128,d0
+		cmp.w	#(game_width+16+16)*128,d0
 		bhi.s	.nhx
-		sub.w	#(320+16+16)*128,d0
+		sub.w	#(game_width+16+16)*128,d0
 .nhx:		
-		cmp.w	#-16*128,d0		;x coord too low?
+		cmp.w	#-16*128,d0				;x coord too low?
 		bhi.s	.nlx
-		cmp.w	#(320+16+16)*128,d0
+		cmp.w	#(game_width+16+16)*128,d0
 		bls.s	.nlx
-		add.w	#(320+16+16)*128,d0
+		add.w	#(game_width+16+16)*128,d0
 .nlx:
 
 		move.w	d0,obj_xfloat(a0)	;store x floating
@@ -1521,17 +1524,17 @@ obj_move:				;<calculate new object coords>
 
 ;		add.w	#128,d0
 
-		cmp.w	#(256+16)*128,d0	;y coord too high?
+		cmp.w	#(game_height+16)*128,d0	;y coord too high?
 		bls.s	.nhy
-		cmp.w	#(256+16+16)*128,d0
+		cmp.w	#(game_height+16+16)*128,d0
 		bhi.s	.nhy
-		sub.w	#(256+16+16)*128,d0
+		sub.w	#(game_height+16+16)*128,d0
 .nhy:		
 		cmp.w	#-16*128,d0		;y coord too low?
 		bhi.s	.nly
-		cmp.w	#(256+16+16)*128,d0
+		cmp.w	#(game_height+16+16)*128,d0
 		bls.s	.nly
-		add.w	#(256+16+16)*128,d0
+		add.w	#(game_height+16+16)*128,d0
 .nly:
 		move.w	d0,obj_yfloat(a0)	;store y floating
 		lsr.w	#7,d0			;convert to integer
@@ -1898,15 +1901,15 @@ ship_set:				;<set ship, keyboard control>
 		add.w	#360,d2
 .angleok:
 		lsl.w	#2,d2
-		lea	sctab(pc),a3
+		lea		sctab(pc),a3
 
-		move.w	#256,d3			;thrust value
-		muls	2(a3,d2.w),d3		;xvelo=cos(angle)*value
+		move.w	#256,d3				; thrust value
+		muls	2(a3,d2.w),d3		; xvelo=cos(angle)*value
 		lsl.l	#1,d3
 		swap	d3
 
 		move.w	#256,d4
-		muls	(a3,d2.w),d4		;yvelo=sin(angle)*value
+		muls	(a3,d2.w),d4		; yvelo=sin(angle)*value
 		lsl.l	#1,d4
 		swap	d4
 
@@ -2060,7 +2063,7 @@ clear:					;<switch screens and clear>
 		move.l	#-1,$44(a6)
 		move.l	#0,$64(a6)
 		move.l	#$01000000,$40(a6)
-		move.w	#256*64+$14,$58(a6)
+		move.w	#(game_height<<6)+(li/2),$58(a6)
 		rts
 ;---------------------------------------------
 screenToggle:		
@@ -2076,7 +2079,7 @@ onceag:
 		bmi.s	.y11
 		tst.w	d3			;y2 < 0 ?
 		bmi.s	.y12
-		move.w	#255,d6
+		move.w	#game_height-1,d6
 		cmp.w	d6,d1		;y1 > 255 ?
 		bgt.s	.y21
 		cmp.w	d6,d3		;y2 > 255 ?
@@ -2087,7 +2090,7 @@ onceag:
 		bmi.s	.x11
 		tst.w	d2			;x2 < 0 ?
 		bmi.s	.x12
-		move.w	#319,d6
+		move.w	#game_width-1,d6
 		cmp.w	d6,d0		;x1 > 319 ?
 		bgt.s	.x21
 		cmp.w	d6,d2		;x2 > 319 ?
@@ -2220,7 +2223,7 @@ drawline:
 		bra.s	.l4
 .l8:		
 		moveq	#$0d,d7
-		exg	d1,d0
+		exg		d1,d0
 						;BltStart nach d6
 .l4:		
 		move.l	screenloc(pc),a4
@@ -2260,9 +2263,9 @@ notneg:
 		rts
 ;-------------------------------------------------------
 set_point:
-		cmp.w	#320-1,d0
+		cmp.w	#game_width-1,d0
 		bhi.s	.npoint
-		cmp.w	#256-1,d1
+		cmp.w	#game_height-1,d1
 		bhi.s	.npoint
 
 		move.w	#-1,(a6)		;set flag for point (not line)
@@ -2345,10 +2348,10 @@ shipcoll:
 		lea		ship_struct(pc),a1
 		movem.w	obj_xc(a1),d0/d1
 		subq.w	#2,d0
-		cmp.w	#319,d0
+		cmp.w	#game_width-1,d0
 		bhi.s	.nc
 		subq.w	#2,d1
-		cmp.w	#255,d1
+		cmp.w	#game_height-1,d1
 		bhi.s	.nc
 		moveq	#$0f,d3
 		and.w	d0,d3
