@@ -77,6 +77,7 @@ st:
 
 		bsr		buildLogoColors
 
+		bsr		mlist				; starfield
 		bsr		mctab
 		bsr		initPoints
 		bsr		game_init
@@ -123,7 +124,7 @@ main:
 vblank:		
 		btst	#5,$dff01f		;vbl int.?
 		beq.s	.nvbl
-		move.w	#$0020,$dff096	; disable sprite dma
+;		move.w	#$0020,$dff096	; disable sprite dma
 
 		; cmp.w	#1,lockblank
 		; beq		.nvbl
@@ -137,6 +138,7 @@ vblank:
 .ncol:		
 		bsr		getkey
 
+		bsr		stars
 		bsr		clear			;clear screen
 		bsr		game
 		; bsr		game
@@ -1119,13 +1121,15 @@ logoColorsOrig:
 		; dc.w	$019e,$0fff
 
 clist:		
-		dc.w	$0100,$0200		; bitplanes off
+		dc.w	BPLCON0,$0200		; bitplanes off
 
 		dc.w	$0108,$0000		; even bitplanes modulo
 		dc.w	$010a,$0000		; odd bitplanes modulo
 
 		dc.w	DDFSTRT,$0038
 		dc.w	DDFSTOP,$00d0
+
+		dc.w	$0104,%100100	; set playfield prios
 
 		dc.w	$00e0
 logobp0h:	
@@ -1152,9 +1156,22 @@ logobp3h:
 logobp3l:	
 		dc.w	0	
 
+spoint:		; sprite pointers
+		dc.w	$120,0,$122,0,$124,0,$126,0
+		dc.w	$128,0,$12a,0,$12c,0,$12e,0
+		dc.w	$130,0,$132,0,$134,0,$136,0
+		dc.w	$138,0,$13a,0,$13c,0,$13e,0
+
+		dc.w	$01a2,$0444
+		dc.w	$01a4,$0888
+		dc.w	$01a6,$0ccc
+		dc.w	$01aa,$0444
+		dc.w	$01ac,$0888
+		dc.w	$01ae,$0ccc
+
 logoStartWait:
  		dc.w	$6001,$fffe
-		dc.w	$0100,$4200		; 4 bitplanes
+		dc.w	BPLCON0,$4200		; 4 bitplanes
 
 logoColors:
 		blk.w	((2+(14*2))*44)-2,0
@@ -1166,7 +1183,7 @@ logoEndWait:
 ;		dc.w	$0180,$0000
 
 		dc.w	$8401,$fffe		; start of "game" area
-		dc.w	$0100,$1200		; 1 bitplanes on
+		dc.w	BPLCON0,$1200		; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
 bp0:	dc.w	$00e2,$0000		;
 
@@ -1537,12 +1554,12 @@ obj_move:				;<calculate new object coords>
 		add.w	#(game_height+16+16)*128,d0
 .nly:
 		move.w	d0,obj_yfloat(a0)	;store y floating
-		lsr.w	#7,d0			;convert to integer
+		lsr.w	#7,d0				;convert to integer
 		move.w	d0,obj_yc(a0)		;y integer
 		
 		move.l	obj_coords(a0),a1	;pointer to coord tab
 		move.l	a1,d0
-		bne.s	.lineobj		;point or lines ?
+		bne.s	.lineobj			;point or lines ?
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d1
 		bsr		set_point
@@ -1574,6 +1591,14 @@ obj_move:				;<calculate new object coords>
 		subq.w	#1,d7
 .norotlines:	
 		movem.w	(a1)+,d0-d3
+		; muls.w	#3,d0
+		; muls.w	#3,d1
+		; muls.w	#3,d2
+		; muls.w	#3,d3
+		; asr.w	#2,d0			; test -> shrink
+		; asr.w	#2,d1
+		; asr.w	#2,d2
+		; asr.w	#2,d3
 		add.w	obj_xc(a0),d0
 		add.w	obj_xc(a0),d2
 		add.w	obj_yc(a0),d1
@@ -1592,6 +1617,7 @@ shot	=	1		;own shot
 big		=	2		;big asteroid
 medium	=	3		;medium asteroid
 small	=	4		;small asteroid
+zn_z	=	5
 ;---------------------------------------------
 coord_tabs:
 		dc.l	ship_coords
@@ -1599,6 +1625,7 @@ coord_tabs:
 		dc.l	astb_coords
 		dc.l	astm_coords
 		dc.l	asts_coords
+		dc.l	zn_z_coords
 		dc.l	0
 ;---------------------------------------------
 shot_con:		dc.w	0
@@ -1644,6 +1671,17 @@ asts_coords:	dc.w	5
 		dc.w	2,4,6,-2
 		dc.w	6,-2,2,-6
 ;---------------------------------------------
+zn_z_coords:	
+		dc.w	8				; anzahl linien
+		dc.w	-20,-16,9,-12	; linie 1: x1,y1, x2,y2
+		dc.w	9,-12,6,4		; linie 2: x1,y1, x2,y2
+		dc.w	6,4,14,4		; usw.
+		dc.w	14,4,14,13
+		dc.w	14,13,-13,8
+		dc.w	-13,8,0,-7
+		dc.w	0,-7,-17,-6
+		dc.w	-17,-6,-20,-16
+;---------------------------------------------
 enemys_set:
 		move.l	enemy_con(pc),d0
 		lea		enemy_structs(pc),a0
@@ -1655,8 +1693,8 @@ enemys_set:
 		bsr		obj_move
 		movem.l	(a7)+,d0/d7
 .nenemy:	
-		lea	obj_len(a0),a0
-		dbf	d7,.setenemys
+		lea		obj_len(a0),a0
+		dbf		d7,.setenemys
 		rts
 ;---------------------------------------------
 shot_init:				;<initialize a shot>
@@ -1774,7 +1812,7 @@ shot_collision:
 .nlast:
 		move.w	obj_name(a3),d0
 		lsl.w	#2,d0
-		lea	coord_tabs(pc),a4
+		lea		coord_tabs(pc),a4
 		move.l	(a4,d0.w),obj_coords(a3)
 		add.w	#32,obj_xvelo(a3)
 		add.w	#32,obj_yvelo(a3)
@@ -1788,7 +1826,7 @@ shot_collision:
 		neg.w	d4
 		move.w	obj_name(a3),d5
 		moveq	#0,d2
-		bsr	enemy_init
+		bsr		enemy_init
 		rts
 
 .nocoll:	move.l	a5,d7
@@ -1932,35 +1970,74 @@ game_init:				;<initialize game>
 		bsr		asteroids_init
 		rts
 ;---------------------------------------------
+ast_count = 1
+
+ast_x_start		= 80			; for big
+ast_x_offset 	= 32
+
+; ast_x_start		= 100			; for medium
+; ast_x_offset 	= 24
+
+; ast_x_start		= 70+((8*16)/2)			; for small
+; ast_x_offset 	= 16
+
 asteroids_init:
-		move.w	#60,d0			;x
-		move.w	#28,d1			;y
-		move.w	#0,d2			;angle
-		move.w	#40,d3			;x velo
-		move.w	#20,d4			;y velo
-		moveq	#big,d5			;name
-		bsr		enemy_init
+		move.w	#ast_x_start,d0		;x
+		move.w	#28,d1				;y
+		move.w	#0,d2				;angle
+		move.w	#0,d3				;x velo
+		move.w	#0,d4				;y velo
+		moveq	#zn_z,d5			;name
+		moveq	#ast_count-1,d7
+.loop:
+		move.l	d0,d6
+		bsr		getRandomNumber
+		and.l	#$1f,d0
+		sub.l	#$10,d0
+		move.l	d0,d3
+		bsr		getRandomNumber
+		and.l	#$1f,d0
+		sub.l	#$10,d0
+		move.l	d0,d4
+		move.l	d6,d0
 
-		move.w	#280,d0			;x
-		move.w	#128,d1			;y
-		move.w	#-25,d3			;x velo
-		move.w	#10,d4			;y velo
-		moveq	#big,d5			;name
+		movem.l	d0-d7/a0-a6,-(a7)
 		bsr		enemy_init
+		movem.l	(a7)+,d0-d7/a0-a6
 
-		move.w	#145,d0			;x
-		move.w	#13,d1			;y
-		move.w	#-12,d3			;x velo
-		move.w	#14,d4			;y velo
-		moveq	#big,d5			;name
-		bsr		enemy_init
+		add.w	#ast_x_offset,d0
 
-		move.w	#14,d0			;x
-		move.w	#942,d1			;y
-		move.w	#32,d3			;x velo
-		move.w	#5,d4			;y velo
-		moveq	#big,d5			;name
-		bsr		enemy_init
+		dbf		d7,.loop
+
+		; move.w	#64,d0			;x
+		; move.w	#28,d1			;y
+		; move.w	#0,d2			;angle
+		; move.w	#-4,d3			;x velo
+		; move.w	#-2,d4			;y velo
+		; moveq	#zn_z,d5		;name
+		; bsr		enemy_init
+
+
+		; move.w	#280,d0			;x
+		; move.w	#128,d1			;y
+		; move.w	#-25,d3			;x velo
+		; move.w	#10,d4			;y velo
+		; moveq	#big,d5			;name
+		; bsr		enemy_init
+
+		; move.w	#145,d0			;x
+		; move.w	#13,d1			;y
+		; move.w	#-12,d3			;x velo
+		; move.w	#14,d4			;y velo
+		; moveq	#big,d5			;name
+		; bsr		enemy_init
+
+		; move.w	#14,d0			;x
+		; move.w	#942,d1			;y
+		; move.w	#32,d3			;x velo
+		; move.w	#5,d4			;y velo
+		; moveq	#big,d5			;name
+		; bsr		enemy_init
 		rts
 ;---------------------------------------------
 shots_init:				;<initialize shot status>
@@ -2569,3 +2646,246 @@ sctab:
 ;--------------------------------------------
 linetab:	ds.b	200*16
 
+
+;---------------------------------------------
+; starfield
+;---------------------------------------------
+mlist:		
+		lea		slst0,a0
+		lea		scor1,a1
+		lea		pri1,a2
+;		moveq	#$28,d0
+		move.w	#$28,d0		; y start
+		move.w	#$29,d2		; y stop?
+		bsr		setup
+
+		lea		slst1,a0
+		lea		scor2,a1
+		lea		pri2,a2
+		moveq	#$29,d0
+		moveq	#$2a,d2
+		bsr		setup
+
+		lea		slst2,a0
+		lea		scor3,a1
+		lea		pri3,a2
+		moveq	#$29,d0
+		moveq	#$2a,d2
+		bsr		setup
+
+		lea		slst3,a0
+		lea		scor4,a1
+		lea		pri4,a2
+		moveq	#$28,d0
+		moveq	#$29,d2
+		bsr		setup
+	
+		move.l	#slst0,d0
+		lea		spoint+2,a0
+		move.w	d0,4(a0)
+		swap	d0
+		move.w	d0,(a0)
+		addq	#8,a0
+		move.l	#slst1,d0
+		move.w	d0,4(a0)
+		swap	d0
+		move.w	d0,(a0)
+		addq	#8,a0
+		move.l	#slst2,d0
+		move.w	d0,4(a0)
+		swap	d0
+		move.w	d0,(a0)
+		addq	#8,a0
+		move.l	#slst3,d0
+		move.w	d0,4(a0)
+		swap	d0
+		move.w	d0,(a0)
+		rts
+;---------------------------------------------
+; a0: sprite list (output)
+; a1: start x coords
+; a2: prio (color and speed)
+; d0: y start
+; d2: y stop?
+
+setup:		
+		move.w	(a1)+,d1
+		add.w	d0,d1
+		and.w	#$1ff,d1
+		move.l	#$00,d3
+		move.l	#$00,d5
+		move.b	d1,d3
+		and.b	#$01,d3
+		move.w	d1,d5
+		and.w	#$fffe,d5
+		ror.w	#1,d5
+		cmp.w	#$ff,d0		; y start > 255?
+		bls		nvsrhi
+		bset	#2,d3
+nvsrhi:		
+		cmp.w	#$ff,d2		; y stop > 255?
+		bls		nvsthi
+		bset	#1,d3
+nvsthi:		
+		move.l	d0,d4
+		ror.w	#8,d4
+		move.b	d5,d4
+		swap	d4	
+		move.b	d2,d4
+		rol.w	#8,d4
+		move.b	d3,d4
+		move.l	d4,(a0)+
+		lea		stab,a3
+		move.b	(a2)+,d5	; prio (color)
+		mulu	#4,d5
+		add.l	d5,a3
+		move.l	(a3),(a0)+
+		addq	#2,d0		; next v start
+		addq	#2,d2		; next v stop
+		cmp.w	#$a9,d0
+;		cmp.w	#$49,d0
+		bls		setup
+		move.l	#$00000000,(a0)+
+		rts
+;---------------------------------------------
+stars:		
+		lea		slst0+1,a0
+		lea		pri1,a1
+		lea		slst1+1,a2
+		lea		pri2,a3
+		lea		slst2+1,a4
+		lea		pri3,a5
+		move.l	#slst3+1,d3
+		move.l	#pri4,d2
+
+		moveq	#1,d7
+		move.w	#64,d0
+.loop:
+		; clr.w	d4
+		; move.b	(a1)+,d4	
+
+		; clr.w	d7
+		; move.b	(a0),d7			; h pos (bits 10-3)
+		; ; lsl.w	#1,d7
+		; lsl.w	#1,d7
+		; or.b	2(a0),d7
+		; add.w	d4,d7			; speed
+		; move.b	d7,d4
+		; ; and.b	#$01,d4
+		; and.b	#$01,d4
+		; move.b	d4,2(a0)
+		; ; lsr.w	#1,d7
+		; lsr.w	#1,d7
+		; move.b	d7,(a0)
+
+		eor.b	d7,2(a0)
+		bne.s	.noinc
+		add.b	d7,(a0)
+.noinc
+
+		; move.b	(a3)+,d4	
+		; clr.w	d7
+		; move.b	(a2),d7
+		; lsl.w	#1,d7
+		; or.b	2(a2),d7
+		; add.w	d4,d7			; speed
+		; move.b	d7,d4
+		; and.b	#$01,d4
+		; move.b	d4,2(a2)
+		; lsr.w	#1,d7
+		; move.b	d7,(a2)
+
+		; move.b	(a5)+,d4	
+		; clr.w	d7
+		; move.b	(a4),d7
+		; lsl.w	#1,d7
+		; or.b	2(a4),d7
+		; add.w	d4,d7			; speed
+		; move.b	d7,d4
+		; and.b	#$01,d4
+		; move.b	d4,2(a4)
+		; lsr.w	#1,d7
+		; move.b	d7,(a4)
+	
+		; move.l	d2,a6
+		; move.b	(a6),d4
+		; move.l	d3,a6
+		; clr.w	d7
+		; move.b	(a6),d7
+		; lsl.w	#1,d7
+		; or.b	2(a6),d7
+		; add.w	d4,d7			; speed
+		; move.b	d7,d4
+		; and.b	#$01,d4
+		; move.b	d4,2(a6)
+		; lsr.w	#1,d7
+		; move.b	d7,(a6)
+
+		lea		8(a0),a0
+		; addq	#8,a2
+		; addq	#8,a4
+		; addq	#8,d3
+		; addq	#1,d2
+
+		dbf		d0,.loop	
+		rts
+		
+stab:	dc.l	$00000000,$00010000,$00000001,$00010001,$00010001
+
+; star speeds
+pri1:		
+	dc.l $00020002,$00010002,$00010003,$00030003,$00010003,$00020003
+	dc.l $00030002,$00030003,$00030003,$00020002,$00020002,$00030002
+	dc.l $00010002,$00030003,$00020001,$00030003,$00020002,$00010003
+	dc.l $00010003,$00010002,$00030003,$00020002,$00030003,$00030001
+	dc.l $00030002,$00030003,$00020001,$00010001,$00020002,$00030002
+pri2:
+	dc.l $00030003,$00010003,$00030001,$00020001,$00030001,$00030003
+	dc.l $00010001,$00020003,$00030003,$00030002,$00030002,$00020001
+	dc.l $00030003,$00010001,$00030001,$00010003,$00030003,$00020001
+	dc.l $00030001,$00030002,$00020003,$00020001,$00020003,$00030003
+	dc.l $00020003,$00020003,$00020003,$00020001,$00030003,$00010002
+pri3:
+	dc.l $00030001,$00030001,$00030002,$00030003,$00020001,$00020001
+	dc.l $00030002,$00030002,$00010002,$00020003,$00030002,$00020001
+	dc.l $00020001,$00030001,$00030001,$00030003,$00010002,$00030001
+	dc.l $00010002,$00010002,$00020003,$00030002,$00010003,$00030001
+	dc.l $00020001,$00010003,$00020002,$00030002,$00030003,$00020003
+pri4:
+	dc.l $00010003,$00030003,$00010003,$00030001,$00030003,$00010003
+	dc.l $00020003,$00010003,$00030003,$00030003,$00030003,$00030002
+	dc.l $00020003,$00020003,$00020002,$00010003,$00020001,$00020003
+	dc.l $00030003,$00010002,$00020001,$00030003,$00020003,$00030002
+	dc.l $00030001,$00020002,$00030001,$00020001,$00010003,$00030003
+
+; starfield inital coordinates
+scor1:		
+	dc.l $003e014d,$01bc0175,$01990025,$00fb00e8,$03a601e6,$01680110
+	dc.l $01f100a4,$01e901de,$01110120,$01570167,$017b0155,$00e800ab
+	dc.l $00500178,$011500da,$001c0189,$01060120,$017b0152,$007600ed
+	dc.l $004100f8,$001c00b9,$012401fa,$00940150,$01e000c2,$01c70198
+	dc.l $01e400a5,$00d300d9,$01760070,$00700187,$015d016e,$01de0086
+scor2:
+	dc.l $010800f1,$004600f7,$0137005a,$00a8007d,$0123019f,$003f0004
+	dc.l $00250055,$016c010c,$01dd0139,$011c0170,$00de0034,$00af01ab
+	dc.l $01d300e7,$006301a4,$012501b2,$003a01f6,$0129013b,$016301b4
+	dc.l $00c30074,$002200b4,$008e012b,$00350059,$00890107,$01c100d4
+	dc.l $00370118,$00b600f5,$014f01de,$00bb006c,$00e001cb,$018f0093
+scor3:
+	dc.l $00f90055,$01fb01b9,$00d00174,$012f00e6,$016e01b1,$00b40023
+	dc.l $00d300ab,$00cc0147,$019f001f,$01610137,$013e0170,$016701b8
+	dc.l $008801b2,$00c701ac,$00ef002c,$00c601e4,$00270167,$00ef0060
+	dc.l $004b00af,$0079001d,$00870021,$002e015a,$00400130,$00d6005e
+	dc.l $00ba01ae,$001e00c6,$01420151,$01fe0148,$01d701c1,$00a301fd
+scor4:
+	dc.l $004f011a,$00d70127,$000100f7,$00e8007b,$01ec01fa,$001100eb
+	dc.l $016001d3,$006000e8,$012601ca,$0122012f,$012701c3,$01c70011
+	dc.l $009301cb,$014b0137,$008d001a,$001f01ed,$015001a4,$009201eb
+	dc.l $01d60115,$01b5009a,$00020065,$00c700de,$014800d8,$011b015e
+	dc.l $01d60188,$0080014a,$0037006f,$002c01a7,$018101ed,$001e0112
+
+; sprite lists
+slst0:		ds.b	$140*8
+slst1:		ds.b	$140*8
+slst2:		ds.b	$140*8
+slst3:		ds.b	$140*8
