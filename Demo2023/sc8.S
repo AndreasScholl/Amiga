@@ -2605,6 +2605,7 @@ jkcode:		dc.b	0
 jkbutt:		dc.b	0
 		even
 ;-------------------------------------------------------
+; sin cos table
 sctab:
  dc.l $00007fff,$023c7ffa,$04787feb,$06b37fd2,$08ee7faf,$0b287f82
  dc.l $0d617f4b,$0f997f0b,$11d07ec0,$14067e6c,$163a7e0d,$186c7da5
@@ -2673,32 +2674,28 @@ linetab:	ds.b	200*16
 ;---------------------------------------------
 ; starfield
 ;---------------------------------------------
-stars_count		= 128
+stars_count		= 105
 
 setupStarfield:		
 		lea		slst0,a0
-		; lea		pri1,a2
 		move.w	#$30,d0		; y start
 		lea		starGfx,a3
 		move.w	#stars_count-1,d7
 		bsr		setupSpritelist
 
 		lea		slst1,a0
-		; lea		pri2,a2
 		moveq	#$31,d0
 		lea		starGfx+4,a3
 		move.w	#stars_count-1,d7
 		bsr		setupSpritelist
 
 		lea		slst2,a0
-		; lea		pri3,a2
 		moveq	#$30,d0
 		lea		starGfx+8,a3
 		move.w	#stars_count-1,d7
 		bsr		setupSpritelist
 
 		lea		slst3,a0
-		; lea		pri4,a2
 		moveq	#$31,d0
 		lea		starGfx,a3
 		move.w	#stars_count-1,d7
@@ -2736,11 +2733,8 @@ setupSpritelist:
 		move.w	d0,d2
 		addq	#1,d2
 .loop:
-;		move.w	(a1)+,d1	; xpos
-;		add.w	d0,d1
 		move.w	d0,d6
 		bsr		getRandomNumber
-;		move.w	#$f0,d0
 		move.w	d0,d1
 		and.w	#$1ff,d1
 		move.w	d6,d0
@@ -2768,11 +2762,10 @@ setupSpritelist:
 		rol.w	#8,d4
 		move.b	d3,d4
 		move.l	d4,(a0)+
-		; move.b	(a2)+,d5	; prio (color)
-		; mulu	#4,d5
-		; add.l	d5,a3
+
 		move.l	(a3),(a0)+	; gfx
 
+		; scroller copperbar coord. skip
 		cmp.w	#$cc,d0			; scrollerbar = cf - e0
 		ble		.noScrollerBar
 		cmp.w	#$e0,d0
@@ -2780,6 +2773,7 @@ setupSpritelist:
 		add.w	#$22,d0
 		add.w	#$22,d2
 .noScrollerBar
+
 		addq	#2,d0		; next v start
 		addq	#2,d2		; next v stop
 		dbf		d7,.loop
@@ -2789,7 +2783,6 @@ setupSpritelist:
 ;---------------------------------------------
 updateStars:		
 		moveq	#1,d0
-		; move.w	#(stars_count-64)-1,d7
 		move.w	#stars_count-1,d7
 		lea		slst0+1,a0
 .loop:
@@ -2816,98 +2809,10 @@ updateStars:
 		lea		8(a0),a0
 		dbf		d7,.loop	
 		rts
-
-		moveq	#1,d0
-		moveq	#0,d1
-		move.w	#10-1,d7
-.loop2:
-		; eor.b	d0,2(a0)
-		; btst	#0,2(a0)
-		; bne.s	.noinc
-		move.b	(a0),d1
-		add.b	d0,d1
-		cmp.w   #$d0,d1
-		bls		.nohix1
-		sub.w	#$d0-$60,d1
-.nohix1:
-		move.b	d1,(a0)
-
- 		move.b	(stars_count*8)+4(a0),d1
- 		add.b	#2,d1
- 		cmp.w   #$d0,d1
- 		bls		.nohix2
- 		sub.w	#$d0-$60,d1
- .nohix2:
- 		move.b	d1,(stars_count*8)+4(a0)
-
-		eor.b	d0,stars_count*16+2+8(a0)
-		btst	#0,stars_count*16+2+8(a0)
-		bne.s	.noinc2
-		add.b	d0,stars_count*16+8(a0)
-
-		eor.b	d0,stars_count*24+2+12(a0)
-		btst	#0,stars_count*24+2+12(a0)
-		bne.s	.noinc2
-		add.b	d0,stars_count*24+12(a0)
-.noinc2
-		lea		8(a0),a0
-		dbf		d7,.loop2
-
-		moveq	#(64-10)-1,d7
-.loop3:
-		eor.b	d0,2(a0)
-		btst	#0,2(a0)
-		bne.s	.noinc3
-		add.b	d0,(a0)
-
-		eor.b	d0,stars_count*8+2+4(a0)
-		btst	#0,stars_count*8+2+4(a0)
-		bne.s	.noinc3
-		add.b	d0,stars_count*8+4(a0)
-
-		eor.b	d0,stars_count*16+2+8(a0)
-		btst	#0,stars_count*16+2+8(a0)
-		bne.s	.noinc3
-		add.b	d0,stars_count*16+8(a0)
-
-		eor.b	d0,stars_count*24+2+12(a0)
-		btst	#0,stars_count*24+2+12(a0)
-		bne.s	.noinc3
-		add.b	d0,stars_count*24+12(a0)
-.noinc3
-		lea		8(a0),a0
-		dbf		d7,.loop3	
-
 		rts
 		
 starGfx:	
 		dc.l	$00010000,$00000001,$00010001
-
-; star speeds
-; pri1:		
-; 	dc.l $00020002,$00010002,$00010003,$00030003,$00010003,$00020003
-; 	dc.l $00030002,$00030003,$00030003,$00020002,$00020002,$00030002
-; 	dc.l $00010002,$00030003,$00020001,$00030003,$00020002,$00010003
-; 	dc.l $00010003,$00010002,$00030003,$00020002,$00030003,$00030001
-; 	dc.l $00030002,$00030003,$00020001,$00010001,$00020002,$00030002
-; pri2:
-; 	dc.l $00030003,$00010003,$00030001,$00020001,$00030001,$00030003
-; 	dc.l $00010001,$00020003,$00030003,$00030002,$00030002,$00020001
-; 	dc.l $00030003,$00010001,$00030001,$00010003,$00030003,$00020001
-; 	dc.l $00030001,$00030002,$00020003,$00020001,$00020003,$00030003
-; 	dc.l $00020003,$00020003,$00020003,$00020001,$00030003,$00010002
-; pri3:
-; 	dc.l $00030001,$00030001,$00030002,$00030003,$00020001,$00020001
-; 	dc.l $00030002,$00030002,$00010002,$00020003,$00030002,$00020001
-; 	dc.l $00020001,$00030001,$00030001,$00030003,$00010002,$00030001
-; 	dc.l $00010002,$00010002,$00020003,$00030002,$00010003,$00030001
-; 	dc.l $00020001,$00010003,$00020002,$00030002,$00030003,$00020003
-; pri4:
-; 	dc.l $00010003,$00030003,$00010003,$00030001,$00030003,$00010003
-; 	dc.l $00020003,$00010003,$00030003,$00030003,$00030003,$00030002
-; 	dc.l $00020003,$00020003,$00020002,$00010003,$00020001,$00020003
-; 	dc.l $00030003,$00010002,$00020001,$00030003,$00020003,$00030002
-; 	dc.l $00030001,$00020002,$00030001,$00020001,$00010003,$00030003
 
 ; sprite lists
 slst0:		ds.b	stars_count*8
