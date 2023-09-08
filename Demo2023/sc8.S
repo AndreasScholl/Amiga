@@ -77,8 +77,8 @@ st:
 
 		bsr		buildLogoColors
 
-		bsr		mlist				; starfield
-		bsr		mctab
+		bsr		setupStarfield	; starfield
+		bsr		setupScroller
 		bsr		initPoints
 		bsr		game_init
 
@@ -138,7 +138,7 @@ vblank:
 .ncol:		
 		bsr		getkey
 
-		bsr		stars
+		bsr		updateStars
 		bsr		clear			;clear screen
 		bsr		game
 		; bsr		game
@@ -683,6 +683,16 @@ table2:
 tabend2:
 
 ;------------------------
+setupScroller:
+		bsr		mctab
+
+		lea		$6e000-li,a0		; one more line for empty line -> sprite display
+		move.l	#(li*8)/4,d7
+.clear:
+		clr.l	(a0)+
+		dbf		d7,.clear
+
+		rts
 mctab:		
 		lea		rchartab,a0
 		lea		chartab,a1
@@ -1129,14 +1139,22 @@ clist:
 		dc.w	DDFSTRT,$0038
 		dc.w	DDFSTOP,$00d0
 
-		dc.w	$0104,%100100	; set playfield prios
+		; dc.w	$0104,%100100	; set playfield prios
+		dc.w	$0104,%000000	; set playfield prios	(sprites behind playfields)
 
-		dc.w	$00e0
-logobp0h:	
-		dc.w	0	
-		dc.w	$00e2
-logobp0l:	
-		dc.w	0	
+spoint:		; sprite pointers
+		dc.w	$120,0,$122,0,$124,0,$126,0
+		dc.w	$128,0,$12a,0,$12c,0,$12e,0
+		dc.w	$130,0,$132,0,$134,0,$136,0
+		dc.w	$138,0,$13a,0,$13c,0,$13e,0
+
+		dc.w	$01a2,$0842		; 1
+		dc.w	$01a4,$0371		; 2
+		dc.w	$01a6,$0fff
+		dc.w	$01aa,$0125		; 4
+		dc.w	$01ac,$0fff
+		dc.w	$01ae,$0631		; 3
+
 		dc.w	$00e4
 logobp1h:	
 		dc.w	0	
@@ -1156,22 +1174,24 @@ logobp3h:
 logobp3l:	
 		dc.w	0	
 
-spoint:		; sprite pointers
-		dc.w	$120,0,$122,0,$124,0,$126,0
-		dc.w	$128,0,$12a,0,$12c,0,$12e,0
-		dc.w	$130,0,$132,0,$134,0,$136,0
-		dc.w	$138,0,$13a,0,$13c,0,$13e,0
-
-		dc.w	$01a2,$0444
-		dc.w	$01a4,$0888
-		dc.w	$01a6,$0ccc
-		dc.w	$01aa,$0444
-		dc.w	$01ac,$0888
-		dc.w	$01ae,$0ccc
+		dc.w	$2001,$fffe			; stars start
+		dc.w	$0182,$0000	   ; black plane
+		dc.w	BPLCON0,$1200		; one plane
+		dc.w	$00e0,$0006
+		dc.w	$00e2,$e000-li
+		dc.w	$0108,$ffd8			; even bitplanes modulo
 
 logoStartWait:
  		dc.w	$6001,$fffe
 		dc.w	BPLCON0,$4200		; 4 bitplanes
+		dc.w	$0108,$0000			; even bitplanes modulo
+
+		dc.w	$00e0
+logobp0h:	
+		dc.w	0	
+		dc.w	$00e2
+logobp0l:	
+		dc.w	0	
 
 logoColors:
 		blk.w	((2+(14*2))*44)-2,0
@@ -1180,7 +1200,11 @@ logoEndWait:
  		dc.w	$8c01,$fffe			; logo end wait
 		dc.w	BPLCON0,$0200		; bitplanes off
 
-;		dc.w	$0180,$0000
+		dc.w	$0182,$0000	   ; black plane
+		dc.w	BPLCON0,$1200		; one plane
+		dc.w	$00e0,$0006
+		dc.w	$00e2,$e000-li
+		dc.w	$0108,$ffd8			; even bitplanes modulo
 
 		dc.w	$8401,$fffe		; start of "game" area
 		dc.w	BPLCON0,$1200		; 1 bitplanes on
@@ -1205,7 +1229,6 @@ bp0:	dc.w	$00e2,$0000		;
 		dc.w	$0182,$0bbb
 		dc.w	$0100,$2600				; 2 bitplanes on	(dual playfield mode)
 		dc.w	$00e4,$0007				; bitplane 01
-		; dc.w	$00e6,(li*15)-2		 ; + lines offset to adjust shadow pos
 		dc.w	$00e6,(li*75)-2		 ; + lines offset to adjust shadow pos
 		dc.w	$0192,$0000		; shadow color
 
@@ -1482,7 +1505,7 @@ obj_thrust:				;<accelerate object, value in d2>
 		add.w	#360,d1
 .angleok:
 		lsl.w	#2,d1
-		lea	sctab(pc),a3
+		lea		sctab(pc),a3
 
 		move.w	d2,d4			;save thrust value
 		muls	2(a3,d1.w),d2		;dx=cos(angle)*value
@@ -2650,35 +2673,36 @@ linetab:	ds.b	200*16
 ;---------------------------------------------
 ; starfield
 ;---------------------------------------------
-mlist:		
+stars_count		= 128
+
+setupStarfield:		
 		lea		slst0,a0
-		lea		scor1,a1
-		lea		pri1,a2
-;		moveq	#$28,d0
-		move.w	#$28,d0		; y start
-		move.w	#$29,d2		; y stop?
-		bsr		setup
+		; lea		pri1,a2
+		move.w	#$30,d0		; y start
+		lea		starGfx,a3
+		move.w	#stars_count-1,d7
+		bsr		setupSpritelist
 
 		lea		slst1,a0
-		lea		scor2,a1
-		lea		pri2,a2
-		moveq	#$29,d0
-		moveq	#$2a,d2
-		bsr		setup
+		; lea		pri2,a2
+		moveq	#$31,d0
+		lea		starGfx+4,a3
+		move.w	#stars_count-1,d7
+		bsr		setupSpritelist
 
 		lea		slst2,a0
-		lea		scor3,a1
-		lea		pri3,a2
-		moveq	#$29,d0
-		moveq	#$2a,d2
-		bsr		setup
+		; lea		pri3,a2
+		moveq	#$30,d0
+		lea		starGfx+8,a3
+		move.w	#stars_count-1,d7
+		bsr		setupSpritelist
 
 		lea		slst3,a0
-		lea		scor4,a1
-		lea		pri4,a2
-		moveq	#$28,d0
-		moveq	#$29,d2
-		bsr		setup
+		; lea		pri4,a2
+		moveq	#$31,d0
+		lea		starGfx,a3
+		move.w	#stars_count-1,d7
+		bsr		setupSpritelist
 	
 		move.l	#slst0,d0
 		lea		spoint+2,a0
@@ -2706,27 +2730,36 @@ mlist:
 ; a1: start x coords
 ; a2: prio (color and speed)
 ; d0: y start
-; d2: y stop?
+; d7: # of stars
 
-setup:		
-		move.w	(a1)+,d1
-		add.w	d0,d1
+setupSpritelist:
+		move.w	d0,d2
+		addq	#1,d2
+.loop:
+;		move.w	(a1)+,d1	; xpos
+;		add.w	d0,d1
+		move.w	d0,d6
+		bsr		getRandomNumber
+;		move.w	#$f0,d0
+		move.w	d0,d1
 		and.w	#$1ff,d1
-		move.l	#$00,d3
-		move.l	#$00,d5
+		move.w	d6,d0
+
+		moveq	#0,d3
+		moveq	#0,d5
 		move.b	d1,d3
 		and.b	#$01,d3
 		move.w	d1,d5
-		and.w	#$fffe,d5
-		ror.w	#1,d5
+		lsr.w	#1,d5
+
 		cmp.w	#$ff,d0		; y start > 255?
-		bls		nvsrhi
-		bset	#2,d3
-nvsrhi:		
+		bls		.nvsrhi
+		bset	#2,d3		; y start hi bit
+.nvsrhi:		
 		cmp.w	#$ff,d2		; y stop > 255?
-		bls		nvsthi
-		bset	#1,d3
-nvsthi:		
+		bls		.nvsthi
+		bset	#1,d3		; y stop hi bit
+.nvsthi:		
 		move.l	d0,d4
 		ror.w	#8,d4
 		move.b	d5,d4
@@ -2735,157 +2768,153 @@ nvsthi:
 		rol.w	#8,d4
 		move.b	d3,d4
 		move.l	d4,(a0)+
-		lea		stab,a3
-		move.b	(a2)+,d5	; prio (color)
-		mulu	#4,d5
-		add.l	d5,a3
-		move.l	(a3),(a0)+
+		; move.b	(a2)+,d5	; prio (color)
+		; mulu	#4,d5
+		; add.l	d5,a3
+		move.l	(a3),(a0)+	; gfx
+
+		cmp.w	#$cc,d0			; scrollerbar = cf - e0
+		ble		.noScrollerBar
+		cmp.w	#$e0,d0
+		bhi		.noScrollerBar
+		add.w	#$22,d0
+		add.w	#$22,d2
+.noScrollerBar
 		addq	#2,d0		; next v start
 		addq	#2,d2		; next v stop
-		cmp.w	#$a9,d0
-;		cmp.w	#$49,d0
-		bls		setup
-		move.l	#$00000000,(a0)+
+		dbf		d7,.loop
+
+		move.l	#0,(a0)+	; end of sprite list
 		rts
 ;---------------------------------------------
-stars:		
+updateStars:		
+		moveq	#1,d0
+		; move.w	#(stars_count-64)-1,d7
+		move.w	#stars_count-1,d7
 		lea		slst0+1,a0
-		lea		pri1,a1
-		lea		slst1+1,a2
-		lea		pri2,a3
-		lea		slst2+1,a4
-		lea		pri3,a5
-		move.l	#slst3+1,d3
-		move.l	#pri4,d2
-
-		moveq	#1,d7
-		move.w	#64,d0
 .loop:
-		; clr.w	d4
-		; move.b	(a1)+,d4	
-
-		; clr.w	d7
-		; move.b	(a0),d7			; h pos (bits 10-3)
-		; ; lsl.w	#1,d7
-		; lsl.w	#1,d7
-		; or.b	2(a0),d7
-		; add.w	d4,d7			; speed
-		; move.b	d7,d4
-		; ; and.b	#$01,d4
-		; and.b	#$01,d4
-		; move.b	d4,2(a0)
-		; ; lsr.w	#1,d7
-		; lsr.w	#1,d7
-		; move.b	d7,(a0)
-
-		eor.b	d7,2(a0)
+		eor.b	d0,2(a0)
+		btst	#0,2(a0)
 		bne.s	.noinc
-		add.b	d7,(a0)
+		add.b	d0,(a0)
+
+		eor.b	d0,stars_count*8+2+4(a0)
+		btst	#0,stars_count*8+2+4(a0)
+		bne.s	.noinc
+		add.b	d0,stars_count*8+4(a0)
+
+		eor.b	d0,stars_count*16+2+8(a0)
+		btst	#0,stars_count*16+2+8(a0)
+		bne.s	.noinc
+		add.b	d0,stars_count*16+8(a0)
+
+		eor.b	d0,stars_count*24+2+12(a0)
+		btst	#0,stars_count*24+2+12(a0)
+		bne.s	.noinc
+		add.b	d0,stars_count*24+12(a0)
 .noinc
-
-		; move.b	(a3)+,d4	
-		; clr.w	d7
-		; move.b	(a2),d7
-		; lsl.w	#1,d7
-		; or.b	2(a2),d7
-		; add.w	d4,d7			; speed
-		; move.b	d7,d4
-		; and.b	#$01,d4
-		; move.b	d4,2(a2)
-		; lsr.w	#1,d7
-		; move.b	d7,(a2)
-
-		; move.b	(a5)+,d4	
-		; clr.w	d7
-		; move.b	(a4),d7
-		; lsl.w	#1,d7
-		; or.b	2(a4),d7
-		; add.w	d4,d7			; speed
-		; move.b	d7,d4
-		; and.b	#$01,d4
-		; move.b	d4,2(a4)
-		; lsr.w	#1,d7
-		; move.b	d7,(a4)
-	
-		; move.l	d2,a6
-		; move.b	(a6),d4
-		; move.l	d3,a6
-		; clr.w	d7
-		; move.b	(a6),d7
-		; lsl.w	#1,d7
-		; or.b	2(a6),d7
-		; add.w	d4,d7			; speed
-		; move.b	d7,d4
-		; and.b	#$01,d4
-		; move.b	d4,2(a6)
-		; lsr.w	#1,d7
-		; move.b	d7,(a6)
-
 		lea		8(a0),a0
-		; addq	#8,a2
-		; addq	#8,a4
-		; addq	#8,d3
-		; addq	#1,d2
+		dbf		d7,.loop	
+		rts
 
-		dbf		d0,.loop	
+		moveq	#1,d0
+		moveq	#0,d1
+		move.w	#10-1,d7
+.loop2:
+		; eor.b	d0,2(a0)
+		; btst	#0,2(a0)
+		; bne.s	.noinc
+		move.b	(a0),d1
+		add.b	d0,d1
+		cmp.w   #$d0,d1
+		bls		.nohix1
+		sub.w	#$d0-$60,d1
+.nohix1:
+		move.b	d1,(a0)
+
+ 		move.b	(stars_count*8)+4(a0),d1
+ 		add.b	#2,d1
+ 		cmp.w   #$d0,d1
+ 		bls		.nohix2
+ 		sub.w	#$d0-$60,d1
+ .nohix2:
+ 		move.b	d1,(stars_count*8)+4(a0)
+
+		eor.b	d0,stars_count*16+2+8(a0)
+		btst	#0,stars_count*16+2+8(a0)
+		bne.s	.noinc2
+		add.b	d0,stars_count*16+8(a0)
+
+		eor.b	d0,stars_count*24+2+12(a0)
+		btst	#0,stars_count*24+2+12(a0)
+		bne.s	.noinc2
+		add.b	d0,stars_count*24+12(a0)
+.noinc2
+		lea		8(a0),a0
+		dbf		d7,.loop2
+
+		moveq	#(64-10)-1,d7
+.loop3:
+		eor.b	d0,2(a0)
+		btst	#0,2(a0)
+		bne.s	.noinc3
+		add.b	d0,(a0)
+
+		eor.b	d0,stars_count*8+2+4(a0)
+		btst	#0,stars_count*8+2+4(a0)
+		bne.s	.noinc3
+		add.b	d0,stars_count*8+4(a0)
+
+		eor.b	d0,stars_count*16+2+8(a0)
+		btst	#0,stars_count*16+2+8(a0)
+		bne.s	.noinc3
+		add.b	d0,stars_count*16+8(a0)
+
+		eor.b	d0,stars_count*24+2+12(a0)
+		btst	#0,stars_count*24+2+12(a0)
+		bne.s	.noinc3
+		add.b	d0,stars_count*24+12(a0)
+.noinc3
+		lea		8(a0),a0
+		dbf		d7,.loop3	
+
 		rts
 		
-stab:	dc.l	$00000000,$00010000,$00000001,$00010001,$00010001
+starGfx:	
+		dc.l	$00010000,$00000001,$00010001
 
 ; star speeds
-pri1:		
-	dc.l $00020002,$00010002,$00010003,$00030003,$00010003,$00020003
-	dc.l $00030002,$00030003,$00030003,$00020002,$00020002,$00030002
-	dc.l $00010002,$00030003,$00020001,$00030003,$00020002,$00010003
-	dc.l $00010003,$00010002,$00030003,$00020002,$00030003,$00030001
-	dc.l $00030002,$00030003,$00020001,$00010001,$00020002,$00030002
-pri2:
-	dc.l $00030003,$00010003,$00030001,$00020001,$00030001,$00030003
-	dc.l $00010001,$00020003,$00030003,$00030002,$00030002,$00020001
-	dc.l $00030003,$00010001,$00030001,$00010003,$00030003,$00020001
-	dc.l $00030001,$00030002,$00020003,$00020001,$00020003,$00030003
-	dc.l $00020003,$00020003,$00020003,$00020001,$00030003,$00010002
-pri3:
-	dc.l $00030001,$00030001,$00030002,$00030003,$00020001,$00020001
-	dc.l $00030002,$00030002,$00010002,$00020003,$00030002,$00020001
-	dc.l $00020001,$00030001,$00030001,$00030003,$00010002,$00030001
-	dc.l $00010002,$00010002,$00020003,$00030002,$00010003,$00030001
-	dc.l $00020001,$00010003,$00020002,$00030002,$00030003,$00020003
-pri4:
-	dc.l $00010003,$00030003,$00010003,$00030001,$00030003,$00010003
-	dc.l $00020003,$00010003,$00030003,$00030003,$00030003,$00030002
-	dc.l $00020003,$00020003,$00020002,$00010003,$00020001,$00020003
-	dc.l $00030003,$00010002,$00020001,$00030003,$00020003,$00030002
-	dc.l $00030001,$00020002,$00030001,$00020001,$00010003,$00030003
-
-; starfield inital coordinates
-scor1:		
-	dc.l $003e014d,$01bc0175,$01990025,$00fb00e8,$03a601e6,$01680110
-	dc.l $01f100a4,$01e901de,$01110120,$01570167,$017b0155,$00e800ab
-	dc.l $00500178,$011500da,$001c0189,$01060120,$017b0152,$007600ed
-	dc.l $004100f8,$001c00b9,$012401fa,$00940150,$01e000c2,$01c70198
-	dc.l $01e400a5,$00d300d9,$01760070,$00700187,$015d016e,$01de0086
-scor2:
-	dc.l $010800f1,$004600f7,$0137005a,$00a8007d,$0123019f,$003f0004
-	dc.l $00250055,$016c010c,$01dd0139,$011c0170,$00de0034,$00af01ab
-	dc.l $01d300e7,$006301a4,$012501b2,$003a01f6,$0129013b,$016301b4
-	dc.l $00c30074,$002200b4,$008e012b,$00350059,$00890107,$01c100d4
-	dc.l $00370118,$00b600f5,$014f01de,$00bb006c,$00e001cb,$018f0093
-scor3:
-	dc.l $00f90055,$01fb01b9,$00d00174,$012f00e6,$016e01b1,$00b40023
-	dc.l $00d300ab,$00cc0147,$019f001f,$01610137,$013e0170,$016701b8
-	dc.l $008801b2,$00c701ac,$00ef002c,$00c601e4,$00270167,$00ef0060
-	dc.l $004b00af,$0079001d,$00870021,$002e015a,$00400130,$00d6005e
-	dc.l $00ba01ae,$001e00c6,$01420151,$01fe0148,$01d701c1,$00a301fd
-scor4:
-	dc.l $004f011a,$00d70127,$000100f7,$00e8007b,$01ec01fa,$001100eb
-	dc.l $016001d3,$006000e8,$012601ca,$0122012f,$012701c3,$01c70011
-	dc.l $009301cb,$014b0137,$008d001a,$001f01ed,$015001a4,$009201eb
-	dc.l $01d60115,$01b5009a,$00020065,$00c700de,$014800d8,$011b015e
-	dc.l $01d60188,$0080014a,$0037006f,$002c01a7,$018101ed,$001e0112
+; pri1:		
+; 	dc.l $00020002,$00010002,$00010003,$00030003,$00010003,$00020003
+; 	dc.l $00030002,$00030003,$00030003,$00020002,$00020002,$00030002
+; 	dc.l $00010002,$00030003,$00020001,$00030003,$00020002,$00010003
+; 	dc.l $00010003,$00010002,$00030003,$00020002,$00030003,$00030001
+; 	dc.l $00030002,$00030003,$00020001,$00010001,$00020002,$00030002
+; pri2:
+; 	dc.l $00030003,$00010003,$00030001,$00020001,$00030001,$00030003
+; 	dc.l $00010001,$00020003,$00030003,$00030002,$00030002,$00020001
+; 	dc.l $00030003,$00010001,$00030001,$00010003,$00030003,$00020001
+; 	dc.l $00030001,$00030002,$00020003,$00020001,$00020003,$00030003
+; 	dc.l $00020003,$00020003,$00020003,$00020001,$00030003,$00010002
+; pri3:
+; 	dc.l $00030001,$00030001,$00030002,$00030003,$00020001,$00020001
+; 	dc.l $00030002,$00030002,$00010002,$00020003,$00030002,$00020001
+; 	dc.l $00020001,$00030001,$00030001,$00030003,$00010002,$00030001
+; 	dc.l $00010002,$00010002,$00020003,$00030002,$00010003,$00030001
+; 	dc.l $00020001,$00010003,$00020002,$00030002,$00030003,$00020003
+; pri4:
+; 	dc.l $00010003,$00030003,$00010003,$00030001,$00030003,$00010003
+; 	dc.l $00020003,$00010003,$00030003,$00030003,$00030003,$00030002
+; 	dc.l $00020003,$00020003,$00020002,$00010003,$00020001,$00020003
+; 	dc.l $00030003,$00010002,$00020001,$00030003,$00020003,$00030002
+; 	dc.l $00030001,$00020002,$00030001,$00020001,$00010003,$00030003
 
 ; sprite lists
-slst0:		ds.b	$140*8
-slst1:		ds.b	$140*8
-slst2:		ds.b	$140*8
-slst3:		ds.b	$140*8
+slst0:		ds.b	stars_count*8
+			dc.l	0
+slst1:		ds.b	stars_count*8
+			dc.l	0
+slst2:		ds.b	stars_count*8
+			dc.l	0
+slst3:		ds.b	stars_count*8
+			dc.l	0
