@@ -27,11 +27,10 @@ ds		 		= $14			; destination start	of scroller turn
 game_width		= 352
 game_height		= 160
 
-
-numPoints		= 128
+;numPoints		= 128
+numPoints		= 64
 
 		section "code",data,chip
-
 init:
 		move.l	#st,$80
 		trap	#0
@@ -39,7 +38,7 @@ init:
 		move.l	$4,a6
 		move.l	#lib,a1
 		clr.l	d0
-		jsr	-552(a6)
+		jsr		-552(a6)
 		move.l	d0,a4
 		move.l	38(a4),$dff080
 		clr.w	$dff088
@@ -80,7 +79,7 @@ st:
 		bsr		setupStarfield	; starfield
 		bsr		setupScroller
 		bsr		initPoints
-		bsr		game_init
+		bsr		initGame
 
 ;		move.w	#$0020,$dff096
 
@@ -122,13 +121,9 @@ main:
 		rts
 ;--------------------------------------------------------------
 vblank:		
-		btst	#5,$dff01f		;vbl int.?
+		btst	#5,$dff01f		; vbl int.?
 		beq.s	.nvbl
 ;		move.w	#$0020,$dff096	; disable sprite dma
-
-		; cmp.w	#1,lockblank
-		; beq		.nvbl
-		; move.w	#1,lockblank
 
 		movem.l	d0-d7/a0-a6,-(a7)
 
@@ -138,73 +133,31 @@ vblank:
 .ncol:		
 		bsr		getkey
 
-		bsr		updateStars
 		bsr		clear			;clear screen
-		bsr		game
-		; bsr		game
-;		move.w	#0,$dff180
+		bsr		updateStars
+ 		bsr		updateGame
 
-		tst.l	enemy_con
-		bne.s	.hmm
-		bsr		game_init
-.hmm:
+; 		tst.l	enemy_con		; all enemies gone?
+; 		bne.s	.hmm
+; 		bsr		initGame		; reset game
+; .hmm:
 		lea		$dff000,a6
 		bsr		scroll
-
 		; move.w	#$424,$180(a6)
 		bsr		postEffect
 
-		; ; ; move.w	#$266,$180(a6)
+		; move.w	#$266,$180(a6)
 		lea		$dff000,a6
 		bsr		addPoints
 		bsr		drawPoints
-		; ; move.w	#$882,$180(a6)
-		; ; bsr		updateLogoColors		; super slow :(
+		; move.w	#$882,$180(a6)
+		; bsr		updateLogoColors		; super slow :(
 		bsr		updateLogoPos
-
-; 		move.l	#20000,d7
-; .delay:
-; 		sub.l	#1,d7
-; 		bne		.delay
 
 		movem.l	(a7)+,d0-d7/a0-a6
 		move.w	#$0020,$dff09c
-		; move.w	#0,lockblank
 .nvbl:		
 		rte
-
-lockblank:
-		dc.w	0
-
-;--------------------------------------------------------------
-; begin:	
-; rwait:		
-; 		cmp.b	#$2c,$006(a6)
-; 		bne.s	rwait
-		
-; 		; move.w	#-1,$180(a6)
-
-; 		bsr		scroll
-; 		; move.w	#$424,$180(a6)
-; 		bsr		postEffect
-; 		; move.w	#$266,$180(a6)
-
-; 		; bsr		addPoints
-; 		; bsr		drawPoints
-
-; 		; move.w	#$882,$180(a6)
-
-; 		; bsr		updateLogoColors		; super slow :(
-; 		bsr		updateLogoPos
-; 		; bsr		colortest
-; 		; move.w	#0,$180(a6)
-
-; .pause:		
-; 		btst	#6,$bfe001
-; 		beq		.pause
-
-; 		bra		begin
-; 		rte
 
 ;-------
 initPoints:
@@ -1401,51 +1354,61 @@ rchartab:
 		blk.w	256,0
 
 ;--------------------------------------------------------------
-game:		
-		;<enemys>
+updateGame:		
+		; enemys / asteroids
 		lea		linetab(pc),a6		
-		bsr		enemys_set
-		clr.w	(a6)		
+		bsr		updateEnemies
+		clr.w	(a6)			; and of draw table
 		bsr		objects_draw
 
+		; player and shots
 		lea		linetab(pc),a6
-
 		tst.b	ship_next
 		bne.s	.nsdraw
 		move.l	a6,-(a7)
-		bsr		shipcoll		;collision
+		bsr		shipcoll		; collision
 		move.l	(a7)+,a6
 		bsr		ship_set
 .nsdraw:	
 		bsr		ship_explode
 		bsr		shots_set
-		clr.w	(a6)
+		clr.w	(a6)			; and of draw table
 		bsr		objects_draw
 
-		cmp.b	#$45,kcode
+		cmp.b	#$45,kcode		; escape key?
 		bne.s	.nrestart
 		clr.b	kcode
-		tst.b	ship_next
+		tst.b	ship_next		; ship destroyed?
 		beq.s	.nrestart
 		sf		ship_next
-		bsr		game_init
+		bsr		initGame
 .nrestart:
+		; letter counter and initialization
+		lea		letters_init,a0
+		tst.w	(a0)
+		beq		.noLetterInit
+		sub.w	#1,(a0)
+		bne		.noLetterInit
+		move.w	#20*50,(a0)		; delay for next letters
+		bsr		asteroids_init
+.noLetterInit:
 
 		rts
 **********************************************************************
 *vector object_class                                                 *
 *
-			rsreset
-obj_xc:		rs.w	1		;x-coordinate
-obj_yc:		rs.w	1		;y-coordinate
-obj_xfloat:	rs.w	1		;x-coordinate (floating)
-obj_yfloat:	rs.w	1		;y-coordinate (floating)
-obj_angle:	rs.w	1		;angle
-obj_coords:	rs.l	1		;pointer on coord-table
-obj_xvelo:	rs.w	1		:x velocity
-obj_yvelo:	rs.w	1		:y velocity
-obj_name:	rs.w	1		;name (identification)
-obj_len:	rs.w	0
+				rsreset
+obj_xc:			rs.w	1		;x-coordinate
+obj_yc:			rs.w	1		;y-coordinate
+obj_xfloat:		rs.w	1		;x-coordinate (floating)
+obj_yfloat:		rs.w	1		;y-coordinate (floating)
+obj_angle:		rs.w	1		;angle
+obj_coords:		rs.l	1		;pointer on coord-table
+obj_xvelo:		rs.w	1		;x velocity
+obj_yvelo:		rs.w	1		;y velocity
+obj_name:		rs.w	1		;name (identification)
+obj_collsize:	rs.w	1
+obj_len:		rs.w	0		; end
 ;---------------------------------------------
 obj_init:				;<initialize object>
 		move.w	d0,obj_xc(a0)
@@ -1539,30 +1502,27 @@ obj_thrust:				;<accelerate object, value in d2>
 ;---------------------------------------------
 obj_move:				;<calculate new object coords>
 		
-		move.w	obj_xfloat(a0),d0	;x floating
-		add.w	obj_xvelo(a0),d0	;+ x velocity
+		move.w	obj_xfloat(a0),d0		; x floating
+		add.w	obj_xvelo(a0),d0		; + x velocity
 
-		cmp.w	#(game_width+16)*128,d0	;x coord too high?
+		cmp.w	#(game_width+16)*128,d0	; x coord too high?
 		bls.s	.nhx
 		cmp.w	#(game_width+16+16)*128,d0
 		bhi.s	.nhx
 		sub.w	#(game_width+16+16)*128,d0
 .nhx:		
-		cmp.w	#-16*128,d0				;x coord too low?
+		cmp.w	#-16*128,d0				; x coord too low?
 		bhi.s	.nlx
 		cmp.w	#(game_width+16+16)*128,d0
 		bls.s	.nlx
 		add.w	#(game_width+16+16)*128,d0
 .nlx:
+		move.w	d0,obj_xfloat(a0)		; store x floating
+		lsr.w	#7,d0					; convert to integer
+		move.w	d0,obj_xc(a0)			; x integer
 
-		move.w	d0,obj_xfloat(a0)	;store x floating
-		lsr.w	#7,d0			;convert to integer
-		move.w	d0,obj_xc(a0)		;x integer
-
-		move.w	obj_yfloat(a0),d0	;y floating
-		add.w	obj_yvelo(a0),d0	;+ y velocity
-
-;		add.w	#128,d0
+		move.w	obj_yfloat(a0),d0		; y floating
+		add.w	obj_yvelo(a0),d0		; + y velocity
 
 		cmp.w	#(game_height+16)*128,d0	;y coord too high?
 		bls.s	.nhy
@@ -1570,19 +1530,19 @@ obj_move:				;<calculate new object coords>
 		bhi.s	.nhy
 		sub.w	#(game_height+16+16)*128,d0
 .nhy:		
-		cmp.w	#-16*128,d0		;y coord too low?
+		cmp.w	#-16*128,d0				; y coord too low?
 		bhi.s	.nly
 		cmp.w	#(game_height+16+16)*128,d0
 		bls.s	.nly
 		add.w	#(game_height+16+16)*128,d0
 .nly:
-		move.w	d0,obj_yfloat(a0)	;store y floating
-		lsr.w	#7,d0				;convert to integer
-		move.w	d0,obj_yc(a0)		;y integer
+		move.w	d0,obj_yfloat(a0)		; store y floating
+		lsr.w	#7,d0					; convert to integer
+		move.w	d0,obj_yc(a0)			; y integer
 		
-		move.l	obj_coords(a0),a1	;pointer to coord tab
+		move.l	obj_coords(a0),a1		; pointer to coord tab
 		move.l	a1,d0
-		bne.s	.lineobj			;point or lines ?
+		bne.s	.lineobj				; point or lines
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d1
 		bsr		set_point
@@ -1609,7 +1569,7 @@ obj_move:				;<calculate new object coords>
 		move.w	(a7)+,d7
 		dbf		d7,.lines
 		rts
-.norotobj:				;<object without rotation>
+.norotobj:
 		move.w	(a1)+,d7
 		subq.w	#1,d7
 .norotlines:	
@@ -1631,16 +1591,15 @@ obj_move:				;<calculate new object coords>
 		move.w	(a7)+,d7
 		dbf		d7,.norotlines
 		rts
-*                                                                    *
-**********************************************************************
-;---------------------------------------------
-*object names
-ship	=	0		;own spaceship
-shot	=	1		;own shot
-big		=	2		;big asteroid
-medium	=	3		;medium asteroid
-small	=	4		;small asteroid
+
+; object names (ids)
+ship	=	0		; own spaceship
+shot	=	1		; own shot
+big		=	2		; big asteroid
+medium	=	3		; medium asteroid
+small	=	4		; small asteroid
 zn_z	=	5
+
 ;---------------------------------------------
 coord_tabs:
 		dc.l	ship_coords
@@ -1660,7 +1619,9 @@ ship_struct:	ds.b	obj_len
 ship_estruct:	ds.b	obj_len*$15
 ship_next:		dc.b	0
 ship_exploding:	dc.b	0
-even
+				even
+letters_init:	dc.w	30
+
 ;---------------------------------------------
 ship_coords:	dc.w	4
 		dc.w	0,-4,-4,5
@@ -1705,7 +1666,7 @@ zn_z_coords:
 		dc.w	0,-7,-17,-6
 		dc.w	-17,-6,-20,-16
 ;---------------------------------------------
-enemys_set:
+updateEnemies:
 		move.l	enemy_con(pc),d0
 		lea		enemy_structs(pc),a0
 		moveq	#31,d7
@@ -1741,32 +1702,36 @@ shot_init:				;<initialize a shot>
 
 .nofreeshot:	move.l	(a7)+,a0
 		rts
-;---------------------------------------------
-enemy_init:				;<initialize a enemy (asteroid/ufo)>
-		move.l	a0,-(a7)
+
+; initialize a enemy (asteroid/ufo)
+;
+enemy_init:				
+;		move.l	a0,-(a7)
 		move.l	enemy_con(pc),d6
-		lea	enemy_structs(pc),a0
+		lea		enemy_structs(pc),a0
 		moveq	#31,d7
-.findfree:	btst	d7,d6
+.findfree:	
+		btst	d7,d6
 		beq.s	.free
-		lea	obj_len(a0),a0
-		dbf	d7,.findfree
+		lea		obj_len(a0),a0
+		dbf		d7,.findfree
 		bra.s	.nofree
 .free:
 		move.w	#$8000,d2
-		bsr	obj_init
+		bsr		obj_init
 		bset	d7,d6
 		move.l	d6,enemy_con
-
-.nofree:	move.l	(a7)+,a0
+.nofree:	
+;		move.l	(a7)+,a0
 		rts
 ;---------------------------------------------
 shots_set:	
 		move.w	shot_con(pc),d0
-		lea	shot_structs(pc),a0
-		lea	shot_times(pc),a1
-		moveq	#15,d7
-.setshots:	btst	d7,d0
+		lea		shot_structs(pc),a0
+		lea		shot_times(pc),a1
+		moveq	#16-1,d7
+.setshots:	
+		btst	d7,d0
 		beq.s	.nshot
 		subq.w	#1,(a1)			;shot duration
 		bne.s	.flying
@@ -1780,14 +1745,15 @@ shots_set:
 		move.l	(a7)+,a1
 		movem.w	(a7)+,d0/d7
 		
-		tst.w	d1			;collision?
+		tst.w	d1				; collision?
 		beq.s	.nocoll
-		bclr	d7,d0			;switch shot off
+		bclr	d7,d0			; switch shot off
 .nocoll:
-
-.nshot:		lea	obj_len(a0),a0
+.nshot:		
+		lea		obj_len(a0),a0
 		addq.w	#2,a1
-		dbf	d7,.setshots
+		dbf		d7,.setshots
+		
 		move.w	d0,shot_con
 		rts
 ;---------------------------------------------
@@ -1795,10 +1761,11 @@ shot_collision:
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d1
 
-		lea	enemy_structs(pc),a3
+		lea		enemy_structs(pc),a3
 		move.l	enemy_con(pc),d7
-		moveq	#31,d6
-.shotcoll:	move.l	d7,a5
+		moveq	#32-1,d6
+.shotcoll:	
+		move.l	d7,a5
 		btst	d6,d7
 		beq.w	.nocoll
 
@@ -1807,10 +1774,7 @@ shot_collision:
 		move.w	d2,d4
 		move.w	d3,d5
 
-		move.w	obj_name(a3),d7
-		lsl.w	#2,d7
-		neg.w	d7
-		add.w	#22,d7
+		move.w	obj_collsize(a3),d7
 
 		sub.w	d7,d2
 		cmp.w	d0,d2
@@ -1825,37 +1789,40 @@ shot_collision:
 		cmp.w	d1,d5
 		blt.s	.nocoll
 
-		addq.w	#1,obj_name(a3)
 		cmp.w	#small,obj_name(a3)
-		ble.s	.nlast
+		bne.s	.nlast
 		move.l	a5,d7
 		bclr	d6,d7
 		move.l	d7,enemy_con
 		rts
 .nlast:
-		move.w	obj_name(a3),d0
-		lsl.w	#2,d0
+		; split object into two (reusing self)
+		move.w	#small,obj_name(a3)
 		lea		coord_tabs(pc),a4
-		move.l	(a4,d0.w),obj_coords(a3)
+		move.l	small*4(a4),obj_coords(a3)
 		add.w	#32,obj_xvelo(a3)
 		add.w	#32,obj_yvelo(a3)
 		neg.w	obj_yvelo(a3)
+		move.w	#8,obj_collsize(a3)
 
+		; second
 		move.w	obj_xc(a3),d0
 		move.w	obj_yc(a3),d1
 		move.w	obj_xvelo(a3),d3
 		neg.w	d3
 		move.w	obj_yvelo(a3),d4
 		neg.w	d4
-		move.w	obj_name(a3),d5
+		move.w	obj_name(a3),d5		; same name (id)
 		moveq	#0,d2
 		bsr		enemy_init
+		move.w	#8,obj_collsize(a0)
 		rts
-
-.nocoll:	move.l	a5,d7
+.nocoll:	
+		move.l	a5,d7
 		lea	obj_len(a3),a3
 		dbf	d6,.shotcoll
-.colldone:	moveq	#0,d1
+.colldone:	
+		moveq	#0,d1
 		rts
 ;---------------------------------------------
 ship_explode:
@@ -1985,21 +1952,21 @@ ship_set:				;<set ship, keyboard control>
 ;		bsr	obj_slowdown
 		rts
 ;---------------------------------------------
-game_init:				;<initialize game>
+initGame:				;<initialize game>
 		bsr		shots_init
 		bsr		ship_init
 		clr.l	enemy_con
 		sf		ship_exploding
-		bsr		asteroids_init
+;		bsr		asteroids_init
 		rts
 ;---------------------------------------------
-ast_count = 1
+ast_count = 8
 
-ast_x_start		= 80			; for big
-ast_x_offset 	= 32
+; ast_x_start		= 80			; for big
+; ast_x_offset 	= 32
 
-; ast_x_start		= 100			; for medium
-; ast_x_offset 	= 24
+ast_x_start		= 100			; for medium
+ast_x_offset 	= 24
 
 ; ast_x_start		= 70+((8*16)/2)			; for small
 ; ast_x_offset 	= 16
@@ -2017,15 +1984,18 @@ asteroids_init:
 		bsr		getRandomNumber
 		and.l	#$1f,d0
 		sub.l	#$10,d0
+		moveq	#0,d0		; test
 		move.l	d0,d3
 		bsr		getRandomNumber
 		and.l	#$1f,d0
 		sub.l	#$10,d0
+		moveq	#0,d0		; test
 		move.l	d0,d4
 		move.l	d6,d0
 
 		movem.l	d0-d7/a0-a6,-(a7)
 		bsr		enemy_init
+		move.w	#12,obj_collsize(a0)
 		movem.l	(a7)+,d0-d7/a0-a6
 
 		add.w	#ast_x_offset,d0
@@ -2039,7 +2009,6 @@ asteroids_init:
 		; move.w	#-2,d4			;y velo
 		; moveq	#zn_z,d5		;name
 		; bsr		enemy_init
-
 
 		; move.w	#280,d0			;x
 		; move.w	#128,d1			;y
