@@ -1403,11 +1403,13 @@ obj_yc:			rs.w	1		;y-coordinate
 obj_xfloat:		rs.w	1		;x-coordinate (floating)
 obj_yfloat:		rs.w	1		;y-coordinate (floating)
 obj_angle:		rs.w	1		;angle
+obj_scale:		rs.w	1		;scale
 obj_coords:		rs.l	1		;pointer on coord-table
 obj_xvelo:		rs.w	1		;x velocity
 obj_yvelo:		rs.w	1		;y velocity
 obj_name:		rs.w	1		;name (identification)
 obj_collsize:	rs.w	1
+obj_appear:		rs.w	1
 obj_len:		rs.w	0		; end
 ;---------------------------------------------
 obj_init:				;<initialize object>
@@ -1423,8 +1425,9 @@ obj_init:				;<initialize object>
 		move.w	d4,obj_yvelo(a0)
 		move.w	d5,obj_name(a0)
 		lsl.w	#2,d5
-		lea	coord_tabs(pc),a1
+		lea		coord_tabs(pc),a1
 		move.l	(a1,d5.w),obj_coords(a0)
+		move.w	#64,obj_scale(a0)
 		rts
 ;---------------------------------------------
 obj_slowdown:
@@ -1559,6 +1562,14 @@ obj_move:				;<calculate new object coords>
 		subq.w	#1,d7
 .lines:		
 		movem.w	(a1)+,d0-d3
+		muls.w	obj_scale(a0),d0
+		muls.w	obj_scale(a0),d1
+		muls.w	obj_scale(a0),d2
+		muls.w	obj_scale(a0),d3
+		asr.w	#6,d0
+		asr.w	#6,d1
+		asr.w	#6,d2
+		asr.w	#6,d3
 		move.w	d7,-(a7)
 		bsr		rotate
 		add.w	obj_xc(a0),d0
@@ -1574,11 +1585,11 @@ obj_move:				;<calculate new object coords>
 		subq.w	#1,d7
 .norotlines:	
 		movem.w	(a1)+,d0-d3
-		; muls.w	#3,d0
+		; muls.w	#3,d0			; test -> shrink
 		; muls.w	#3,d1
 		; muls.w	#3,d2
 		; muls.w	#3,d3
-		; asr.w	#2,d0			; test -> shrink
+		; asr.w	#2,d0			
 		; asr.w	#2,d1
 		; asr.w	#2,d2
 		; asr.w	#2,d3
@@ -1607,7 +1618,32 @@ coord_tabs:
 		dc.l	astb_coords
 		dc.l	astm_coords
 		dc.l	asts_coords
-		dc.l	zn_z_coords
+		dc.l	a_coords
+		dc.l	b_coords
+		dc.l	c_coords
+		dc.l	d_coords
+		dc.l	e_coords
+		dc.l	f_coords
+		dc.l	g_coords
+		dc.l	h_coords
+		dc.l	i_coords
+		dc.l	j_coords
+		dc.l	k_coords
+		dc.l	l_coords
+		dc.l	m_coords
+		dc.l	n_coords
+		dc.l	o_coords
+		dc.l	p_coords
+		dc.l	q_coords
+		dc.l	r_coords
+		dc.l	s_coords
+		dc.l	t_coords
+		dc.l	u_coords
+		dc.l	v_coords
+		dc.l	w_coords
+		dc.l	x_coords
+		dc.l	y_coords
+		dc.l	z_coords
 		dc.l	0
 ;---------------------------------------------
 shot_con:		dc.w	0
@@ -1620,7 +1656,7 @@ ship_estruct:	ds.b	obj_len*$15
 ship_next:		dc.b	0
 ship_exploding:	dc.b	0
 				even
-letters_init:	dc.w	30
+letters_init:	dc.w	10		; delay in frames
 
 ;---------------------------------------------
 ship_coords:	dc.w	4
@@ -1639,6 +1675,7 @@ astb_coords:	dc.w	9
 		dc.w	6,16,16,4
 		dc.w	16,4,14,-8
 		dc.w	14,-8,0,-16
+
 ;---------------------------------------------
 astm_coords:	dc.w	6
 		dc.w	0,-10,-10,-4
@@ -1665,6 +1702,268 @@ zn_z_coords:
 		dc.w	-13,8,0,-7
 		dc.w	0,-7,-17,-6
 		dc.w	-17,-6,-20,-16
+
+a_coords:
+		dc.w 	6
+		dc.w 	-9,-11,7,-16
+		dc.w 	7,-16,17,15
+		dc.w 	17,15,1,8
+		dc.w	1,8,-16,17
+		dc.w 	-16,17,-9,-11
+		dc.w 	-4,-3,5,2
+
+b_coords:
+		dc.w 8
+		dc.w -10,-16,14,-12
+		dc.w 14,-12,7,-3
+		dc.w 7,-3,17,7
+		dc.w 17,7,7,17
+		dc.w 7,17,-16,12
+		dc.w -16,12,-10,-16
+		dc.w -5,-3,-2,-8
+		dc.w -6,8,2,4
+
+c_coords:
+		dc.w 7
+		dc.w -7,-16,17,-9
+		dc.w 17,-9,4,-5
+		dc.w 4,-5,-3,5
+		dc.w -3,5,17,12
+		dc.w 17,12,-8,17
+		dc.w -8,17,-16,6
+		dc.w -16,6,-7,-16
+
+d_coords:
+		dc.w 6
+		dc.w -16,-7,-6,-16
+		dc.w -6,-16,17,2
+		dc.w 17,2,9,18
+		dc.w 9,18,-11,17
+		dc.w -11,17,-16,-7
+		dc.w -4,-4,2,8		
+
+e_coords:
+		dc.w 8
+		dc.w -6,-16,17,-10
+		dc.w 17,-10,2,-6
+		dc.w 2,-6,14,1
+		dc.w 14,1,2,4
+		dc.w 2,4,17,9
+		dc.w 17,9,-5,17
+		dc.w -5,17,-17,6
+		dc.w -17,6,-6,-16
+
+f_coords:
+		dc.w 7
+		dc.w -16,-11,16,-16
+		dc.w 16,-16,-1,-3
+		dc.w -1,-3,11,1
+		dc.w 11,1,1,8
+		dc.w 1,8,2,14
+		dc.w 2,14,-9,17
+		dc.w -9,17,-16,-11
+
+g_coords:
+		dc.w 9
+		dc.w -5,-16,16,-14
+		dc.w 16,-14,2,-9
+		dc.w 2,-9,-2,2
+		dc.w -2,2,10,5
+		dc.w 10,5,4,-3
+		dc.w 4,-3,17,-4
+		dc.w 17,-4,17,17
+		dc.w 17,17,-16,10
+		dc.w -16,10,-5,-16
+
+h_coords:
+		dc.w 8
+		dc.w -10,-16,-3,-5
+		dc.w -3,-5,5,-6
+		dc.w 5,-6,17,-16
+		dc.w 17,-16,11,17
+		dc.w 11,17,5,7
+		dc.w 5,7,-4,6
+		dc.w -4,6,-16,17
+		dc.w -16,17,-10,-16	
+
+i_coords:
+		dc.w 3
+		dc.w -7,-16,10,-13
+		dc.w 10,-13,3,17
+		dc.w 3,17,-7,-16	
+
+j_coords:
+		dc.w 6
+		dc.w 2,10,3,-16
+		dc.w 3,-16,15,-12
+		dc.w 15,-12,12,13
+		dc.w 12,13,-9,17
+		dc.w -9,17,-12,-1
+		dc.w -12,-1,2,10
+
+k_coords:
+		dc.w 9
+		dc.w -12,-16,-4,-4
+		dc.w -4,-4,16,-15
+		dc.w 16,-15,5,1
+		dc.w 5,1,17,11
+		dc.w 17,11,6,17
+		dc.w 6,17,-4,9
+		dc.w -4,9,-9,17
+		dc.w -9,17,-16,15
+		dc.w -16,15,-12,-16
+
+l_coords:
+		dc.w 5
+		dc.w -16,-11,-1,-16
+		dc.w -1,-16,3,7
+		dc.w 3,7,18,5
+		dc.w 17,5,-5,17
+		dc.w -5,17,-16,-11
+
+m_coords:
+		dc.w 9
+		dc.w -13,-11,-1,-16
+		dc.w -1,-16,5,-5
+		dc.w 5,-5,13,-16
+		dc.w 13,-16,17,15
+		dc.w 17,15,9,7
+		dc.w 9,7,2,15
+		dc.w 2,15,-7,4
+		dc.w -7,4,-16,17
+		dc.w -16,17,-13,-11
+
+n_coords:
+		dc.w 7
+		dc.w -16,-13,6,-5
+		dc.w 6,-5,8,-16
+		dc.w 8,-16,17,10
+		dc.w 17,10,10,16
+		dc.w 10,16,-6,6
+		dc.w -6,6,-11,17
+		dc.w -11,17,-16,-13
+
+o_coords:
+		dc.w 6
+		dc.w -16,-9,9,-16
+		dc.w 9,-16,17,7
+		dc.w 17,7,8,17
+		dc.w 8,17,-14,5
+		dc.w -14,5,-16,-9
+		dc.w -2,-5,3,4
+
+p_coords:
+		dc.w 7
+		dc.w -16,-11,5,-16
+		dc.w 5,-16,17,-6
+		dc.w 17,-6,11,10
+		dc.w 11,10,-3,7
+		dc.w -3,7,-11,17
+		dc.w -11,17,-16,-11
+		dc.w -2,-1,3,-7
+
+q_coords:
+		dc.w 9
+		dc.w -16,-2,-5,-16
+		dc.w -5,-16,5,-16
+		dc.w 5,-16,17,2
+		dc.w 17,2,11,7
+		dc.w 11,7,15,17
+		dc.w 15,17,5,11
+		dc.w 5,11,-8,17
+		dc.w -8,17,-16,-2
+		dc.w -4,2,4,-4
+
+r_coords:
+		dc.w 8
+		dc.w -16,-10,3,-16
+		dc.w 3,-16,17,-2
+		dc.w 17,-2,9,7
+		dc.w 9,7,14,17
+		dc.w 14,17,-4,11
+		dc.w -4,11,-11,17
+		dc.w -11,17,-16,-10
+		dc.w -4,-7,1,3
+
+s_coords:
+		dc.w 8
+		dc.w -13,-10,14,-16
+		dc.w 14,-16,-3,-6
+		dc.w -3,-6,13,-4
+		dc.w 13,-4,17,12
+		dc.w 17,12,-12,17
+		dc.w -12,17,2,9
+		dc.w 2,9,-16,3
+		dc.w -16,3,-13,-10
+
+t_coords:
+		dc.w 6
+		dc.w -16,-13,17,-15
+		dc.w 17,-15,6,-6
+		dc.w 6,-6,8,17
+		dc.w 8,17,-6,-3
+		dc.w -6,-3,-13,2
+		dc.w -13,2,-16,-13
+
+u_coords:
+		dc.w 6
+		dc.w -10,-16,-5,-3
+		dc.w -5,-3,4,2
+		dc.w 4,2,12,-16
+		dc.w 12,-16,17,17
+		dc.w 17,17,-16,8
+		dc.w -16,8,-10,-16
+
+v_coords:
+		dc.w 5
+		dc.w -16,-4,-4,-15
+		dc.w -4,-15,6,-3
+		dc.w 6,-3,15,-16
+		dc.w 15,-16,7,17
+		dc.w 7,17,-16,-4
+
+w_coords:
+		dc.w 9
+		dc.w -16,-10,-8,-2
+		dc.w -8,-2,-2,-11
+		dc.w -2,-11,6,2
+		dc.w 6,2,12,-16
+		dc.w 12,-16,17,9
+		dc.w 17,9,7,17
+		dc.w 7,17,1,8
+		dc.w 1,8,-11,17
+		dc.w -11,17,-16,-10
+
+x_coords:
+		dc.w 8
+		dc.w -16,-16,1,-7
+		dc.w 1,-7,8,-1
+		dc.w 8,-1,16,17
+		dc.w 16,17,2,8
+		dc.w 2,8,-16,16
+		dc.w -16,16,-6,3
+		dc.w -6,3,-16,-16
+
+y_coords:
+		dc.w 7
+		dc.w -16,-6,-7,-16
+		dc.w -7,-16,3,-5
+		dc.w 3,-5,16,-16
+		dc.w 16,-16,6,17
+		dc.w 6,17,-7,13
+		dc.w -7,13,-3,5
+		dc.w -3,5,-16,-6
+
+z_coords:
+		dc.w 7
+		dc.w -16,-8,12,-16
+		dc.w 12,-16,8,7
+		dc.w 8,7,17,10
+		dc.w 17,10,-12,17
+		dc.w -12,17,-3,-3
+		dc.w -3,-3,-12,3
+		dc.w -12,3,-16,-8
+
 ;---------------------------------------------
 updateEnemies:
 		move.l	enemy_con(pc),d0
@@ -1676,6 +1975,24 @@ updateEnemies:
 		movem.l	d0/d7,-(a7)
 		bsr		obj_move
 		movem.l	(a7)+,d0/d7
+
+		move.w	obj_appear(a0),d1
+		tst.w	d1
+		beq		.noAppear
+		subq	#1,d1
+		move.w	d1,obj_appear(a0)
+		moveq	#4,d1
+		bsr		obj_addangle
+		move.w	obj_scale(a0),d1
+		cmp.w	#64,d1
+		beq		.noAppear
+		addq	#1,d1
+		move.w	d1,obj_scale(a0)
+		bra		.appearing
+.noAppear:
+		move.w	#$8000,obj_angle
+.appearing:
+
 .nenemy:	
 		lea		obj_len(a0),a0
 		dbf		d7,.setenemys
@@ -1953,12 +2270,39 @@ ship_set:				;<set ship, keyboard control>
 		rts
 ;---------------------------------------------
 initGame:				;<initialize game>
+		bsr		scaleLetters
+
 		bsr		shots_init
 		bsr		ship_init
 		clr.l	enemy_con
 		sf		ship_exploding
 ;		bsr		asteroids_init
 		rts
+
+scaleLetters:
+		lea		coord_tabs+(5*4),a5	; letter start
+		moveq	#26-1,d7
+.loop:
+		move.l	(a5)+,a0
+		move.w	(a0)+,d6
+		subq.w	#1,d6
+.line:
+		moveq	#4-1,d5
+.value:
+		move.w	(a0),d0
+		bsr		scaleOffset
+		move.w	d0,(a0)+
+		dbf		d5,.value
+		dbf		d6,.line
+
+		dbf		d7,.loop
+		rts
+
+scaleOffset:
+		muls.w	#3,d0
+		asr.w	#2,d0
+		rts
+
 ;---------------------------------------------
 ast_count = 8
 
@@ -1972,13 +2316,16 @@ ast_x_offset 	= 24
 ; ast_x_offset 	= 16
 
 asteroids_init:
+		rts
+
 		move.w	#ast_x_start,d0		;x
 		move.w	#28,d1				;y
 		move.w	#0,d2				;angle
 		move.w	#0,d3				;x velo
 		move.w	#0,d4				;y velo
 		moveq	#zn_z,d5			;name
-		moveq	#ast_count-1,d7
+		lea		coord_tabs+(5*4)+(8*4)+(8*4)+(2*4),a5	; letter start
+		moveq	#ast_count-1,d7		
 .loop:
 		move.l	d0,d6
 		bsr		getRandomNumber
@@ -1996,9 +2343,20 @@ asteroids_init:
 		movem.l	d0-d7/a0-a6,-(a7)
 		bsr		enemy_init
 		move.w	#12,obj_collsize(a0)
-		movem.l	(a7)+,d0-d7/a0-a6
+		move.l	(a5),obj_coords(a0)
 
+		; move.w	d7,d6
+		; lsl.w	#2,d6
+		; move.w	d6,obj_angle(a0)
+		move.w	#360/4,d5
+		; sub.w	d6,d5
+		move.w	d5,obj_appear(a0)
+		move.w	#0,obj_angle(a0)
+		move.w	#4,obj_scale(a0)
+		movem.l	(a7)+,d0-d7/a0-a6
+		
 		add.w	#ast_x_offset,d0
+		lea		4(a5),a5
 
 		dbf		d7,.loop
 
@@ -2383,14 +2741,14 @@ rotate:					;<rotation>
 		muls	d4,d7			;*sin
 		sub.l	d7,d0			;x*cos - y*sin
 		lsl.l	#1,d0
-		swap	d0			;new x
+		swap	d0				;new x
 
 		muls	d4,d6			;x*sin
 		move.w	d1,d7			;y
 		muls	d5,d7			;*cos
 		add.l	d7,d6			;x*sin - y*cos
 		lsl.l	#1,d6
-		swap	d6			;new y
+		swap	d6				;new y
 		move.w	d6,d1
 
 		move.w	d2,d6			;x
@@ -2399,14 +2757,14 @@ rotate:					;<rotation>
 		muls	d4,d7			;*sin
 		sub.l	d7,d2			;x*cos - y*sin
 		lsl.l	#1,d2
-		swap	d2			;new x
+		swap	d2				;new x
 
 		muls	d4,d6			;*sin
 		move	d3,d7			;y
 		muls	d5,d7			;*cos
 		add.l	d7,d6			;x*sin - y*cos
 		lsl.l	#1,d6
-		swap	d6			;new y
+		swap	d6				;new y
 		move.w	d6,d3
 		rts
 ;-------------------------------------------------------
