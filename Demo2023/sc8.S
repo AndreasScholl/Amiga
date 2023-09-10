@@ -1,3 +1,12 @@
+; todo:
+;    letters explosion
+;    letters centering
+;    letter i offset smaller
+;    letters explode after time
+; 	 copperbar shadow on bottom side
+;    ship respawn
+;    scroller without posteffect
+
 
 		INCDIR      "include"
 		INCLUDE     "hw.i"
@@ -141,15 +150,15 @@ vblank:
 ; 		bne.s	.hmm
 ; 		bsr		initGame		; reset game
 ; .hmm:
-		lea		$dff000,a6
-		bsr		scroll
-		; move.w	#$424,$180(a6)
-		bsr		postEffect
+		; lea		$dff000,a6
+		; bsr		scroll
+		; ; move.w	#$424,$180(a6)
+		; bsr		postEffect
 
 		; move.w	#$266,$180(a6)
-		lea		$dff000,a6
-		bsr		addPoints
-		bsr		drawPoints
+		; lea		$dff000,a6
+		; bsr		addPoints
+		; bsr		drawPoints
 		; move.w	#$882,$180(a6)
 		; bsr		updateLogoColors		; super slow :(
 		bsr		updateLogoPos
@@ -766,6 +775,35 @@ text:
 		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
 		dc.b	"dandee -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
 		even
+nameOffset:
+		dc.l	0
+names:
+		dc.l	name1
+		dc.l	name2
+		dc.l	name3
+		dc.l	name4
+		dc.l	name5
+		dc.l	name6
+		dc.l	name7
+		dc.l	name8
+		dc.l	0
+
+name1:
+		dc.b	"zeronine",0
+name2:
+		dc.b	"exolon",0
+name3:
+		dc.b	"exciter",0
+name4:
+		dc.b	"dandee",0
+name5:
+		dc.b	"major rom",0
+name6:
+		dc.b	"equalizer",0
+name7:
+		dc.b	"lpa",0
+name8:
+		dc.b	"phil",0
 
 chartab:
 		dc.b	"abcdefghijklmnopqrstuvwxyz0123456789.,!()/$ ?-+='",-1
@@ -1356,10 +1394,13 @@ rchartab:
 ;--------------------------------------------------------------
 updateGame:		
 		; enemys / asteroids
-		lea		linetab(pc),a6		
+		lea		linetab(pc),a6
+;		move.w	#$fff,$dff180		
 		bsr		updateEnemies
+;		move.w	#$f00,$dff180		
 		clr.w	(a6)			; and of draw table
 		bsr		objects_draw
+;		move.w	#$0f0,$dff180		
 
 		; player and shots
 		lea		linetab(pc),a6
@@ -1373,7 +1414,9 @@ updateGame:
 		bsr		ship_explode
 		bsr		shots_set
 		clr.w	(a6)			; and of draw table
+;		move.w	#$0ff,$dff180
 		bsr		objects_draw
+;		move.w	#$000,$dff180
 
 		cmp.b	#$45,kcode		; escape key?
 		bne.s	.nrestart
@@ -1389,7 +1432,8 @@ updateGame:
 		beq		.noLetterInit
 		sub.w	#1,(a0)
 		bne		.noLetterInit
-		move.w	#20*50,(a0)		; delay for next letters
+		move.w	#6*50,(a0)		; delay for next letters
+		clr.l	enemy_con		; free all enemies
 		bsr		asteroids_init
 .noLetterInit:
 
@@ -1410,6 +1454,7 @@ obj_yvelo:		rs.w	1		;y velocity
 obj_name:		rs.w	1		;name (identification)
 obj_collsize:	rs.w	1
 obj_appear:		rs.w	1
+obj_wait:		rs.w	1
 obj_len:		rs.w	0		; end
 ;---------------------------------------------
 obj_init:				;<initialize object>
@@ -1551,6 +1596,7 @@ obj_move:				;<calculate new object coords>
 		bsr		set_point
 		rts
 .lineobj:	
+		; draw line obj
 		move.w	obj_angle(a0),d0
 		cmp.w	#$8000,d0			;rotate?
 		beq		.norotobj
@@ -1585,14 +1631,6 @@ obj_move:				;<calculate new object coords>
 		subq.w	#1,d7
 .norotlines:	
 		movem.w	(a1)+,d0-d3
-		; muls.w	#3,d0			; test -> shrink
-		; muls.w	#3,d1
-		; muls.w	#3,d2
-		; muls.w	#3,d3
-		; asr.w	#2,d0			
-		; asr.w	#2,d1
-		; asr.w	#2,d2
-		; asr.w	#2,d3
 		add.w	obj_xc(a0),d0
 		add.w	obj_xc(a0),d2
 		add.w	obj_yc(a0),d1
@@ -1609,7 +1647,7 @@ shot	=	1		; own shot
 big		=	2		; big asteroid
 medium	=	3		; medium asteroid
 small	=	4		; small asteroid
-zn_z	=	5
+letter	=	5
 
 ;---------------------------------------------
 coord_tabs:
@@ -1937,8 +1975,9 @@ w_coords:
 x_coords:
 		dc.w 8
 		dc.w -16,-16,1,-7
-		dc.w 1,-7,8,-1
-		dc.w 8,-1,16,17
+		dc.w 1,-7,15,-16
+		dc.w 15,-16,9,-2
+		dc.w 9,-2,16,17
 		dc.w 16,17,2,8
 		dc.w 2,8,-16,16
 		dc.w -16,16,-6,3
@@ -1957,8 +1996,8 @@ y_coords:
 z_coords:
 		dc.w 7
 		dc.w -16,-8,12,-16
-		dc.w 12,-16,8,7
-		dc.w 8,7,17,10
+		dc.w 12,-16,6,5
+		dc.w 6,5,17,10
 		dc.w 17,10,-12,17
 		dc.w -12,17,-3,-3
 		dc.w -3,-3,-12,3
@@ -1972,27 +2011,50 @@ updateEnemies:
 .setenemys:	
 		btst	d7,d0
 		beq.s	.nenemy
+
+		move.w	obj_wait(a0),d1
+		tst.w	d1
+		beq		.noWait
+		subq.w	#1,d1
+		move.w	d1,obj_wait(a0)
+		bra		.nenemy
+.noWait:
 		movem.l	d0/d7,-(a7)
+;		move.w	#$f0f,$dff180
 		bsr		obj_move
+;		move.w	#$fff,$dff180
 		movem.l	(a7)+,d0/d7
 
-		move.w	obj_appear(a0),d1
-		tst.w	d1
+		move.w	obj_appear(a0),d2
+		tst.w	d2
 		beq		.noAppear
-		subq	#1,d1
-		move.w	d1,obj_appear(a0)
+		subq	#1,d2
+		move.w	d2,obj_appear(a0)
 		moveq	#4,d1
 		bsr		obj_addangle
 		move.w	obj_scale(a0),d1
 		cmp.w	#64,d1
-		beq		.noAppear
+		beq		.doneScale
 		addq	#1,d1
 		move.w	d1,obj_scale(a0)
 		bra		.appearing
-.noAppear:
-		move.w	#$8000,obj_angle
-.appearing:
+.doneScale:
+		tst.w	d2
+		bne.s	.appearing
+		move.w	#$8000,obj_angle(a0)
 
+		move.l	d0,d6				; store enemycon
+		bsr		getRandomNumber
+		and.l	#$1f,d0
+		sub.l	#$10,d0
+		move.w	d0,obj_xvelo(a0)
+		bsr		getRandomNumber
+		and.l	#$1f,d0
+		sub.l	#$10,d0
+		move.w	d0,obj_yvelo(a0)
+		move.l	d6,d0				; restore enemycon
+.noAppear:
+.appearing:
 .nenemy:	
 		lea		obj_len(a0),a0
 		dbf		d7,.setenemys
@@ -2013,7 +2075,7 @@ shot_init:				;<initialize a shot>
 .freeshot:
 		move.w	#80,(a1)		;shot duration
 		moveq	#shot,d5
-		bsr	obj_init
+		bsr		obj_init
 		bset	d7,d6
 		move.w	d6,shot_con
 
@@ -2034,9 +2096,9 @@ enemy_init:
 		dbf		d7,.findfree
 		bra.s	.nofree
 .free:
+		bset	d7,d6
 		move.w	#$8000,d2
 		bsr		obj_init
-		bset	d7,d6
 		move.l	d6,enemy_con
 .nofree:	
 ;		move.l	(a7)+,a0
@@ -2106,13 +2168,17 @@ shot_collision:
 		cmp.w	d1,d5
 		blt.s	.nocoll
 
+		cmp.w	#letter,obj_name(a3)
+		beq.s	.removeObj
 		cmp.w	#small,obj_name(a3)
 		bne.s	.nlast
+.removeObj:		
 		move.l	a5,d7
 		bclr	d6,d7
 		move.l	d7,enemy_con
 		rts
 .nlast:
+		movem.l	d6-d7/a3/a5,-(a7)		
 		; split object into two (reusing self)
 		move.w	#small,obj_name(a3)
 		lea		coord_tabs(pc),a4
@@ -2123,21 +2189,22 @@ shot_collision:
 		move.w	#8,obj_collsize(a3)
 
 		; second
-		move.w	obj_xc(a3),d0
-		move.w	obj_yc(a3),d1
-		move.w	obj_xvelo(a3),d3
-		neg.w	d3
-		move.w	obj_yvelo(a3),d4
-		neg.w	d4
-		move.w	obj_name(a3),d5		; same name (id)
-		moveq	#0,d2
-		bsr		enemy_init
-		move.w	#8,obj_collsize(a0)
+		; move.w	obj_xc(a3),d0
+		; move.w	obj_yc(a3),d1
+		; move.w	obj_xvelo(a3),d3
+		; neg.w	d3
+		; move.w	obj_yvelo(a3),d4
+		; neg.w	d4
+		; move.w	obj_name(a3),d5		; same name (id)
+		; moveq	#0,d2
+		; bsr		enemy_init
+		; move.w	#8,obj_collsize(a0)
+		movem.l	(a7)+,d6-d7/a3/a5
 		rts
 .nocoll:	
 		move.l	a5,d7
-		lea	obj_len(a3),a3
-		dbf	d6,.shotcoll
+		lea		obj_len(a3),a3
+		dbf		d6,.shotcoll
 .colldone:	
 		moveq	#0,d1
 		rts
@@ -2316,17 +2383,33 @@ ast_x_offset 	= 24
 ; ast_x_offset 	= 16
 
 asteroids_init:
-		rts
-
-		move.w	#ast_x_start,d0		;x
-		move.w	#28,d1				;y
-		move.w	#0,d2				;angle
-		move.w	#0,d3				;x velo
-		move.w	#0,d4				;y velo
-		moveq	#zn_z,d5			;name
-		lea		coord_tabs+(5*4)+(8*4)+(8*4)+(2*4),a5	; letter start
-		moveq	#ast_count-1,d7		
+		lea		names,a3
+		add.l	nameOffset,a3
+		move.l	(a3)+,a4
+		tst.l	(a3)
+		bne.s	.noEnd
+		move.l	#0,nameOffset
+		bra.s	.end
+.noEnd:
+		add.l	#4,nameOffset
+.end:
+		move.w	#ast_x_start,d0		; x
+		move.w	#28,d1				; y
+		move.w	#0,d2				; angle
+		move.w	#0,d3				; x velo
+		move.w	#0,d4				; y velo
+		moveq	#0,d7				; wait
+;		moveq	#ast_count-1,d7		
 .loop:
+		lea		coord_tabs+(5*4),a5	; letter start
+		move.b	(a4)+,d6
+		cmp.b	#' ',d6
+		beq.s	.skip
+		sub.b	#'a',d6
+		ext.w	d6
+		lsl		#2,d6
+		add.w	d6,a5
+
 		move.l	d0,d6
 		bsr		getRandomNumber
 		and.l	#$1f,d0
@@ -2340,11 +2423,13 @@ asteroids_init:
 		move.l	d0,d4
 		move.l	d6,d0
 
-		movem.l	d0-d7/a0-a6,-(a7)
+		moveq	#letter,d5			; name
+		movem.l	d0-d7/a1-a6,-(a7)
 		bsr		enemy_init
+		movem.l	(a7)+,d0-d7/a1-a6
+
 		move.w	#12,obj_collsize(a0)
 		move.l	(a5),obj_coords(a0)
-
 		; move.w	d7,d6
 		; lsl.w	#2,d6
 		; move.w	d6,obj_angle(a0)
@@ -2353,12 +2438,17 @@ asteroids_init:
 		move.w	d5,obj_appear(a0)
 		move.w	#0,obj_angle(a0)
 		move.w	#4,obj_scale(a0)
-		movem.l	(a7)+,d0-d7/a0-a6
-		
+		move.w	d7,obj_wait(a0)
+
+		add.w	#25,d7		; next wait
+.skip:		
 		add.w	#ast_x_offset,d0
+
 		lea		4(a5),a5
 
-		dbf		d7,.loop
+		tst.b	(a4)
+		bne.s	.loop
+		; dbf		d7,.loop
 
 		; move.w	#64,d0			;x
 		; move.w	#28,d1			;y
@@ -2471,7 +2561,7 @@ ship_init:				;<initialize ship pos,angle>
 		move.w	#0,d3			;x velo
 		move.w	#0,d4			;y velo
 		moveq	#ship,d5
-		bsr	obj_init
+		bsr		obj_init
 		rts
 ;---------------------------------------------
 clear:					;<switch screens and clear>
@@ -2500,7 +2590,8 @@ screenloc:
 ;---------------------------------------------
 set_line:
 		movem.w	d4-d5,-(a7)
-onceag:		
+;		bra		drawline
+.onceag:		
 		moveq	#0,d6
 		tst.w	d1			;y1 < 0 ?
 		bmi.s	.y11
@@ -2525,53 +2616,53 @@ onceag:
 		bra.s	drawline	
 .y11:
 		tst.w	d3			;y2 auch < 0 ?
-		bmi.s	clpend		;dann gar nix
+		bmi.s	.clpend		;dann gar nix
 		bsr.s	clipy
 		move.w	d4,d0		;neues x1
 		moveq	#0,d1		;y1 = 0
-		bra.s	onceag
+		bra.s	.onceag
 .y12:		
 		bsr.s	clipy
 		move.w	d4,d2		;neues x2
 		moveq	#0,d3		;y2 = 0
-		bra.s	onceag
+		bra.s	.onceag
 .y21:
 		cmp.w	d6,d3
-		bgt.s	clpend
+		bgt.s	.clpend
 		bsr.s	clipy
 		move.w	d4,d0
 		move.w	d6,d1
-		bra.s	onceag
+		bra.s	.onceag
 .y22:		
 		bsr.s	clipy
 		move.w	d4,d2
 		move.w	d6,d3
-		bra.s	onceag
+		bra.s	.onceag
 .x11:		
 		tst.w	d2
-		bmi.s	clpend
+		bmi.s	.clpend
 		bsr.s	clipx
 		move.w	d4,d1
 		moveq	#0,d0
-		bra.s	onceag
+		bra.s	.onceag
 .x12:
 		bsr.s	clipx
 		move.w	d4,d3
 		moveq	#0,d2
-		bra.s	onceag
+		bra.s	.onceag
 .x21:		
 		cmp.w	d6,d2
-		bgt.s	clpend
+		bgt.s	.clpend
 		bsr.s	clipx
 		move.w	d4,d1
 		move.w	d6,d0
-		bra.s	onceag
+		bra.s	.onceag
 .x22:
 		bsr.s	clipx
 		move.w	d4,d3
 		move.w	d6,d2
-		bra.s	onceag
-clpend:						;linie unsichtbar
+		bra.s	.onceag
+.clpend:						;linie unsichtbar
 		movem.w	(a7)+,d4-d5
 		rts
 ;-------------------------------------
@@ -2618,7 +2709,7 @@ drawline:
 		bra.s	.l4
 .l3:		
 		moveq	#1,d7
-		exg	d1,d0
+		exg		d1,d0
 		bra.s	.l4
 .l2:		
 		neg.w	d1
@@ -2628,7 +2719,7 @@ drawline:
 		bra.s	.l4
 .l5:		
 		moveq	#$5,d7
-		exg	d1,d0
+		exg		d1,d0
 		bra.s	.l4
 .l1:		
 		neg.w	d0
@@ -2640,7 +2731,7 @@ drawline:
 		bra.s	.l4
 .l7:		
 		moveq	#$9,d7
-		exg	d1,d0
+		exg		d1,d0
 		bra.s	.l4
 .l6:		
 		neg.w	d1
@@ -2651,7 +2742,7 @@ drawline:
 .l8:		
 		moveq	#$0d,d7
 		exg		d1,d0
-						;BltStart nach d6
+						; BltStart nach d6
 .l4:		
 		move.l	screenloc(pc),a4
 		mulu	#li,d3
@@ -2659,12 +2750,12 @@ drawline:
 		lsr.w	#3,d2
 		add.w	d3,a4
 		add.w	d2,a4
-						;Bltsize nach d5
+						; Bltsize nach d5
 		move.w	d0,d5
 		addq	#1,d5
  		lsl.w	#6,d5
 		addq	#2,d5
-						;2*y-x nach a3 und 4*y nach d1
+						; 2*y-x nach a3 und 4*y nach d1
 		add.w	d1,d1
 		move.w	d1,d3
 		sub.w	d0,d3
@@ -2672,7 +2763,7 @@ drawline:
 		bset	#6,d7
 notneg:
 		add.w	d1,d1
-						;4*y-4*x nach a5
+						; 4*y-4*x nach a5
 		move.w	d1,d6
 		lsl.w	#2,d0
 		sub.w	d0,d6
