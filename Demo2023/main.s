@@ -94,23 +94,26 @@ vblank:
 
 		movem.l	d0-d7/a0-a6,-(a7)
 
+		btst	#6,$bfe001
+		bne.s	.noswitch
+        jsr     initGame
+        ; jsr     initScroller
+        ; move.l  #updateScroller,d0
+        move.l  #updateGamePart,d0
+        move.l  d0,updateFunction
+        bra.s   .end
+.noswitch
+
         move.l  updateFunction,a0
         jsr     (a0)
-
-; 		btst	#6,$bfe001
-; 		bne.s	.noswitch
-;         jsr     initScroller
-;         move.l  #updateScroller,d0
-;         move.l  d0,updateFunction
-; .noswitch
-
+.end:
 		movem.l	(a7)+,d0-d7/a0-a6
 		move.w	#$0020,$dff09c
 .nvbl:		
 		rte
 ;-------
 updateFunction:
-;        dc.l    updateGamePart
+        ; dc.l    updateGamePart
         dc.l    updateScroller
 ;-------
 getRandomNumber::

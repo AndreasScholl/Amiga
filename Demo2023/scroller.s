@@ -10,7 +10,6 @@ logoY			= $40
 src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
-;screen			= $70000		; single color bitplane start
 screenHeight	= 128
 li				= $2e			; screen line size in bytes
 
@@ -23,8 +22,8 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
-;numPoints		= 128
-numPoints		= 64			; points for scroller dissolve effect
+numPoints		= 128
+;numPoints		= 64			; points for scroller dissolve effect
 
 ; --- point area definition
 game_width		= 352
@@ -32,9 +31,6 @@ game_height		= 160
 
 		section "code",data,chip
 initScroller::
- 		move.l	#clist,$dff080
-		clr.w	$dff088
-
 		move.l	#logo,d0
 		move.l	#(320/8)*64,d1
 		move.w	d0,logobp0l
@@ -58,13 +54,18 @@ initScroller::
 
 		bsr		buildLogoColors
 
+		lea		spoint(pc),a5
 		jsr		setupStarfield	; starfield
 		bsr		setupScroller
 		bsr		initPoints
+
+ 		move.l	#clist,$dff080
+		clr.w	$dff088
 		rts
 ;-------
 updateScroller::
 		lea		$dff000,a6
+        bsr     clearScroller
 		bsr		scroll
 		; move.w	#$424,$180(a6)
 		bsr		postEffect
@@ -77,6 +78,7 @@ updateScroller::
 		; bsr		updateLogoColors		; super slow :(
 
 		bsr		updateLogoPos
+		bsr		updateStars
         rts
 ;-------
 initPoints:
@@ -89,10 +91,33 @@ initPoints:
 		lea		point_len(a5),a5
 		dbf		d7,.loop
 		rts
-
+;-------
+clearScroller:				;<switch screens and clear>
+		lea		$dff000,a6
+		not.b	screenToggleScroller
+		bne.s	.s0
+		move.w	#0,bp0+2
+		move.l	#$78000,screenlocScroller
+		bra.s	.s1
+.s0:		
+		move.w	#$8000,bp0+2
+		move.l	#$70000,screenlocScroller
+.s1:
+		bsr		bbusy
+		move.l	screenlocScroller,$54(a6)
+		move.l	#-1,$44(a6)
+		move.l	#0,$64(a6)
+		move.l	#$01000000,$40(a6)
+		move.w	#(screenHeight<<6)+(li/2),$58(a6)
+		rts
+;---------------------------------------------
+screenToggleScroller:		
+		dc.w	0
+screenlocScroller		
+		dc.l	$70000
 ;-------
 drawPoints:
-		move.l	screenloc,a0
+		move.l	screenlocScroller,a0
 		lea		points,a5
 		move.l	#numPoints-1,d7	
 		moveq	#0,d0
@@ -131,7 +156,7 @@ drawPoints:
 
 ;-------
 addPoints:
-		move.l	screenloc,a1
+		move.l	screenlocScroller,a1
 		add.l	#sc_top+8,a1
 		moveq	#yTop,d7
 		moveq	#6-1,d6
@@ -165,7 +190,7 @@ addPoint:				; add single point at y offset d7
 		move.w	d0,(a0)
 		lea		points,a5
 		add.w	d1,a5
-		move.w	#60,point_life(a5)
+		move.w	#128,point_life(a5)
 
 		move.w	#(8*8)+1,d0
 		lsl.w	#7,d0
@@ -232,7 +257,7 @@ postEffect:
 
 		lea		table2,a2
 		moveq	#((tabend2-table2)/12)-1,d7
-		move.l	screenloc,d6
+		move.l	screenlocScroller,d6
 copyloop2:
 		move.l	(a2)+,a0
 		move.w	(a2)+,d1
@@ -251,7 +276,7 @@ copyloop2:
 leftblock_words = 6
  		lea		src_adr+8,a0
  		;  lea 	$70000+8,a1							; dst
-		move.l	screenloc,a1
+		move.l	screenlocScroller,a1
 		add.l 	#sc_top+8,a1						; dest
 		move.l	#src_line-(leftblock_words*2),d4	; src modulo
 		move.l	#li-(leftblock_words*2),d5			; dst modulo
@@ -272,7 +297,7 @@ rowloop:
 rightblock_words = 12
 		lea		ss+6,a0				; source
 ;		lea 	$70016+ho,a1		; dest
-		move.l	screenloc,a1
+		move.l	screenlocScroller,a1
 		add.l 	#ds+ho-(li*1)+2+1,a1	; dest
 		move.l	#src_line-(rightblock_words*2),d4	; src modulo
 		move.l	#li-(rightblock_words*2),d5			; dst modulo
@@ -998,7 +1023,7 @@ clist:
 		; dc.w	$0104,%100100	; set playfield prios
 		dc.w	$0104,%000000	; set playfield prios	(sprites behind playfields)
 
-spoint2:		
+spoint:		
 		; sprite pointers
 		dc.w	$120,0,$122,0,$124,0,$126,0
 		dc.w	$128,0,$12a,0,$12c,0,$12e,0
@@ -1066,7 +1091,7 @@ logoEndWait:
 		dc.w	$8401,$fffe		; start of "game" area
 		dc.w	BPLCON0,$1200		; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
-bp0_2:	dc.w	$00e2,$0000		;
+bp0:	dc.w	$00e2,$0000		;
 
 		dc.w	$0108,$0000		; even bitplanes modulo
 		dc.w	$010a,$0000		; odd bitplanes modulo

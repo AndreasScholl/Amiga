@@ -34,7 +34,8 @@ game_lineBytes	= $2e			; screen line size in bytes
 		section "code",data,chip
 
 initGame::				;<initialize game>
-		jsr		setupStarfield	; starfield
+		lea		spoint(pc),a5
+		jsr		setupStarfieldPointers	; starfield
 		bsr		scaleLetters
 
 		bsr		shots_init
@@ -1672,6 +1673,7 @@ linetab:	ds.b	200*16
 ;stars_count		= 105
 stars_count		= 120
 
+; a5: pointer to copperlist 
 setupStarfield::
 		lea		slst0,a0
 		move.w	#$30,d0		; y start
@@ -1696,27 +1698,32 @@ setupStarfield::
 		lea		starGfx,a3
 		move.w	#stars_count-1,d7
 		bsr		setupSpritelist
-	
+
+		bsr		setupStarfieldPointers
+		rts
+
+setupStarfieldPointers::
 		move.l	#slst0,d0
-		lea		spoint+2,a0
-		move.w	d0,4(a0)
+;		lea		spoint+2,a0
+		addq	#2,a5
+		move.w	d0,4(a5)
 		swap	d0
-		move.w	d0,(a0)
-		addq	#8,a0
+		move.w	d0,(a5)
+		addq	#8,a5
 		move.l	#slst1,d0
-		move.w	d0,4(a0)
+		move.w	d0,4(a5)
 		swap	d0
-		move.w	d0,(a0)
-		addq	#8,a0
+		move.w	d0,(a5)
+		addq	#8,a5
 		move.l	#slst2,d0
-		move.w	d0,4(a0)
+		move.w	d0,4(a5)
 		swap	d0
-		move.w	d0,(a0)
-		addq	#8,a0
+		move.w	d0,(a5)
+		addq	#8,a5
 		move.l	#slst3,d0
-		move.w	d0,4(a0)
+		move.w	d0,4(a5)
 		swap	d0
-		move.w	d0,(a0)
+		move.w	d0,(a5)
 		rts
 ;---------------------------------------------
 ; a0: sprite list (output)
@@ -1724,7 +1731,6 @@ setupStarfield::
 ; a2: prio (color and speed)
 ; d0: y start
 ; d7: # of stars
-
 setupSpritelist:
 		move.w	d0,d2
 		addq	#1,d2
@@ -1777,7 +1783,7 @@ setupSpritelist:
 		move.l	#0,(a0)+	; end of sprite list
 		rts
 ;---------------------------------------------
-updateStars:		
+updateStars::
 		moveq	#1,d0
 		move.w	#stars_count-1,d7
 		lea		slst0+1,a0
