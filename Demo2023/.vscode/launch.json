@@ -1,7 +1,6 @@
 {
     "version": "0.2.0",
     "configurations": [
-
         {
             "type": "amiga-assembly",
             "request": "launch",
@@ -12,7 +11,7 @@
             "emulatorType": "winuae",
             "emulatorArgs": [
                 "-s",
-                "filesystem=rw,dh0:${workspaceFolder}/uae/dh0",
+                "filesystem=rw,dh0:${workspaceFolder}/uae/dh0"
             ],
             "preLaunchTask": "amigaassembly: build"
         },

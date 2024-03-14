@@ -44,11 +44,12 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
-game_width		= 352
-game_height		= 160
-
 ;numPoints		= 128
-numPoints		= 64
+numPoints		= 64			; points for scroller dissolve effect
+
+; --- asteroids game screen
+game_width		= 352
+game_height		= 250
 
 		section "code",data,chip
 init:
@@ -73,32 +74,7 @@ st:
 
 		lea		$dff000,a6
 
-		move.l	#logo,d0
-		move.l	#(320/8)*64,d1
-		move.w	d0,logobp0l
-		swap	d0
-		move.w	d0,logobp0h
-		swap	d0
-		add.l	d1,d0
-		move.w	d0,logobp1l
-		swap	d0
-		move.w	d0,logobp1h
-		swap	d0
-		add.l	d1,d0
-		move.w	d0,logobp2l
-		swap	d0
-		move.w	d0,logobp2h
-		swap	d0
-		add.l	d1,d0
-		move.w	d0,logobp3l
-		swap	d0
-		move.w	d0,logobp3h
-
-		bsr		buildLogoColors
-
-		jsr		setupStarfield	; starfield
-		bsr		setupScroller
-		bsr		initPoints
+		bsr		initIntro
 		bsr		initGame
 
 ;		move.w	#$0020,$dff096
@@ -113,7 +89,7 @@ st:
 		move.w	#$c020,$dff09a		; allow level 3
 		move.w	#$2200,sr
 
- 		move.l	#clist,$dff080
+ 		move.l	#clistGame,$dff080
 		clr.w	$dff088
 
 		bsr		main
@@ -173,13 +149,41 @@ vblank:
 		; move.w	#$882,$180(a6)
 		; bsr		updateLogoColors		; super slow :(
 
-		bsr		updateLogoPos
+;		bsr		updateLogoPos
 
 		movem.l	(a7)+,d0-d7/a0-a6
 		move.w	#$0020,$dff09c
 .nvbl:		
 		rte
+;-------
+initIntro:
+		move.l	#logo,d0
+		move.l	#(320/8)*64,d1
+		move.w	d0,logobp0l
+		swap	d0
+		move.w	d0,logobp0h
+		swap	d0
+		add.l	d1,d0
+		move.w	d0,logobp1l
+		swap	d0
+		move.w	d0,logobp1h
+		swap	d0
+		add.l	d1,d0
+		move.w	d0,logobp2l
+		swap	d0
+		move.w	d0,logobp2h
+		swap	d0
+		add.l	d1,d0
+		move.w	d0,logobp3l
+		swap	d0
+		move.w	d0,logobp3h
 
+		bsr		buildLogoColors
+
+		jsr		setupStarfield	; starfield
+		bsr		setupScroller
+		bsr		initPoints
+		rts
 ;-------
 initPoints:
 		lea		points,a5
@@ -1133,6 +1137,8 @@ logoColorsOrig:
 		dc.w	$019c,$0fff
 		; dc.w	$019e,$0fff
 
+
+; --- intro clist
 clist:		
 		dc.w	BPLCON0,$0200		; bitplanes off
 
@@ -1145,7 +1151,8 @@ clist:
 		; dc.w	$0104,%100100	; set playfield prios
 		dc.w	$0104,%000000	; set playfield prios	(sprites behind playfields)
 
-spoint:		; sprite pointers
+spoint2:		
+		; sprite pointers
 		dc.w	$120,0,$122,0,$124,0,$126,0
 		dc.w	$128,0,$12a,0,$12c,0,$12e,0
 		dc.w	$130,0,$132,0,$134,0,$136,0
@@ -1212,7 +1219,7 @@ logoEndWait:
 		dc.w	$8401,$fffe		; start of "game" area
 		dc.w	BPLCON0,$1200		; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
-bp0:	dc.w	$00e2,$0000		;
+bp0_2:	dc.w	$00e2,$0000		;
 
 		dc.w	$0108,$0000		; even bitplanes modulo
 		dc.w	$010a,$0000		; odd bitplanes modulo
@@ -1400,6 +1407,53 @@ bp0:	dc.w	$00e2,$0000		;
 ; 		dc.w	$0100,$0200
 		dc.w	$ffff,$fffe
 
+clistGame:		
+		dc.w	BPLCON0,$0200		; bitplanes off
+
+		dc.w	$0108,$0000		; even bitplanes modulo
+		dc.w	$010a,$0000		; odd bitplanes modulo
+
+		dc.w	DDFSTRT,$0038
+		dc.w	DDFSTOP,$00d0
+
+		; dc.w	$0104,%100100	; set playfield prios
+		dc.w	$0104,%000000	; set playfield prios	(sprites behind playfields)
+
+spoint:		; sprite pointers
+		dc.w	$120,0,$122,0,$124,0,$126,0
+		dc.w	$128,0,$12a,0,$12c,0,$12e,0
+		dc.w	$130,0,$132,0,$134,0,$136,0
+		dc.w	$138,0,$13a,0,$13c,0,$13e,0
+
+		dc.w	$01a2,$0842		; 1
+		dc.w	$01a4,$0371		; 2
+		dc.w	$01a6,$0fff
+		dc.w	$01aa,$0125		; 4
+		dc.w	$01ac,$0fff
+		dc.w	$01ae,$0631		; 3
+
+		dc.w	$2001,$fffe			; stars start
+		dc.w	$0180,$0000	   ; black plane
+		dc.w	$0182,$0eee	   ; line color
+		dc.w	BPLCON0,$1200		; one plane
+		dc.w	$00e0,$0006
+		dc.w	$00e2,$e000-li
+		dc.w	$0108,$ffd8			; even bitplanes modulo
+
+;		dc.w	$8401,$fffe			; start of "game" area
+		dc.w	BPLCON0,$1200		; 1 bitplanes on
+		dc.w	$00e0,$0007			; bitplane 0 
+bp0:	dc.w	$00e2,$0000			;
+
+		dc.w	$0108,$0000			; even bitplanes modulo
+		dc.w	$010a,$0000			; odd bitplanes modulo
+
+		dc.w	$0092,$0028
+		dc.w	$0094,$00d8
+
+		dc.w	$ffff,$fffe
+;--------------------------------------------------------------
+; lookup table for scroller chars
 rchartab:	
 		blk.w	256,0
 
@@ -1419,7 +1473,7 @@ updateGame:
 		tst.b	ship_next
 		bne.s	.nsdraw
 		move.l	a6,-(a7)
-		bsr		shipcoll		; collision
+;		bsr		shipcoll		; collision
 		move.l	(a7)+,a6
 		bsr		ship_set
 .nsdraw:
@@ -1438,13 +1492,17 @@ updateGame:
 		sf		ship_next
 		bsr		initGame
 .nrestart:
+		tst.l	enemy_con
+		bne.s	.noLetterInit
+
 		; letter counter and initialization
-		lea		letters_init,a0
-		tst.w	(a0)
-		beq		.noLetterInit
-		sub.w	#1,(a0)
-		bne		.noLetterInit
-		move.w	#6*50,(a0)		; delay for next letters
+		; lea		letters_init,a0
+		; tst.w	(a0)
+		; beq		.noLetterInit
+		; sub.w	#1,(a0)
+		; bne		.noLetterInit
+		; ; move.w	#6*50,(a0)		; delay for next letters
+		; move.w	#60*50,(a0)		; delay for next letters
 		clr.l	enemy_con		; free all enemies
 		bsr		asteroids_init
 .noLetterInit:
@@ -1465,6 +1523,8 @@ obj_scale:		rs.w	1		; scale
 
 ;obj_coords:		rs.l	1		; pointer on coord-table (i.e. lines)
 obj_coords:		rs.w	(max_objlines*4)+1	; coord-table (i.e. lines)
+obj_linespeed:	rs.w	(max_objlines*4)	; speed table for line explosion effect
+obj_linecoords:	rs.w	(max_objlines*4)	; fixed point coord table for line explosion effect
 
 obj_xvelo:		rs.w	1		; x velocity
 obj_yvelo:		rs.w	1		; y velocity
@@ -1586,7 +1646,9 @@ obj_thrust:				;<accelerate object, value in d2>
 		rts
 ;---------------------------------------------
 obj_move:				;<calculate new object coords>
-		
+		tst.w	obj_flag(a0)			; skip move if flags are set (hit -> explode)
+		bne.s	.doneMove
+
 		move.w	obj_xfloat(a0),d0		; x floating
 		add.w	obj_xvelo(a0),d0		; + x velocity
 
@@ -1624,7 +1686,7 @@ obj_move:				;<calculate new object coords>
 		move.w	d0,obj_yfloat(a0)		; store y floating
 		lsr.w	#7,d0					; convert to integer
 		move.w	d0,obj_yc(a0)			; y integer
-		
+.doneMove:		
 		lea		obj_coords(a0),a1		; coord table
 		move.w	(a1),d0					; no. of lines
 		tst.w	d0
@@ -1648,7 +1710,7 @@ obj_move:				;<calculate new object coords>
 		move.w	(a1)+,d7				; no of lines
 		subq.w	#1,d7
 .lines:		
-		movem.w	(a1)+,d0-d3
+		movem.w	(a1)+,d0-d3		
 		muls.w	obj_scale(a0),d0
 		muls.w	obj_scale(a0),d1
 		muls.w	obj_scale(a0),d2
@@ -1699,7 +1761,7 @@ updateEnemies:
 .noWait:
 		movem.l	d0/d7,-(a7)
 ;		move.w	#$f0f,$dff180
-		bsr		obj_move
+		bsr		obj_move			; move and setup draw
 ;		move.w	#$fff,$dff180
 		movem.l	(a7)+,d0/d7
 
@@ -1721,23 +1783,29 @@ updateEnemies:
 		bne.s	.appearing
 		move.w	#$8000,obj_angle(a0)
 
-		move.l	d0,d6				; store enemycon
-		jsr		getRandomNumber
-		and.l	#$1f,d0
-		sub.l	#$10,d0
-		move.w	d0,obj_xvelo(a0)
-		jsr		getRandomNumber
-		and.l	#$1f,d0
-		sub.l	#$10,d0
-		move.w	d0,obj_yvelo(a0)
-		move.l	d6,d0				; restore enemycon
+		; --- get random velocity
+		; move.l	d0,d6				; store enemycon
+		; jsr		getRandomNumber
+		; and.l	#$1f,d0
+		; sub.l	#$10,d0
+		; move.w	d0,obj_xvelo(a0)
+		; jsr		getRandomNumber
+		; and.l	#$1f,d0
+		; sub.l	#$10,d0
+		; move.w	d0,obj_yvelo(a0)
+		; move.l	d6,d0				; restore enemycon
 .noAppear:
 .appearing:
 		move.w	obj_flag(a0),d6
-		btst	#0,d6
-		beq.s	.notHit
-		bsr.s	lineExplode
-.notHit:
+		btst	#1,d6				; explode flag set?
+		beq.s	.notExloding
+		bsr		lineExplode
+		bra		.doneHit
+.notExloding:
+		btst	#0,d6				; hit flag set?
+		beq.s	.doneHit
+		bsr.s	initLineExplode
+.doneHit:
 
 .nenemy:	
 		lea		obj_len(a0),a0
@@ -1746,20 +1814,117 @@ updateEnemies:
 ;---------------------------------------------
 ; a0: obj
 ; d0 -> dont change (enemycon)
+; d6 -> obj_flag value
 ; d7 -> dont change (obj loop counter)
-lineExplode:
+initLineExplode:
+		bclr	#0,d6				; reset hit flag
+		bset	#1,d6				; set explode flag
+		move.w	d6,obj_flag(a0)		;
+
+		move.w	#20,obj_timer(a0)	; hit "remove" time
+
 		lea		obj_coords(a0),a1
-		lea		exlode_speeds,a2
+		lea		obj_linespeed(a0),a2
 		move.w	(a1)+,d2		; no. of lines
-		lsl.w	#2,d2
+;		lsl.w	#2,d2			; * 4 for x1,y1,x2,y2
 		sub.w	#1,d2
 		ext.l	d2
+		move.l	d2,d5
+		move.l	d0,d6
 .lines:
-		move.w	(a1),d1
-		add.w	(a2)+,d1		; speed
-		move.w	d1,(a1)+
+		move.w	(a1)+,d3
+		move.w	(a1)+,d4
+		add.w	(a1)+,d3
+		add.w	(a1)+,d4
+		asr		#1,d3
+		asl		#2,d3
+		asr		#1,d4
+		asl		#2,d4
+
+		move.w	d3,d1	
+		jsr		getRandomNumber
+		and 	#$1f,d0
+		sub.w	#16,d0
+		add.w	d0,d3
+		move.w	d3,(a2)+
+		move.w	d1,d3	
+
+		move.w	d4,d1	
+		jsr		getRandomNumber
+		and 	#$1f,d0
+		sub.w	#16,d0
+		add.w	d0,d4
+		move.w	d4,(a2)+
+		move.w	d1,d4
+
+		jsr		getRandomNumber
+		and 	#$1f,d0
+		sub.w	#16,d0
+		add.w	d0,d3
+		move.w	d3,(a2)+
+
+		jsr		getRandomNumber
+		and 	#$1f,d0
+		sub.w	#16,d0
+		add.w	d0,d4
+		move.w	d4,(a2)+
 
 		dbf		d2,.lines
+		move.l	d6,d0
+
+		lea		obj_coords+2(a0),a1
+		lea		obj_linecoords(a0),a2
+.copy:
+		move.w	(a1)+,d3
+		move.w	(a1)+,d4
+		asl.w	#4,d3
+		asl.w	#4,d4
+		move.w	d3,(a2)+
+		move.w	d4,(a2)+
+
+		move.w	(a1)+,d3
+		move.w	(a1)+,d4
+		asl.w	#4,d3
+		asl.w	#4,d4
+		move.w	d3,(a2)+
+		move.w	d4,(a2)+
+		dbf		d5,.copy
+
+		rts
+; ------------------
+lineExplode:
+		; old effect -> 
+		lea		obj_coords(a0),a1
+		lea		obj_linecoords(a0),a3
+		lea		obj_linespeed(a0),a2
+
+		move.w	(a1)+,d2		; no. of lines
+		lsl.w	#2,d2			; * 4 for x1,y1,x2,y2
+		sub.w	#1,d2
+		ext.l	d2
+.explode:
+		move.w	(a3),d1
+		move.w	(a2),d3			; speed
+		; --- slow down (adjust speed)
+		tst.w	d3
+		beq.s	.doneSpeed
+		bge.s	.decSpeed
+		; cmp.w	#-1,d3
+		; bge.s	.doneSpeed
+		addq	#1,d3
+		bra.s	.doneSpeed
+.decSpeed
+		; cmp.w	#1,d3
+		; ble.s	.doneSpeed
+		subq	#1,d3
+.doneSpeed:
+		move.w	d3,(a2)+	; store speed
+		add.w	d3,d1
+		move.w	d1,(a3)+	; store new coord (fixed point)
+		asr.w	#4,d1		; convert to int
+		move.w	d1,(a1)+	; store new coord (int)
+
+		dbf		d2,.explode
 
 		sub.w	#1,obj_timer(a0)
 		bne.s	.noRemove
@@ -1871,6 +2036,10 @@ shot_collision:
 		move.w	d2,d4
 		move.w	d3,d5
 
+		; --- no coll while appearing
+		tst.w	obj_appear(a3)	
+		bne.s	.nocoll
+
 		move.w	obj_collsize(a3),d7
 
 		sub.w	d7,d2
@@ -1889,8 +2058,9 @@ shot_collision:
 		; collision occured
 		cmp.w	#letter,obj_name(a3)
 		bne.s	.noLetter
+		tst.w	obj_flag(a3)
+		bne.s	.nocoll				; already hit
 		move.w	#1,obj_flag(a3)		; set "hit" flag
-		move.w	#15,obj_timer(a3)	; hit "remove" time
 		moveq	#1,d1
 		rts
 .noLetter
@@ -2123,8 +2293,23 @@ asteroids_init:
 		move.w	#0,d3				; x velo
 		move.w	#0,d4				; y velo
 		moveq	#0,d7				; wait
+
+		; --- get random velocity
+		move.l	d0,d6
+		jsr		getRandomNumber
+		and.l	#$1f,d0
+		sub.l	#$10,d0
+;		moveq	#0,d0		; test
+		move.l	d0,d3
+		jsr		getRandomNumber
+		and.l	#$1f,d0
+		sub.l	#$10,d0
+;		moveq	#0,d0		; test
+		move.l	d0,d4
+		move.l	d6,d0
+
 .loop:
-		move.w	#28,d1				; y
+		move.w	#100,d1				; y
 
 		lea		coord_tabs+(5*4),a5	; letter start
 		move.b	(a4)+,d6
@@ -2134,19 +2319,6 @@ asteroids_init:
 		ext.w	d6
 		lsl		#2,d6
 		add.w	d6,a5
-
-		move.l	d0,d6
-		jsr		getRandomNumber
-		and.l	#$1f,d0
-		sub.l	#$10,d0
-		moveq	#0,d0		; test
-		move.l	d0,d3
-		jsr		getRandomNumber
-		and.l	#$1f,d0
-		sub.l	#$10,d0
-		moveq	#0,d0		; test
-		move.l	d0,d4
-		move.l	d6,d0
 
 		moveq	#letter,d5			; name
 		movem.l	d0-d7/a1-a6,-(a7)
@@ -2162,7 +2334,8 @@ asteroids_init:
 .copylinedata
 		moveq	#((max_objlines*4)+1)-1,d1
 .copy:
-		move.w	(a2)+,(a3)+
+		move.w	(a2)+,d5
+		move.w	d5,(a3)+
 		dbf		d1,.copy
 .copydone:
 		; move.w	d7,d6
@@ -2172,10 +2345,10 @@ asteroids_init:
 		; sub.w	d6,d5
 		move.w	d5,obj_appear(a0)
 		move.w	#0,obj_angle(a0)
-		move.w	#4,obj_scale(a0)
+		move.w	#2,obj_scale(a0)
 		move.w	d7,obj_wait(a0)
 
-		add.w	#25,d7		; next wait
+		add.w	#10,d7		; next wait
 .skip:		
 		add.w	#ast_x_offset,d0
 
@@ -2827,7 +3000,8 @@ linetab:	ds.b	200*16
 ;---------------------------------------------
 ; starfield
 ;---------------------------------------------
-stars_count		= 105
+;stars_count		= 105
+stars_count		= 120
 
 setupStarfield:		
 		lea		slst0,a0
@@ -2919,13 +3093,13 @@ setupSpritelist:
 		move.l	(a3),(a0)+	; gfx
 
 		; scroller copperbar coord. skip
-		cmp.w	#$cc,d0			; scrollerbar = cf - e0
-		ble		.noScrollerBar
-		cmp.w	#$e0,d0
-		bhi		.noScrollerBar
-		add.w	#$22,d0
-		add.w	#$22,d2
-.noScrollerBar
+; 		cmp.w	#$cc,d0			; scrollerbar = cf - e0
+; 		ble		.noScrollerBar
+; 		cmp.w	#$e0,d0
+; 		bhi		.noScrollerBar
+; 		add.w	#$22,d0
+; 		add.w	#$22,d2
+; .noScrollerBar
 
 		addq	#2,d0		; next v start
 		addq	#2,d2		; next v stop
@@ -2961,7 +3135,6 @@ updateStars:
 .noinc
 		lea		8(a0),a0
 		dbf		d7,.loop	
-		rts
 		rts
 		
 starGfx:	
@@ -3340,16 +3513,3 @@ z_coords:
 		dc.w -12,17,-3,-3
 		dc.w -3,-3,-12,3
 		dc.w -12,3,-16,-8
-
-;------
-exlode_speeds:
-		dc.w -1,-1,-1,-1
-		dc.w 0,1,0,1
-		dc.w 1,0,1,0
-		dc.w 1,1,1,1
-		dc.w -1,1,-1,1
-		dc.w -1,1,-1,1
-		dc.w 1,-1,1,-1
-		dc.w 1,-1,1,-1
-		dc.w -1,0,-1,0
-		dc.w 1,1,1,1
