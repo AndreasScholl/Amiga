@@ -19,7 +19,7 @@
 				"includes": "*.{s,S,asm,ASM}",
 				"excludes": "",
 				"exefilename": "../uae/dh0/Demo2023",
-				"entrypoint": "sc8.s",
+				"entrypoint": "main.s",
 				"args": [
 					"-bamigahunk",
 					"-Bstatic"
