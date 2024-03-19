@@ -5,16 +5,13 @@
 		INCLUDE     "graphics/graphics_lib.i"
 		INCLUDE     "hardware/cia.i"
 
-logoY			= $40
-
 src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
 screenHeight	= 128
 li				= $2e			; screen line size in bytes
 
-; ho				= li*23		; dst height start offset
-sc_offset		= 82			; scroller y offset
+sc_offset		= 58			; scroller dest y offset
 ho				= li*sc_offset	; dst height start offset
 yTop			= sc_offset-23	; scroller top y pos (for copy and pixel effect)
 sc_top			= yTop*li		;
@@ -22,8 +19,9 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
-numPoints		= 128
-;numPoints		= 64			; points for scroller dissolve effect
+lifetime        = 120
+numPoints		= 128           ; # of points for scroller dissolve effect
+;numPoints		= 64			
 
 ; --- point area definition
 game_width		= 352
@@ -31,8 +29,34 @@ game_height		= 160
 
 		section "code",data,chip
 initScroller::
+        moveq   #0,d1
+        bsr.s   updateLogoPointers
+
+		bsr		buildLogoColors
+
+		lea		spoint(pc),a5
+		jsr		setupStarfield	; starfield
+		bsr		setupScroller
+		bsr		initPoints
+
+ 		move.l	#clist,$dff080
+		clr.w	$dff088
+		rts
+;-------
+stateStarted = 0
+stateEnd     = 1
+scrollerState:  dc.w    stateStarted
+;-------
+logoY			= $31       ; logo start y
+;logo_height = 64
+logo_height = 73
+logo_color_count = 11   ;14
+
+; d1: offset in bytes
+updateLogoPointers:
 		move.l	#logo,d0
-		move.l	#(320/8)*64,d1
+        add.l   d1,d0
+		move.l	#(320/8)*73,d1
 		move.w	d0,logobp0l
 		swap	d0
 		move.w	d0,logobp0h
@@ -51,21 +75,18 @@ initScroller::
 		move.w	d0,logobp3l
 		swap	d0
 		move.w	d0,logobp3h
-
-		bsr		buildLogoColors
-
-		lea		spoint(pc),a5
-		jsr		setupStarfield	; starfield
-		bsr		setupScroller
-		bsr		initPoints
-
- 		move.l	#clist,$dff080
-		clr.w	$dff088
-		rts
+		; add.l	d1,d0
+		; move.w	d0,logobp4l
+		; swap	d0
+		; move.w	d0,logobp4h
+        rts
 ;-------
 updateScroller::
 		lea		$dff000,a6
         bsr     clearScroller
+
+        cmp.w   #stateEnd,scrollerState
+        beq.s   .scrollerEnded
 		bsr		scroll
 		; move.w	#$424,$180(a6)
 		bsr		postEffect
@@ -74,11 +95,13 @@ updateScroller::
 		lea		$dff000,a6
 		bsr		addPoints
 		bsr		drawPoints
+.scrollerEnded:        
 		; move.w	#$882,$180(a6)
 		; bsr		updateLogoColors		; super slow :(
 
 		bsr		updateLogoPos
-		bsr		updateStars
+		jsr		updateStars
+;		move.w	#$882,$180(a6)
         rts
 ;-------
 initPoints:
@@ -190,7 +213,7 @@ addPoint:				; add single point at y offset d7
 		move.w	d0,(a0)
 		lea		points,a5
 		add.w	d1,a5
-		move.w	#128,point_life(a5)
+		move.w	#lifetime,point_life(a5)
 
 		move.w	#(8*8)+1,d0
 		lsl.w	#7,d0
@@ -633,17 +656,22 @@ putchar:
 		moveq	#0,d0
 		lea		tcount,a4
 		lea		text,a0
-		add.w	(a4),a0
+		add.w	(a4),a0                 ; + text char offset
 		addq.w	#1,(a4)
 		moveq	#43,d1
-		move.b	(a0),d0
-		bne.s	notextfin
-		clr.w	(a4)		
-		bra.s 	textfin2
-notextfin:
+		move.b	(a0),d0                 ; end of text?
+		bne.s	.notextfin
+;		clr.w	(a4)	                ; restart
+		subq.w	#1,(a4)                 ; stay on end of text
+        cmp.w   #stateStarted,scrollerState
+        bne.s   .noStateChange
+        move.w   #stateEnd,scrollerState        
+.noStateChange
+		bra.s 	.textfin
+.notextfin:
 		lea		rchartab,a1
 		move.b	(a1,d0.w),d1
-textfin2:	
+.textfin:	
 		lea		char(pc),a2
 		add.w	d1,a2
 		lea		src_adr+src_line-2,a1	; offset to end of line (putchar destination)
@@ -765,143 +793,171 @@ buildLogoColors:
 			lea		colorAdd,a2
 			lea		fadeLevel,a3
 
-			; move.w	#$6101,d4						; wait start
 			move.w	#((logoY+1)<<8)+1,d4
 ;			move.w	#256-(44*fadeIncrease),d7		; fade level
 
-			move.w	#44-1,d5
+			move.w	#logo_height-1,d5
 			bra		.skipWait				; first entry has no wait
 .loop:
 			move.w	d4,(a1)+				; copper wait
 			move.w	#$fffe,(a1)+			;
 			add.w	#$0100,d4
 .skipWait:			
-			move.w	(a2)+,d2				; color add test
+			move.w	(a2)+,d2				; color add value
 			move.w	(a3)+,d7				; fade level
 ;			move.w	#256,d7
 
 			lea		logoColorsOrig,a0
-			move.w	#14-1,d3
+			move.w	#logo_color_count-1,d3
 .colorLoop:
 			move.w	(a0)+,(a1)+				; color reg
 			move.w	(a0)+,d0
-			or.w	d2,d0
+			or.w	d2,d0                   ; color blend add
 
 			bsr		colorFade
-;			or.w	d2,d6
-;			move.w	d0,d6
+            ; move.w  d0,d6
 
-			move.w	d6,(a1)+				; color reg
+			move.w	d6,(a1)+				; final color value
 			dbf		d3,.colorLoop
 
 			dbf		d5,.loop
 			rts
 
-updateLogoColors:
-			lea		logoColors+2,a1
-			lea		colorAdd,a2
-			lea		fadeLevel,a3
+; updateLogoColors:
+; 			lea		logoColors+2,a1
+; 			lea		colorAdd,a2
+; 			lea		fadeLevel,a3
 
-			move.w	#44-1,d5
-			bra		.noWait				; first entry has no wait
-.loop:
-			lea		4(a1),a1				; skip wait
-.noWait:			
-			clr.w	d2
-			move.w	(a2)+,d2				; color add
-			add.w	colorAddVar,d2
+; 			move.w	#44-1,d5
+; 			bra		.noWait				; first entry has no wait
+; .loop:
+; 			lea		4(a1),a1				; skip wait
+; .noWait:			
+; 			clr.w	d2
+; 			move.w	(a2)+,d2				; color add
+; 			add.w	colorAddVar,d2
 
-			move.w	(a3)+,d7				; fade level
-			add.w	colorFadeVar,d7
-			cmp.w	#256,d7
-			ble		.noHighFade
-			move.w	#256,d7
-.noHighFade
+; 			move.w	(a3)+,d7				; fade level
+; 			add.w	colorFadeVar,d7
+; 			cmp.w	#256,d7
+; 			ble		.noHighFade
+; 			move.w	#256,d7
+; .noHighFade
 
-			lea		logoColorsOrig+2,a0
-			move.w	#14-1,d3
-.colorLoop:
-			move.w	(a0),d0
-			lea		4(a0),a0				; next source color value
-			or.w	d2,d0
-			bsr		colorFade
-			move.w	d6,(a1)					; color value
-			lea		4(a1),a1
-			dbf		d3,.colorLoop
+; 			lea		logoColorsOrig+2,a0
+; 			move.w	#logo_color_count-1,d3
+; .colorLoop:
+; 			move.w	(a0),d0
+; 			lea		4(a0),a0				; next source color value
+; 			or.w	d2,d0
+; 			bsr		colorFade
+; 			move.w	d6,(a1)					; color value
+; 			lea		4(a1),a1
+; 			dbf		d3,.colorLoop
 
-			dbf		d5,.loop
+; 			dbf		d5,.loop
 
-			add.w	#$001,colorAddVar
+; 			add.w	#$001,colorAddVar
 
-			move.w	colorFadeDir,d0
-			add.w	d0,colorFadeVar
+; 			move.w	colorFadeDir,d0
+; 			add.w	d0,colorFadeVar
 
-			add.w	#1,colorFadeDirCount
-			cmp.w	#32,colorFadeDirCount
-			bne		.noColFadeToggle
-			move.w	#0,colorFadeDirCount
-			neg.w	colorFadeDir
-.noColFadeToggle
-			rts
+; 			add.w	#1,colorFadeDirCount
+; 			cmp.w	#32,colorFadeDirCount
+; 			bne		.noColFadeToggle
+; 			move.w	#0,colorFadeDirCount
+; 			neg.w	colorFadeDir
+; .noColFadeToggle
+; 			rts
 
-colorFadeDir:
-			dc.w	4
+; colorFadeDir:
+; 			dc.w	4
 
-colorFadeDirCount:
-			dc.w	1
+; colorFadeDirCount:
+; 			dc.w	1
 
-colorFadeVar:
-			dc.w	0
+; colorFadeVar:
+; 			dc.w	0
 
-colorAddVar:
-			dc.w	0
+; colorAddVar:
+; 			dc.w	0
 
 colorAdd:
-			dc.w	$0		; 0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$0
-			dc.w	$1
-			dc.w	$1		; 10
-			dc.w	$1
-			dc.w	$2
-			dc.w	$2
-			dc.w	$2
-			dc.w	$3
-			dc.w	$3
-			dc.w	$3
-			dc.w	$3
-			dc.w	$4
-			dc.w	$4	; 20
-			dc.w	$4
-			dc.w	$5
-			dc.w	$5
-			dc.w	$5
-			dc.w	$6
-			dc.w	$6
-			dc.w	$6
+			dc.w	$f		; 0
+			dc.w	$f
+			dc.w	$e
+			dc.w	$e
+			dc.w	$d
+			dc.w	$d
+			dc.w	$c
+			dc.w	$c
+			dc.w	$b
+			dc.w	$b
+			dc.w	$a		; 10
+			dc.w	$a
+			dc.w	$8
+			dc.w	$8
 			dc.w	$7
-			dc.w	$107
-			dc.w	$107	; 30
-			dc.w	$108
-			dc.w	$108
-			dc.w	$208
-			dc.w	$209
-			dc.w	$209
-			dc.w	$209
-			dc.w	$30a
-			dc.w	$30a
-			dc.w	$30a
-			dc.w	$30a	; 40
-			dc.w	$40b
-			dc.w	$40b
-			dc.w	$40b
-			dc.w	$40c
+			dc.w	$7
+			dc.w	$6
+			dc.w	$6
+			dc.w	$5
+			dc.w	$5
+			dc.w	$4	    ; 20
+			dc.w	$4
+			dc.w	$3
+			dc.w	$3
+			dc.w	$2
+			dc.w	$2
+			dc.w	$1
+			dc.w	$1
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0	    ; 30
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0
+			dc.w	$0	    ; 40
+			dc.w	$0
+			dc.w	$100
+			dc.w	$101
+			dc.w	$201
+			dc.w	$202
+			dc.w	$302
+			dc.w	$303
+			dc.w	$403
+			dc.w	$404
+			dc.w	$504	    ; 50
+			dc.w	$505
+			dc.w	$606
+			dc.w	$606
+			dc.w	$706
+			dc.w	$707
+			dc.w	$807
+			dc.w	$808
+			dc.w	$909
+			dc.w	$909
+			dc.w	$a09	    ; 60
+			dc.w	$a0a
+			dc.w	$b0a
+			dc.w	$b0b
+			dc.w	$c0b
+			dc.w	$c0c
+			dc.w	$d0c
+			dc.w	$d0d
+			dc.w	$e0d
+			dc.w	$e0e
+			dc.w	$f0e    ; 70
+			dc.w	$f0f
+			dc.w	$000
+			dc.w	$000
+			dc.w	$000
 
 fadeLevel:
 			dc.w	11*1		; 0
@@ -928,29 +984,97 @@ fadeLevel:
 			dc.w	11*21
 			dc.w	11*21
 			dc.w	11*21
+			dc.w	11*22
+			dc.w	11*22
+			dc.w	11*22
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23       ; 30
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23
+			dc.w	11*23       ; 40
+			dc.w	11*21
+			dc.w	11*21
+			dc.w	11*21
 			dc.w	11*20
+			dc.w	11*20
+			dc.w	11*19	
 			dc.w	11*19
 			dc.w	11*18
 			dc.w	11*17
-			dc.w	11*16
+			dc.w	11*16       ; 50
 			dc.w	11*15
-			dc.w	11*14		; 30
+			dc.w	11*14
 			dc.w	11*13
 			dc.w	11*12
 			dc.w	11*11
 			dc.w	11*10
 			dc.w	11*9
-			dc.w	11*8
+			dc.w	11*9
 			dc.w	11*7
-			dc.w	11*6
+			dc.w	11*6       ; 60
 			dc.w	11*5
-			dc.w	11*4		; 40
+			dc.w	11*4
 			dc.w	11*3
 			dc.w	11*2
 			dc.w	11*1
+			dc.w	11*1
+			dc.w	11*0
+			dc.w	11*0
+			dc.w	11*0
+			dc.w	11*0       ; 70
+			dc.w	11*0
+			dc.w	11*0
 			dc.w	11*0
 
+
+; in  d0: color value
+; out d6: faded color value
+colorFadeOut:
+            moveq   #0,d6
+			move.w	d0,d1
+			lsr.w	#8,d1		; r (nibble)
+            beq.s   .doneR
+            subq.w  #1,d1
+			lsl.w	#8,d1		; shift r into right spot
+			or.w	d1,d6			
+.doneR:
+			move.w	d0,d1
+			lsr.w	#4,d1		; g (nibble)
+			and.w	#$0f,d1
+            beq.s   .doneG
+            subq.w  #1,d1
+			lsl.w	#4,d1		; shift g into right spot
+			or.w	d1,d6
+.doneG:
+			move.w	d0,d1
+			and.w	#$0f,d1		; b (nibble)
+            beq.s   .doneB
+            subq    #1,d1
+			or.w	d1,d6
+.doneB:
+			rts
+
+logoFadeLine:
+            dc.w    0
+logoFadeRepeat:
+            dc.w    0
+
 updateLogoPos:
+            cmp.w   #stateEnd,scrollerState
+            bne.s   .notEnded
+            bsr     fadeOutLogo
+            bsr     fadeOutBar
+            rts
+.notEnded:            
 			move.w	logoMoveDir,d0
 			add.w	d0,logoMoveSpeed
 
@@ -962,15 +1086,90 @@ updateLogoPos:
 			bne		.noToggle
 			move.w	#0,logoMoveDirCount
 			neg.w	logoMoveDir
-.noToggle
+.noToggle:
+.updateClist:
+            ; --- update copperlist from logo pos
 			move.w	logoPos,d0
+            ; move.w  #-256,d0                 ; debug test
 			addq	#8,d0
-			lsr.w	#4,d0
-			add.w	#logoY-16,d0
+			asr.w	#4,d0
+            tst.w   d0
+            bge     .noNegativePos
+            ; if logo pos < 0 -> increase bitplane pointers
+            neg.w   d0
+            mulu.w  #(320/8),d0             ; logo line in bytes
+            ext.l   d0
+            move.l  d0,d1
+            bsr     updateLogoPointers
+            moveq   #0,d0
+.noNegativePos
+;			add.w	#logoY-16,d0
+			add.w	#logoY-7,d0
 			move.b	d0,logoStartWait
-			add.w	#44,d0
+			add.w	#logo_height,d0
 			move.b	d0,logoEndWait
 			rts
+; ---------------------------------------------
+fadeOutLogo:
+            moveq   #20,d4
+.lineFader:
+            ; fade out logo line by line
+            lea     logoColors+2,a0         ; first color value
+            move.w  logoFadeLine,d0
+            mulu.w  #(2*2)+(logo_color_count*2*2),d0
+            ext.l   d0
+            add.l   d0,a0
+            moveq   #logo_color_count-1,d7
+            moveq   #1,d5                   ; line done flag
+.fadeColor:
+            move.w  (a0),d0
+            bsr     colorFadeOut
+            move.w  d6,(a0)
+            tst.w   d6
+            beq.s   .colorDone
+            moveq   #0,d5                   ; line not done (not faded out)
+.colorDone
+            lea     4(a0),a0
+            dbf     d7,.fadeColor
+
+            ; tst.w   d5
+            ; beq.s   .noNextLine
+            cmp.w   #logo_height-5,logoFadeLine
+            bne.s   .noRestart
+            clr.w   logoFadeLine
+            add.w   #1,logoFadeRepeat
+            bra.s   .noNextLine
+.noRestart
+            add.w   #1,logoFadeLine
+.noNextLine:
+            dbf     d4,.lineFader           ; loop for faster fade
+
+            cmp.w   #8,logoFadeRepeat
+            bne.s   .noPrioSwitch
+            move.w   %100100,playfieldPrio	; set playfield prios -> sprites in front of playfields
+.noPrioSwitch
+
+            cmp.w   #15,logoFadeRepeat
+            bne.s   .noPartSwitch
+            ; --- switch to game
+            jsr     initGame
+            move.l  #updateGamePart,d0
+            move.l  d0,updateFunction
+.noPartSwitch:
+            rts
+; --------------------
+fadeOutBar:
+            lea     clist,a0
+            lea     barcolorOffsets,a1
+            moveq   #19-1,d7
+.barfade:
+            move.w  (a1)+,d2            ; color value offset relative to clist
+            move.w  (a0,d2.w),d0        ; get color value
+            bsr     colorFadeOut
+            move.w  d6,(a0,d2.w)        ; store faded color value
+
+            dbf     d7,.barfade
+            rts
 
 logoMoveDir:
 			dc.w	1
@@ -982,17 +1181,62 @@ logoPos:
 			dc.w	0
 
 text:
-;		dc.b	"                                                               "
-		dc.b    "quadlite and thrust present the next iteration of the scroller --- "
+		dc.b    "quadlite and thrust present something ..... "
+        dc.b    "                                                                  ",0
 		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
 		dc.b	"dandee -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
 		even
 
 logo:
-        INCBIN	"thrust-quadlite_green_lo4.bin"
+;        INCBIN	"thrust-quadlite_green_lo4.bin"
+;        INCBIN	"thrust-quadlite_logo.bin"
+        INCBIN	"thrust-quadlite_16.bin"
+
+;	palette for: thrust-quadlite
+;	Mon Mar 18 2024 22:38:46 GMT+0100 (Mitteleuropäische Normalzeit)
+logoColorsOrig:
+;	palette for: thrust-quadlite_16
+;	Mon Mar 18 2024 23:17:02 GMT+0100 (Mitteleuropäische Normalzeit)
+	dc.w	$0182,$0463
+	dc.w	$0184,$0777
+	dc.w	$0186,$0999
+	dc.w	$0188,$0bbb
+	dc.w	$018a,$02a4
+	dc.w	$018c,$0050
+	dc.w	$018e,$0020
+	dc.w	$0190,$0ddd
+	dc.w	$0192,$06e6
+	dc.w	$0194,$0fff
+
+	dc.w	$0182,$0554
+	dc.w	$0184,$0777
+	dc.w	$0186,$0997
+	dc.w	$0188,$0999
+	dc.w	$018a,$0bbb
+	dc.w	$018c,$0697
+	dc.w	$018e,$0371
+	dc.w	$0190,$0050
+	dc.w	$0192,$0020
+	dc.w	$0194,$0694
+	dc.w	$0196,$0091
+	dc.w	$0198,$0ddd
+	dc.w	$019a,$0052
+	dc.w	$019c,$0070
+	dc.w	$019e,$0094
+	dc.w	$01a0,$09f7
+	dc.w	$01a2,$09b9
+	dc.w	$01a4,$06d6
+	dc.w	$01a6,$03f6
+	dc.w	$01a8,$03b4
+	dc.w	$01aa,$0fff
+	dc.w	$01ac,$0375
+	dc.w	$01ae,$0cfc
+	dc.w	$01b0,$0ffd
+	dc.w	$01b2,$00d3
+	dc.w	$01b4,$08d9
 
 ; palette for: thrust-quadlite_green
-logoColorsOrig:
+;logoColorsOrig:
 		dc.w	$0182,$0120
 		dc.w	$0184,$0251
 		dc.w	$0186,$0381
@@ -1009,8 +1253,7 @@ logoColorsOrig:
 		dc.w	$019c,$0fff
 		; dc.w	$019e,$0fff
 
-
-; --- intro clist
+; copperlist
 clist:		
 		dc.w	BPLCON0,$0200		; bitplanes off
 
@@ -1021,7 +1264,9 @@ clist:
 		dc.w	DDFSTOP,$00d0
 
 		; dc.w	$0104,%100100	; set playfield prios
-		dc.w	$0104,%000000	; set playfield prios	(sprites behind playfields)
+		dc.w	$0104
+playfieldPrio:
+        dc.w    %000000	; set playfield prios	(sprites behind playfields)
 
 spoint:		
 		; sprite pointers
@@ -1036,7 +1281,6 @@ spoint:
 		dc.w	$01aa,$0125		; 4
 		dc.w	$01ac,$0fff
 		dc.w	$01ae,$0631		; 3
-
 		dc.w	$00e4
 logobp1h:	
 		dc.w	0	
@@ -1056,6 +1300,13 @@ logobp3h:
 logobp3l:	
 		dc.w	0	
 
+; 		dc.w	$00f0
+; logobp4h:	
+; 		dc.w	0	
+; 		dc.w	$00f2
+; logobp4l:	
+; 		dc.w	0	
+
 		dc.w	$2001,$fffe			; stars start
 		dc.w	$0182,$0000	   ; black plane
 		dc.w	BPLCON0,$1200		; one plane
@@ -1065,31 +1316,45 @@ logobp3l:
 
 logoStartWait:
  		dc.w	$4001,$fffe
-		dc.w	BPLCON0,$4200		; 4 bitplanes
+		dc.w	BPLCON0,$4200		; 5 bitplanes
 		dc.w	$0108,$0000			; even bitplanes modulo
 
-		dc.w	$00e0
+        ; note: logo bp0 has to be set here as we have a empty bitplane 0
+        ;       before the logo starts or else the sprites (stars) won't display
+		dc.w	$00e0               
 logobp0h:	
 		dc.w	0	
 		dc.w	$00e2
 logobp0l:	
-		dc.w	0	
+		dc.w	0
 
 logoColors:
-		blk.w	((2+(14*2))*44)-2,0
+	; dc.w	$0182,$0463
+	; dc.w	$0184,$0777
+	; dc.w	$0186,$0999
+	; dc.w	$0188,$0bbb
+	; dc.w	$018a,$02a4
+	; dc.w	$018c,$0050
+	; dc.w	$018e,$0020
+	; dc.w	$0190,$0ddd
+	; dc.w	$0192,$06e6
+	; dc.w	$0194,$0fff
+		blk.w	((2+(logo_color_count*2))*logo_height)-2,0
 
 logoEndWait:
  		dc.w	$6c01,$fffe			; logo end wait
 		dc.w	BPLCON0,$0200		; bitplanes off
 
+;		dc.w	$0180,$0fff	   ; debug test
 		dc.w	$0182,$0000	   ; black plane
 		dc.w	BPLCON0,$1200		; one plane
 		dc.w	$00e0,$0006
 		dc.w	$00e2,$e000-li
 		dc.w	$0108,$ffd8			; even bitplanes modulo
 
-		dc.w	$8401,$fffe		; start of "game" area
-		dc.w	BPLCON0,$1200		; 1 bitplanes on
+		; dc.w	$8401,$fffe		; start of "game" area
+		dc.w	$9c01,$fffe		; start of "game" area
+		dc.w	BPLCON0,$1200	; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
 bp0:	dc.w	$00e2,$0000		;
 
@@ -1147,13 +1412,13 @@ bp0:	dc.w	$00e2,$0000		;
 		dc.w	$010a,$0000		; odd bitplanes modulo
 		dc.w	$0102,$00e0		; scroll
 		dc.w	$cf01,$fffe
-		dc.w	$0180,$0112	; flat scrollarea anti alias line ;)
+barc1:	dc.w	$0180,$0112	; flat scrollarea anti alias line ;)
 		dc.w	$0182,$0858
 		dc.w	$010a,$ffd2		; negative odd bitplanes modulo -> repeat last line
 		dc.w	$0102,$00c0		; scroll
 		dc.w	$0192,$0112		; shadow color
 		dc.w	$d001,$fffe
-		dc.w	$0180,$0234	; flat scrollarea start
+barc2:	dc.w	$0180,$0234	; flat scrollarea start
 		dc.w	$0182,$0868
 		dc.w	$010a,$0000		; odd bitplanes modulo
 		dc.w	$0102,$00b0		; scroll
@@ -1206,45 +1471,44 @@ bp0:	dc.w	$00e2,$0000		;
 
 		; dc.w	$0180,$0234	; flat scrollarea color
 		dc.w	$de01,$fffe
-		dc.w	$0180,$0567	; wall downwards start
+barc3:	dc.w	$0180,$0567	; wall downwards start
 		dc.w	$df01,$fffe
-		dc.w	$0180,$0356	; wall 
-
+barc4:	dc.w	$0180,$0356	; wall 
 		dc.w	$e001,$fffe
-		dc.w	$0180,$0355	; wall 
+barc5:	dc.w	$0180,$0355	; wall 
 		dc.w	$e101,$fffe
-		dc.w	$0180,$0345	; wall 
+barc6:	dc.w	$0180,$0345	; wall 
 		dc.w	$e201,$fffe
-		dc.w	$0180,$0245	; wall 
+barc7:	dc.w	$0180,$0245	; wall 
 		dc.w	$e301,$fffe
-		dc.w	$0180,$0244	; wall 
+barc8:	dc.w	$0180,$0244	; wall 
 		dc.w	$e401,$fffe
-		dc.w	$0180,$0234	; wall 
+barc9:	dc.w	$0180,$0234	; wall 
 		dc.w	$e501,$fffe
-		dc.w	$0180,$0134	; wall 
+barc10:	dc.w	$0180,$0134	; wall 
 		dc.w	$e601,$fffe
-		dc.w	$0180,$0133	; wall 
+barc11:	dc.w	$0180,$0133	; wall 
 		dc.w	$e701,$fffe
-		dc.w	$0180,$0123	; wall 
+barc12:	dc.w	$0180,$0123	; wall 
 		dc.w	$e801,$fffe
-		dc.w	$0180,$0023	; wall 
+barc13:	dc.w	$0180,$0023	; wall 
 		dc.w	$e901,$fffe
-		dc.w	$0180,$0022	; wall 
+barc14:	dc.w	$0180,$0022	; wall 
 		dc.w	$ea01,$fffe
-		dc.w	$0180,$0012	; wall 
+barc15:	dc.w	$0180,$0012	; wall 
 		dc.w	$eb01,$fffe
-		dc.w	$0180,$0012	; wall 
+barc16:	dc.w	$0180,$0012	; wall 
 		dc.w	$ec01,$fffe
-		dc.w	$0180,$0011	; wall 
+barc17: dc.w	$0180,$0011	; wall 
 		dc.w	$ed01,$fffe
-		dc.w	$0180,$0001	; wall 
+barc18:	dc.w	$0180,$0001	; wall 
 		dc.w	$ee01,$fffe
-		dc.w	$0180,$0001	; wall 
+barc19: dc.w	$0180,$0001	; wall 
 		dc.w	$ef01,$fffe
 		dc.w	$0180,$0000	; wall 
 
-		dc.w	$f001,$fffe
-		dc.w	$0180,$0000	; wall end
+		; dc.w	$f001,$fffe
+		; dc.w	$0180,$0000	; wall end
 
 
 		dc.w	$ffdf,$fffe		; wait for end of line 255
@@ -1278,6 +1542,27 @@ bp0:	dc.w	$00e2,$0000		;
 ; 		dc.w	$0102,$0000
 ; 		dc.w	$0100,$0200
 		dc.w	$ffff,$fffe
+
+barcolorOffsets:
+        dc.w    (barc1+2)-clist
+        dc.w    (barc2+2)-clist
+        dc.w    (barc3+2)-clist
+        dc.w    (barc4+2)-clist
+        dc.w    (barc5+2)-clist
+        dc.w    (barc6+2)-clist
+        dc.w    (barc7+2)-clist
+        dc.w    (barc8+2)-clist
+        dc.w    (barc9+2)-clist
+        dc.w    (barc10+2)-clist
+        dc.w    (barc11+2)-clist
+        dc.w    (barc12+2)-clist
+        dc.w    (barc13+2)-clist
+        dc.w    (barc14+2)-clist
+        dc.w    (barc15+2)-clist
+        dc.w    (barc16+2)-clist
+        dc.w    (barc17+2)-clist
+        dc.w    (barc18+2)-clist
+        dc.w    (barc19+2)-clist
 
 ;--------------------------------------------------------------
 ; lookup table for scroller chars

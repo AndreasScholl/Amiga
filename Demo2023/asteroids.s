@@ -34,6 +34,9 @@ game_lineBytes	= $2e			; screen line size in bytes
 		section "code",data,chip
 
 initGame::				;<initialize game>
+		bsr		clear			;clear screen
+		bsr		clear			;
+
 		lea		spoint(pc),a5
 		jsr		setupStarfieldPointers	; starfield
 		bsr		scaleLetters
@@ -122,13 +125,17 @@ spoint:		; sprite pointers
 
 		dc.w	$2001,$fffe			; stars start
 		dc.w	$0180,$0000	   ; black plane
-		dc.w	$0182,$0eee	   ; line color
+		dc.w	$0182,$066e	   ; line color
+		dc.w	$0192,$0224	   ; line anti alias color
 		dc.w	BPLCON0,$1200		; one plane
 
-;		dc.w	$8401,$fffe			; start of "game" area
-		dc.w	BPLCON0,$1200		; 1 bitplanes on
+		; dc.w	BPLCON0,$1200		; 1 bitplanes on
+		dc.w	BPLCON0,$2600		; 2 bitplanes on	(dual playfield mode)
 		dc.w	$00e0,$0007			; bitplane 0 
 bp0:	dc.w	$00e2,$0000			;
+		dc.w	$00e4,$0007			; bitplane 1
+bp1:	dc.w	$00e6,$0000			;
+		dc.w	$0102,$0010			; scroll
 
 		dc.w	$0108,$0000			; even bitplanes modulo
 		dc.w	$010a,$0000			; odd bitplanes modulo
@@ -1145,10 +1152,12 @@ clear:					;<switch screens and clear>
 		not.b	screenToggle
 		bne.s	.s0
 		move.w	#0,bp0+2
+		move.w	#0,bp1+2
 		move.l	#$78000,screenloc
 		bra.s	.s1
 .s0:		
 		move.w	#$8000,bp0+2
+		move.w	#$8000,bp1+2
 		move.l	#$70000,screenloc
 .s1:
 		bsr		bbusy

@@ -1,23 +1,7 @@
 ; todo:
-;    letters explosion
-;		with lines
-;		     copy line data of letter (at obj init?)
-;			 line data can be manipulated by explosion rotuine
-;
 ;    letters centering
 ;    letter i offset smaller
-;    letters explode after time
-; 	 copperbar shadow on bottom side
-;    ship respawn
-;    scroller without posteffect
 ;
-; oder mit ablauf?
-;    sterne im hintergrund -> weltraum :)
-;    dann passieren verschiedene sachen vor dem sternenhintergrund
-;    	asteroids game mit namen
-;       scroller
-;       logo erscheint
-;       ...
 
 		INCDIR      "include"
 		INCLUDE     "hw.i"
@@ -49,6 +33,7 @@ st:
 
 		lea		$dff000,a6
 
+        ; jsr     setupStarfield
         ; jsr     initGame
         jsr     initScroller
 
@@ -112,7 +97,7 @@ vblank:
 .nvbl:		
 		rte
 ;-------
-updateFunction:
+updateFunction::
         ; dc.l    updateGamePart
         dc.l    updateScroller
 ;-------
