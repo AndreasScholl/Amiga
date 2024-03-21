@@ -47,16 +47,16 @@ stateStarted = 0
 stateEnd     = 1
 scrollerState:  dc.w    stateStarted
 ;-------
-logoY			= $31       ; logo start y
-;logo_height = 64
-logo_height = 73
-logo_color_count = 11   ;14
+logoY			= $30       ; logo start y
+logo_height      = 96       ; logo gfx height
+logo_area_height = 73       ; logo visible (copperlist) height
+logo_color_count = 10   ;14
 
 ; d1: offset in bytes
 updateLogoPointers:
 		move.l	#logo,d0
         add.l   d1,d0
-		move.l	#(320/8)*73,d1
+		move.l	#(320/8)*logo_height,d1
 		move.w	d0,logobp0l
 		swap	d0
 		move.w	d0,logobp0h
@@ -796,7 +796,7 @@ buildLogoColors:
 			move.w	#((logoY+1)<<8)+1,d4
 ;			move.w	#256-(44*fadeIncrease),d7		; fade level
 
-			move.w	#logo_height-1,d5
+			move.w	#logo_area_height-1,d5
 			bra		.skipWait				; first entry has no wait
 .loop:
 			move.w	d4,(a1)+				; copper wait
@@ -1103,10 +1103,9 @@ updateLogoPos:
             bsr     updateLogoPointers
             moveq   #0,d0
 .noNegativePos
-;			add.w	#logoY-16,d0
-			add.w	#logoY-7,d0
+			add.w	#logoY-16,d0
 			move.b	d0,logoStartWait
-			add.w	#logo_height,d0
+			add.w	#logo_area_height,d0
 			move.b	d0,logoEndWait
 			rts
 ; ---------------------------------------------
@@ -1134,7 +1133,7 @@ fadeOutLogo:
 
             ; tst.w   d5
             ; beq.s   .noNextLine
-            cmp.w   #logo_height-5,logoFadeLine
+            cmp.w   #logo_area_height-5,logoFadeLine
             bne.s   .noRestart
             clr.w   logoFadeLine
             add.w   #1,logoFadeRepeat
@@ -1188,70 +1187,19 @@ text:
 		even
 
 logo:
-;        INCBIN	"thrust-quadlite_green_lo4.bin"
-;        INCBIN	"thrust-quadlite_logo.bin"
         INCBIN	"thrust-quadlite_16.bin"
 
-;	palette for: thrust-quadlite
-;	Mon Mar 18 2024 22:38:46 GMT+0100 (Mitteleuropäische Normalzeit)
 logoColorsOrig:
-;	palette for: thrust-quadlite_16
-;	Mon Mar 18 2024 23:17:02 GMT+0100 (Mitteleuropäische Normalzeit)
 	dc.w	$0182,$0463
 	dc.w	$0184,$0777
 	dc.w	$0186,$0999
 	dc.w	$0188,$0bbb
 	dc.w	$018a,$02a4
 	dc.w	$018c,$0050
-	dc.w	$018e,$0020
+	dc.w	$018e,$0130
 	dc.w	$0190,$0ddd
 	dc.w	$0192,$06e6
 	dc.w	$0194,$0fff
-
-	dc.w	$0182,$0554
-	dc.w	$0184,$0777
-	dc.w	$0186,$0997
-	dc.w	$0188,$0999
-	dc.w	$018a,$0bbb
-	dc.w	$018c,$0697
-	dc.w	$018e,$0371
-	dc.w	$0190,$0050
-	dc.w	$0192,$0020
-	dc.w	$0194,$0694
-	dc.w	$0196,$0091
-	dc.w	$0198,$0ddd
-	dc.w	$019a,$0052
-	dc.w	$019c,$0070
-	dc.w	$019e,$0094
-	dc.w	$01a0,$09f7
-	dc.w	$01a2,$09b9
-	dc.w	$01a4,$06d6
-	dc.w	$01a6,$03f6
-	dc.w	$01a8,$03b4
-	dc.w	$01aa,$0fff
-	dc.w	$01ac,$0375
-	dc.w	$01ae,$0cfc
-	dc.w	$01b0,$0ffd
-	dc.w	$01b2,$00d3
-	dc.w	$01b4,$08d9
-
-; palette for: thrust-quadlite_green
-;logoColorsOrig:
-		dc.w	$0182,$0120
-		dc.w	$0184,$0251
-		dc.w	$0186,$0381
-		dc.w	$0188,$04b2
-		dc.w	$018a,$05c3
-		dc.w	$018c,$06d5
-		dc.w	$018e,$08d6
-		dc.w	$0190,$09e8
-		dc.w	$0192,$0ae9
-		dc.w	$0194,$0bea
-		dc.w	$0196,$0cfb
-		dc.w	$0198,$0dfd
-		dc.w	$019a,$0efe
-		dc.w	$019c,$0fff
-		; dc.w	$019e,$0fff
 
 ; copperlist
 clist:		
@@ -1339,7 +1287,7 @@ logoColors:
 	; dc.w	$0190,$0ddd
 	; dc.w	$0192,$06e6
 	; dc.w	$0194,$0fff
-		blk.w	((2+(logo_color_count*2))*logo_height)-2,0
+		blk.w	((2+(logo_color_count*2))*logo_area_height)-2,0
 
 logoEndWait:
  		dc.w	$6c01,$fffe			; logo end wait
