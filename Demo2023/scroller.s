@@ -19,8 +19,9 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
-lifetime        = 120
-numPoints		= 128           ; # of points for scroller dissolve effect
+lifetime        = 80
+;numPoints		= 160           ; # of points for scroller dissolve effect
+numPoints		= 160           ; # of points for scroller dissolve effect
 ;numPoints		= 64			
 
 ; --- point area definition
@@ -812,10 +813,50 @@ buildLogoColors:
 .colorLoop:
 			move.w	(a0)+,(a1)+				; color reg
 			move.w	(a0)+,d0
-			or.w	d2,d0                   ; color blend add
+            
+            move.w  d2,d6                   ; save coloradd
+            move.w  d0,d1
+            and.w   #$00f,d1
+            move.w  d6,d2
+            and.w   #$00f,d2
+            add.w   d2,d1
+            cmp.w   #$00f,d1
+            ble.s   .noHiB
+            move.w  #$00f,d1
+.noHiB:
+            and.w   #$ff0,d0
+            or.w    d1,d0
+
+            move.w  d0,d1
+            and.w   #$0f0,d1
+            move.w  d6,d2
+            and.w   #$0f0,d2
+            add.w   d2,d1
+            cmp.w   #$0f0,d1
+            ble.s   .noHiG
+            move.w  #$0f0,d1
+.noHiG:
+            and.w   #$f0f,d0
+            or.w    d1,d0
+
+            move.w  d0,d1
+            and.w   #$f00,d1
+            move.w  d6,d2
+            and.w   #$f00,d2
+            add.w   d2,d1
+            cmp.w   #$f00,d1
+            ble.s   .noHiR
+            move.w  #$f00,d1
+.noHiR:
+            and.w   #$0ff,d0
+            or.w    d1,d0
+
+            move.w  d6,d2                   ; retore coloradd
+
+;			or.w	d2,d0                   ; color blend add
 
 			bsr		colorFade
-            ; move.w  d0,d6
+;            move.w  d2,d6
 
 			move.w	d6,(a1)+				; final color value
 			dbf		d3,.colorLoop
@@ -895,15 +936,17 @@ colorAdd:
 			dc.w	$b
 			dc.w	$a		; 10
 			dc.w	$a
+			dc.w	$9
+			dc.w	$9
 			dc.w	$8
 			dc.w	$8
 			dc.w	$7
 			dc.w	$7
 			dc.w	$6
 			dc.w	$6
+			dc.w	$5	    ; 20
 			dc.w	$5
-			dc.w	$5
-			dc.w	$4	    ; 20
+			dc.w	$4
 			dc.w	$4
 			dc.w	$3
 			dc.w	$3
@@ -911,8 +954,6 @@ colorAdd:
 			dc.w	$2
 			dc.w	$1
 			dc.w	$1
-			dc.w	$0
-			dc.w	$0
 			dc.w	$0	    ; 30
 			dc.w	$0
 			dc.w	$0
@@ -925,35 +966,35 @@ colorAdd:
 			dc.w	$0
 			dc.w	$0	    ; 40
 			dc.w	$0
-			dc.w	$100
 			dc.w	$101
-			dc.w	$201
+			dc.w	$101
 			dc.w	$202
-			dc.w	$302
+			dc.w	$202
 			dc.w	$303
-			dc.w	$403
+			dc.w	$303
 			dc.w	$404
-			dc.w	$504	    ; 50
+			dc.w	$404
+			dc.w	$505	    ; 50
 			dc.w	$505
 			dc.w	$606
 			dc.w	$606
-			dc.w	$706
 			dc.w	$707
-			dc.w	$807
+			dc.w	$707
+			dc.w	$808
 			dc.w	$808
 			dc.w	$909
 			dc.w	$909
-			dc.w	$a09	    ; 60
+			dc.w	$a0a	    ; 60
 			dc.w	$a0a
-			dc.w	$b0a
 			dc.w	$b0b
-			dc.w	$c0b
+			dc.w	$b0b
 			dc.w	$c0c
-			dc.w	$d0c
+			dc.w	$c0c
 			dc.w	$d0d
-			dc.w	$e0d
+			dc.w	$d0d
 			dc.w	$e0e
-			dc.w	$f0e    ; 70
+			dc.w	$e0e
+			dc.w	$f0f    ; 70
 			dc.w	$f0f
 			dc.w	$000
 			dc.w	$000
@@ -1200,6 +1241,16 @@ logoColorsOrig:
 	dc.w	$0190,$0ddd
 	dc.w	$0192,$06e6
 	dc.w	$0194,$0fff
+	dc.w	$0182,$0444
+	dc.w	$0184,$0444
+	dc.w	$0186,$0444
+	dc.w	$0188,$0444
+	dc.w	$018a,$0444
+	dc.w	$018c,$0444
+	dc.w	$018e,$0444
+	dc.w	$0190,$0444
+	dc.w	$0192,$0444
+	dc.w	$0194,$0444
 
 ; copperlist
 clist:		
