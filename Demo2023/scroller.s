@@ -20,9 +20,10 @@ ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
 lifetime        = 80
-;numPoints		= 160           ; # of points for scroller dissolve effect
+; lifetime        = 200
 numPoints		= 160           ; # of points for scroller dissolve effect
-;numPoints		= 64			
+; numPoints		= 400           ; # of points for scroller dissolve effect
+; numPoints		= 160           ; # of points for scroller dissolve effect
 
 ; --- point area definition
 game_width		= 352
@@ -86,8 +87,8 @@ updateScroller::
 		lea		$dff000,a6
         bsr     clearScroller
 
-        cmp.w   #stateEnd,scrollerState
-        beq.s   .scrollerEnded
+        ; cmp.w   #stateEnd,scrollerState
+        ; beq.s   .scrollerEnded
 		bsr		scroll
 		; move.w	#$424,$180(a6)
 		bsr		postEffect
@@ -102,7 +103,45 @@ updateScroller::
 
 		bsr		updateLogoPos
 		jsr		updateStars
-;		move.w	#$882,$180(a6)
+		; move.w	#$882,$180(a6)
+
+		; --- debug key stuff for point movement
+		bsr		getkey
+
+		cmp.b	#$50,kcode
+		bne.s	.nxd
+		sub.b	#1,accelX
+.nxd:		
+		cmp.b	#$51,kcode
+		bne.s	.nxi
+		add.b	#1,accelX
+.nxi:		
+		cmp.b	#$52,kcode
+		bne.s	.nyd
+		sub.b	#1,accelY
+.nyd:		
+		cmp.b	#$53,kcode
+		bne.s	.nyi
+		add.b	#1,accelY
+.nyi:	
+		cmp.b	#$54,kcode
+		bne.s	.nxToggle
+		cmp.w	#3,noiseX
+		bne.s	.nX1
+		move.w	#7,noiseX
+		bra.s	.nxToggle
+.nX1
+		cmp.w	#7,noiseX
+		bne.s	.nX2
+		move.w	#15,noiseX
+		bra.s	.nxToggle
+.nX2
+		cmp.w	#15,noiseX
+		bne.s	.nxToggle
+		move.w	#3,noiseX
+.nxToggle:		
+
+		clr.b	kcode
         rts
 ;-------
 initPoints:
@@ -141,11 +180,32 @@ screenlocScroller
 		dc.l	$70000
 ;-------
 drawPoints:
+; 		move.b	accelDuration,d0
+; 		sub.b	#1,d0
+; 		move.b	d0,accelDuration
+; 		tst.b	d0
+; 		bne.s	.noNextAccel
+; 		move.b	#80,accelDuration
+; 		lea		accelTable,a0
+; 		move.b	accelOffset,d0
+; 		ext.w	d0
+; 		move.b	(a0,d0),accelX
+; 		move.b	1(a0,d0),accelY
+; 		add.w	#2,d0
+; 		and.w	#$0f,d0
+; 		move.b	d0,accelOffset
+; .noNextAccel
+
 		move.l	screenlocScroller,a0
 		lea		points,a5
 		move.l	#numPoints-1,d7	
 		moveq	#0,d0
 		moveq	#0,d1
+
+		move.b	accelX,d3
+		ext.w	d3
+		move.b	accelY,d4
+		ext.w	d4
 .loop:
 		move.w	point_life(a5),d0
 		beq		.next
@@ -158,7 +218,9 @@ drawPoints:
 		move.w	d0,point_xfloat(a5)	; store x
 		lsr.w	#7,d0				; convert to integer
 
-		add.w	#$07,d2				; accelerate
+		add.w	d3,d2
+		; add.w	#$07,d2				; accelerate
+		; sub.w	#$03,d2				; accelerate
 		move.w	d2,point_xvelo(a5)
 
 		move.w	point_yvelo(a5),d2
@@ -169,14 +231,38 @@ drawPoints:
 
 		; add.w	#$2,d2				; accelerate
 ;		addq	#1,d2				; accelerate
+		add.w	d4,d2
 		move.w	d2,point_yvelo(a5)
 
 		bsr		setPointScroller
-
 .next:
 		lea		point_len(a5),a5
 		dbf		d7,.loop
 		rts
+
+noiseX:
+		dc.w	$7f
+noiseY:
+		dc.w	15
+startAddX:
+		dc.w	$60
+startAddY:
+		dc.w	8
+
+accelX:
+		dc.b	1
+accelY:
+		dc.b	1
+
+accelDuration:
+		dc.b	1
+accelOffset:
+		dc.b	0
+
+accelTable:
+		dc.b	-4,-4,2,2,3,3,4,4
+		dc.b	2,4,-4,-3,4,-5,7,3
+		even
 
 ;-------
 addPoints:
@@ -197,7 +283,6 @@ addPoints:
 		; cmp.w	#7,d7		
 		; bne		.addloop
 		dbf		d6,.addloop
-
 		rts
 ;-------
 addPoint:				; add single point at y offset d7
@@ -226,21 +311,24 @@ addPoint:				; add single point at y offset d7
 
 		moveq	#0,d0			; x speed
 		jsr		getRandomNumber
-		and.w	#$7f,d0
-		add.w	#$60,d0
-;		move.w	#$80,d0
+		; and.w	#$03,d0			; slow
+		and.w	noiseX,d0
+		add.w	startAddX,d0
+		; sub.w	#$20,d0
+		; and.w	#$7f,d0		; fast
+		; add.w	#$60,d0
+
 		neg.w	d0
 		move.w	d0,point_xvelo(a5)
 
 		move.w	#0,d0			; test y speed
 		jsr		getRandomNumber
-;		and.w	#$03,d0
-
-		and.w	#$1f,d0
-		sub.w	#$20,d0
-
-;		sub.w	#16,d0
-;		sub.w	d1,d0
+		and.w	noiseY,d0
+		add.w	startAddY,d0
+		; and.w	#$03,d0
+		; sub.w	#$02,d0
+		; and.w	#$1f,d0
+		; sub.w	#$20,d0
 		move.w	d0,point_yvelo(a5)
 
 ; 		add.w	#1,postest
@@ -662,11 +750,11 @@ putchar:
 		moveq	#43,d1
 		move.b	(a0),d0                 ; end of text?
 		bne.s	.notextfin
-;		clr.w	(a4)	                ; restart
-		subq.w	#1,(a4)                 ; stay on end of text
-        cmp.w   #stateStarted,scrollerState
-        bne.s   .noStateChange
-        move.w   #stateEnd,scrollerState        
+		clr.w	(a4)	                ; restart
+		; subq.w	#1,(a4)                 ; stay on end of text
+        ; cmp.w   #stateStarted,scrollerState
+        ; bne.s   .noStateChange
+        ; move.w   #stateEnd,scrollerState
 .noStateChange
 		bra.s 	.textfin
 .notextfin:
@@ -1221,8 +1309,7 @@ logoPos:
 			dc.w	0
 
 text:
-		dc.b    "quadlite and thrust present something ..... "
-        dc.b    "                                                                  ",0
+		dc.b    "quadlite and thrust present something ..... ",0
 		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
 		dc.b	"dandee -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
 		even

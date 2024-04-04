@@ -18,7 +18,7 @@
 				"command": "${config:amiga-assembly.binDir}/vlink",
 				"includes": "*.{s,S,asm,ASM}",
 				"excludes": "",
-				"exefilename": "../uae/dh0/Demo2023",
+				"exefilename": "../uae/dh0/d",
 				"entrypoint": "main.s",
 				"args": [
 					"-bamigahunk",

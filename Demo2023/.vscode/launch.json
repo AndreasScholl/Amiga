@@ -7,7 +7,7 @@
             "name": "WinUAE Debug",
             "stopOnEntry": false,
             "program": "${workspaceFolder}/uae/dh0/Demo2023",
-            "remoteProgram": "SYS:Demo2023",
+            "remoteProgram": "SYS:d",
             "emulatorType": "winuae",
             "emulatorArgs": [
                 "-s",
@@ -21,7 +21,7 @@
             "name": "FS-UAE Debug",
             "stopOnEntry": true,
             "program": "${workspaceFolder}/uae/dh0/Demo2023",
-            "remoteProgram": "SYS:Demo2023",
+            "remoteProgram": "SYS:d",
             "emulatorType": "fs-uae",
             "emulatorArgs": [
                 "--hard_drive_0=${workspaceFolder}/uae/dh0",

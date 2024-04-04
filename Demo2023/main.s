@@ -35,7 +35,8 @@ st:
 
         ; jsr     setupStarfield
         ; jsr     initGame
-        jsr     initScroller
+        ; jsr     initScroller
+        jsr     initCopper
 
 		move.w	$dff01c,d0			;get intena
 		or.w	#$8000,d0
@@ -99,7 +100,9 @@ vblank:
 ;-------
 updateFunction::
         ; dc.l    updateGamePart
-        dc.l    updateScroller
+        ; dc.l    updateScroller
+        dc.l    updateCopper
+
 ;-------
 getRandomNumber::
 		move.l 	seed,d0
@@ -118,3 +121,84 @@ bbusy::
 		bne.s	.wait
 		move.w	#$0400,DMACON(a6)	; clear blitter nasty
 		rts
+;------
+getkey::							;<get rawkey routine>
+		lea		$bfe000,a5
+		btst	#3,$d01(a5)
+		beq.w	.nkpress
+
+		move.b	$c01(a5),d0
+		not.b	d0
+		ror.b	#1,d0
+		move.b	d0,kcode
+					;<keyboard joystick simulation>
+		move.b	jkcode(pc),d7
+
+		btst	#7,d0			;key release?
+		bne.s	.release		
+
+		cmp.b	#$3a,d0			;return ?
+		bne.s	.nojks
+		st	jkbutt
+.nojks:
+		cmp.b	#$39,d0			;$60 ?
+		bne.s	.nok1
+		bset	#2,d7
+		bclr	#0,d7
+.nok1:		
+		cmp.b	#$4d,d0			;$4d ?
+		bne.s	.nok2
+		bset	#0,d7
+		bclr	#2,d7
+.nok2:		
+		cmp.b	#$32,d0			;$4e ?
+		bne.s	.nok3
+		bset	#1,d7
+		bclr	#3,d7
+.nok3:		
+		cmp.b	#$31,d0			;$4f ?
+		bne.s	.nok4
+		bset	#3,d7
+		bclr	#1,d7
+.nok4:		
+		bra.s	.norelease
+
+.release:				;<key released!>
+		bclr	#7,d0
+		cmp.b	#$3a,d0			;return
+		bne.s	.nojkr
+		sf		jkbutt
+.nojkr:		
+		cmp.b	#$39,d0			;$4c ?
+		bne.s	.nokr1
+		bclr	#2,d7
+.nokr1:		
+		cmp.b	#$4d,d0			;$4d ?
+		bne.s	.nokr2
+		bclr	#0,d7
+.nokr2:		
+		cmp.b	#$32,d0			;$4e ?
+		bne.s	.nokr3
+		bclr	#1,d7
+.nokr3:		
+		cmp.b	#$31,d0			;$4f ?
+		bne.s	.nokr4
+		bclr	#3,d7
+.nokr4:		
+.norelease:	
+		move.b	d7,jkcode
+
+		bset	#6,$e01(a5) 
+		move.w	#$80,d1		
+.shake:		
+		dbf	d1,.shake	 
+		bclr	#6,$e01(a5)
+		move.b	kcode(pc),d0
+.nkpress:	
+		rts
+;-----------------------------------------
+kcode::		dc.b	0
+jkcode::	dc.b	0
+jkbutt::	dc.b	0
+		even
+

@@ -34,8 +34,8 @@ game_lineBytes	= $2e			; screen line size in bytes
 		section "code",data,chip
 
 initGame::				;<initialize game>
-		bsr		clear			;clear screen
-		bsr		clear			;
+		jsr		clear			;clear screen
+		jsr		clear			;
 
 		lea		spoint(pc),a5
 		jsr		setupStarfieldPointers	; starfield
@@ -56,9 +56,9 @@ updateGamePart::				;<update game>
 		bne.s	.ncol
 		move.w	#$444,$dff180
 .ncol:		
-		bsr		getkey
+		jsr		getkey
 
-		bsr		clear			;clear screen
+		jsr		clear			;clear screen
 		jsr		updateStars
  		bsr		updateGame
 
@@ -162,7 +162,7 @@ updateGame:
 		move.l	a6,-(a7)
 ;		bsr		shipcoll		; collision
 		move.l	(a7)+,a6
-		bsr		ship_set
+		jsr		ship_set
 .nsdraw:
 		bsr		ship_explode
 		bsr		shots_set
@@ -866,7 +866,7 @@ ship_explode:
 ship_set:				;<set ship, keyboard control>
 		lea		ship_struct(pc),a0
 
-		move.b	jkcode(pc),d0
+		move.b	jkcode,d0
 		btst	#3,d0
 		beq.s	.ntleft
 		moveq	#4,d1
@@ -1160,7 +1160,7 @@ clear:					;<switch screens and clear>
 		move.w	#$8000,bp1+2
 		move.l	#$70000,screenloc
 .s1:
-		bsr		bbusy
+		jsr		bbusy
 		move.l	screenloc,$54(a6)
 		move.l	#-1,$44(a6)
 		move.l	#0,$64(a6)
@@ -1448,7 +1448,7 @@ rotate:					;<rotation>
 ;-------------------------------------------------------
 shipcoll:
 		lea		$dff000,a6
-		bsr		bbusy
+		jsr		bbusy
 		move.l	screenloc(pc),a0
 		lea		ship_struct(pc),a1
 		movem.w	obj_xc(a1),d0/d1
@@ -1477,7 +1477,7 @@ shipcoll:
 		move.w	#-1,$74(a6)
 		move.w	#5*64+2,$58(a6)
 
-		bsr		bbusy
+		jsr		bbusy
 
 		btst	#5,$02(a6)
 		bne.w	.nc
@@ -1491,7 +1491,7 @@ objects_draw:
 		lea		linetab(pc),a0
 
 		lea		$dff000,a6
-		bsr		bbusy
+		jsr		bbusy
 		move.w	#game_lineBytes,$60(a6)
 		move.w	#game_lineBytes,$66(a6)
 		; move.w	#$28,$60(a6)
@@ -1519,7 +1519,7 @@ objects_draw:
 		move.w	(a0)+,a5
 		move.w	(a0)+,d5
 
-		bsr		bbusy
+		jsr		bbusy
 		move.l	a4,$48(a6)
 		move.l	a4,$54(a6)
 		move.w	d3,$52(a6)
@@ -1530,85 +1530,6 @@ objects_draw:
 .end:		
 		rts
 ;----------------------------------------
-getkey:					;<get rawkey routine>
-		lea		$bfe000,a5
-		btst	#3,$d01(a5)
-		beq.w	.nkpress
-
-		move.b	$c01(a5),d0
-		not.b	d0
-		ror.b	#1,d0
-		move.b	d0,kcode
-					;<keyboard joystick simulation>
-		move.b	jkcode(pc),d7
-
-		btst	#7,d0			;key release?
-		bne.s	.release		
-
-		cmp.b	#$3a,d0			;return ?
-		bne.s	.nojks
-		st	jkbutt
-.nojks:
-		cmp.b	#$39,d0			;$60 ?
-		bne.s	.nok1
-		bset	#2,d7
-		bclr	#0,d7
-.nok1:		
-		cmp.b	#$4d,d0			;$4d ?
-		bne.s	.nok2
-		bset	#0,d7
-		bclr	#2,d7
-.nok2:		
-		cmp.b	#$32,d0			;$4e ?
-		bne.s	.nok3
-		bset	#1,d7
-		bclr	#3,d7
-.nok3:		
-		cmp.b	#$31,d0			;$4f ?
-		bne.s	.nok4
-		bset	#3,d7
-		bclr	#1,d7
-.nok4:		
-		bra.s	.norelease
-
-.release:				;<key released!>
-		bclr	#7,d0
-		cmp.b	#$3a,d0			;return
-		bne.s	.nojkr
-		sf		jkbutt
-.nojkr:		
-		cmp.b	#$39,d0			;$4c ?
-		bne.s	.nokr1
-		bclr	#2,d7
-.nokr1:		
-		cmp.b	#$4d,d0			;$4d ?
-		bne.s	.nokr2
-		bclr	#0,d7
-.nokr2:		
-		cmp.b	#$32,d0			;$4e ?
-		bne.s	.nokr3
-		bclr	#1,d7
-.nokr3:		
-		cmp.b	#$31,d0			;$4f ?
-		bne.s	.nokr4
-		bclr	#3,d7
-.nokr4:		
-.norelease:	
-		move.b	d7,jkcode
-
-		bset	#6,$e01(a5) 
-		move.w	#$80,d1		
-.shake:		
-		dbf	d1,.shake	 
-		bclr	#6,$e01(a5)
-		move.b	kcode(pc),d0
-.nkpress:	
-		rts
-;-----------------------------------------
-kcode:		dc.b	0
-jkcode:		dc.b	0
-jkbutt:		dc.b	0
-		even
 ;-------------------------------------------------------
 ; sin cos table
 sctab:
