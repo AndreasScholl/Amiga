@@ -1280,9 +1280,10 @@ fadeOutLogo:
             cmp.w   #15,logoFadeRepeat
             bne.s   .noPartSwitch
             ; --- switch to game
-            jsr     initGame
-            move.l  #updateGamePart,d0
-            move.l  d0,updateFunction
+			jsr		nextDemoPart
+            ; jsr     initGame
+            ; move.l  #updateGamePart,d0
+            ; move.l  d0,updateFunction
 .noPartSwitch:
             rts
 ; --------------------

@@ -36,7 +36,7 @@ st:
         ; jsr     setupStarfield
         ; jsr     initGame
         ; jsr     initScroller
-        jsr     initCopper
+        bsr		initDemoPart
 
 		move.w	$dff01c,d0			;get intena
 		or.w	#$8000,d0
@@ -47,6 +47,8 @@ st:
 		move.l	#vblank,$6c.w		; set my level 3
 		move.w	#$c020,$dff09a		; allow level 3
 		move.w	#$2200,sr
+
+		jsr		initMusic
 
 		bsr		main
 
@@ -82,26 +84,43 @@ vblank:
 
 		btst	#6,$bfe001
 		bne.s	.noswitch
-        jsr     initGame
-        ; jsr     initScroller
-        ; move.l  #updateScroller,d0
-        move.l  #updateGamePart,d0
-        move.l  d0,updateFunction
+		move.w	#1,activePart
+		bsr		initDemoPart
         bra.s   .end
 .noswitch
 
-        move.l  updateFunction,a0
-        jsr     (a0)
+		; --- update demo part
+		lea		demoParts,a0
+		move.w	activePart,d0
+		lsl.w	#3,d0
+        move.l	4(a0,d0.w),a0
+		jsr		(a0)
 .end:
 		movem.l	(a7)+,d0-d7/a0-a6
 		move.w	#$0020,$dff09c
 .nvbl:		
 		rte
 ;-------
-updateFunction::
-        ; dc.l    updateGamePart
-        ; dc.l    updateScroller
-        dc.l    updateCopper
+initDemoPart:
+		lea		demoParts,a0
+		move.w	activePart,d0
+		lsl.w	#3,d0
+        move.l	(a0,d0.w),a0
+		jsr		(a0)
+		rts
+
+nextDemoPart::
+		add.w	#1,activePart
+		bsr		initDemoPart
+		rts
+;-------
+activePart::
+		dc.w	1
+
+demoParts::
+        dc.l    initGame, 		updateGamePart
+        dc.l    initScroller, 	updateScroller
+        dc.l    initCopper,		updateCopper
 
 ;-------
 getRandomNumber::
@@ -201,4 +220,3 @@ kcode::		dc.b	0
 jkcode::	dc.b	0
 jkbutt::	dc.b	0
 		even
-

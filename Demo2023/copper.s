@@ -67,7 +67,7 @@ updateCopper::
         ; --- scroll
         bsr	scroll
         bsr	clearscroll
-        bsr	bbusy
+        jsr	bbusy
         bsr	sinscroll
         rts
 
@@ -180,7 +180,7 @@ test:
 scount:		dc.w	$00
 tcount:		dc.w	$00
 
-clearscroll:	bsr	bbusy	
+clearscroll:	jsr	bbusy	
 cloc:		move.l	#$61000,$dff054
 		move.l	#$01f00000,$dff040
 		move.l	#$ffffffff,$dff044
@@ -190,7 +190,7 @@ cloc:		move.l	#$61000,$dff054
 		rts
 scroll:		
 		bsr	switch
-		bsr	bbusy	
+		jsr	bbusy	
 		move.l	#$60000,$dff050
 		move.l	#$60000-2,$dff054
 		move.l	#$e9f00000,$dff040
@@ -222,7 +222,7 @@ getchar:	cmp.b	(a1),d0
 		bne	getchar
 gotchar:	
 textfin2:
-		bsr	bbusy
+		jsr	bbusy
 		lea	char,a2
 		lsl	#1,d1
 		add.w	d1,a2
