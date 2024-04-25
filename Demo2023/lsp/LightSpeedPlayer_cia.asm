@@ -88,7 +88,7 @@ LSP_MusicDriver_CIA_Start:
 			btst.b	#0,$bfdd00
 			beq.s	.skipa
 			
-			move.w	#$fff,$dff180
+			move.w	#$444,$dff180
 			movem.l	d0-a6,-(a7)
 		; call player tick
 			lea		$dff0a0,a6
