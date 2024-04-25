@@ -1319,26 +1319,29 @@ logo:
         INCBIN	"thrust-quadlite_16.bin"
 
 logoColorsOrig:
+	; dc.w	$0182,$0463
+	; dc.w	$0184,$0777
+	; dc.w	$0186,$0999
+	; dc.w	$0188,$0bbb
+	; dc.w	$018a,$02a4
+	; dc.w	$018c,$0050
+	; dc.w	$018e,$0130
+	; dc.w	$0190,$0ddd
+	; dc.w	$0192,$06e6
+	; dc.w	$0194,$0fff
+
 	dc.w	$0182,$0463
 	dc.w	$0184,$0777
 	dc.w	$0186,$0999
-	dc.w	$0188,$0bbb
-	dc.w	$018a,$02a4
-	dc.w	$018c,$0050
-	dc.w	$018e,$0130
+	dc.w	$0188,$0130
+	dc.w	$018a,$0050
+	dc.w	$018c,$0bbb
+	dc.w	$018e,$02a4
 	dc.w	$0190,$0ddd
 	dc.w	$0192,$06e6
 	dc.w	$0194,$0fff
-	dc.w	$0182,$0444
-	dc.w	$0184,$0444
-	dc.w	$0186,$0444
-	dc.w	$0188,$0444
-	dc.w	$018a,$0444
-	dc.w	$018c,$0444
-	dc.w	$018e,$0444
-	dc.w	$0190,$0444
-	dc.w	$0192,$0444
-	dc.w	$0194,$0444
+
+
 
 ; copperlist
 clist:		
@@ -1461,10 +1464,11 @@ bp0:	dc.w	$00e2,$0000		;
 
 		dc.w	$c401,$fffe
 		dc.w	$0182,$0bbb
-		dc.w	$0100,$2600				; 2 bitplanes on	(dual playfield mode)
-		dc.w	$00e4,$0007				; bitplane 01
-		dc.w	$00e6,(li*75)-2		 ; + lines offset to adjust shadow pos
-		dc.w	$0192,$0000		; shadow color
+		dc.w	$0100,$2600			; 2 bitplanes on	(dual playfield mode)
+		dc.w	$00e4,$0007			; bitplane 01
+		; dc.w	$00e6,(li*75)-2		; + lines offset to adjust shadow pos
+		dc.w	$00e6,(li*51)-2		; + lines offset to adjust shadow pos
+		dc.w	$0192,$0000	   ; shadow color
 
 		dc.w	$c501,$fffe
 		dc.w	$0182,$0ccc
