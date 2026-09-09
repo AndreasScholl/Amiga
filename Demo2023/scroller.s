@@ -9,6 +9,10 @@ src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
 screenHeight	= 128
+; the scroller band starts at line 35 and dots only ever move down
+; from there, so lines 0..clearTop-1 never get dirty and do not need
+; clearing. keep this below the topmost pixel anything can write.
+clearTop		= 30
 li				= $2e			; screen line size in bytes
 
 sc_offset		= 58			; scroller dest y offset
@@ -19,15 +23,21 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
-lifetime        = 80
-; lifetime        = 200
-numPoints		= 160           ; # of points for scroller dissolve effect
-; numPoints		= 400           ; # of points for scroller dissolve effect
-; numPoints		= 160           ; # of points for scroller dissolve effect
+; --- dissolve point system -------------------------------------------
+; a point stays alive until it leaves the play area, or until it is
+; among the oldest when the pool overflows. numPoints therefore sets
+; the length of the trail (there is no explicit lifetime counter any
+; more - it cost ~30 cycles per point per frame and the pool was
+; permanently saturated anyway, so it never actually expired).
+numPoints		= 160		; max points kept alive after an update pass
+maxSpawn		= 8			; max points that can be spawned in one frame
+pointsMax		= numPoints+maxSpawn
 
 ; --- point area definition
+; game_height MUST stay <= screenHeight, otherwise y*li+x/8 runs past
+; the end of the scroll buffer (the old value of 160 did exactly that)
 game_width		= 352
-game_height		= 160
+game_height		= screenHeight
 
 		section "code",data,chip
 initScroller::
@@ -85,44 +95,38 @@ updateLogoPointers:
 ;-------
 updateScroller::
 		lea		$dff000,a6
-        bsr     clearScroller
+		move.w	#$882,$180(a6)
+        bsr     clearScroller		; starts the screen clear blit
 
-        ; cmp.w   #stateEnd,scrollerState
-        ; beq.s   .scrollerEnded
-		bsr		scroll
-		; move.w	#$424,$180(a6)
-		bsr		postEffect
-
-		; move.w	#$266,$180(a6)
-		lea		$dff000,a6
-		bsr		addPoints
-		bsr		drawPoints
-.scrollerEnded:        
-		; move.w	#$882,$180(a6)
+; --- the clear blit is now running. everything down to the bbusy inside
+;     "scroll" is work that never touches the scroll buffer, so it runs
+;     for free instead of the CPU spinning in bbusy.
+;
+;     NOTE: this assumes updateStars does not use the blitter itself.
+;     if it does, move the "jsr updateStars" down below postEffect.
 		; bsr		updateLogoColors		; super slow :(
-
 		bsr		updateLogoPos
 		jsr		updateStars
-		; move.w	#$882,$180(a6)
+		; move.w	#$0,$180(a6)
 
 		; --- debug key stuff for point movement
 		bsr		getkey
 
 		cmp.b	#$50,kcode
 		bne.s	.nxd
-		sub.b	#1,accelX
+		sub.l	#1<<9,accelX
 .nxd:		
 		cmp.b	#$51,kcode
 		bne.s	.nxi
-		add.b	#1,accelX
+		add.l	#1<<9,accelX
 .nxi:		
 		cmp.b	#$52,kcode
 		bne.s	.nyd
-		sub.b	#1,accelY
+		sub.l	#1<<9,accelY
 .nyd:		
 		cmp.b	#$53,kcode
 		bne.s	.nyi
-		add.b	#1,accelY
+		add.l	#1<<9,accelY
 .nyi:	
 		cmp.b	#$54,kcode
 		bne.s	.nxToggle
@@ -142,16 +146,37 @@ updateScroller::
 .nxToggle:		
 
 		clr.b	kcode
+
+; --- from here on we need the cleared buffer. "scroll" starts with a
+;     bbusy, which is where the blitter is finally waited for - by now
+;     it has had the whole block above to finish the clear.
+        ; cmp.w   #stateEnd,scrollerState
+        ; beq.s   .scrollerEnded
+		bsr		scroll
+		; move.w	#$424,$180(a6)
+		bsr		postEffect
+
+		lea		$dff000,a6
+		; move.w	#$266,$180(a6)
+		bsr		addPoints
+		bsr		drawPoints
+		move.w	#$000,$180(a6)
+.scrollerEnded:
         rts
 ;-------
 initPoints:
-		lea		points,a5
-		moveq	#0,d1
-		move.l	#numPoints-1,d7		
-.loop:	
-		move.w	d1,point_life(a5)	
-
-		lea		point_len(a5),a5
+		clr.w	activeCount
+		bsr		buildYTable
+		rts
+;-------
+; y -> byte offset lookup. kills the mulu #li in the plot inner loop.
+buildYTable:
+		lea		yTable,a0
+		moveq	#0,d0
+		move.w	#screenHeight-1,d7
+.loop:
+		move.w	d0,(a0)+
+		add.w	#li,d0
 		dbf		d7,.loop
 		rts
 ;-------
@@ -167,11 +192,13 @@ clearScroller:				;<switch screens and clear>
 		move.l	#$70000,screenlocScroller
 .s1:
 		bsr		bbusy
-		move.l	screenlocScroller,$54(a6)
+		move.l	screenlocScroller,d0
+		add.l	#clearTop*li,d0
+		move.l	d0,$54(a6)
 		move.l	#-1,$44(a6)
 		move.l	#0,$64(a6)
 		move.l	#$01000000,$40(a6)
-		move.w	#(screenHeight<<6)+(li/2),$58(a6)
+		move.w	#((screenHeight-clearTop)<<6)+(li/2),$58(a6)
 		rts
 ;---------------------------------------------
 screenToggleScroller:		
@@ -179,7 +206,23 @@ screenToggleScroller:
 screenlocScroller		
 		dc.l	$70000
 ;-------
+; move + plot every point.
+;
+; everything is 16.16 fixed point in longs, so the integer pixel
+; position is a single "swap" instead of an lsr.w #7 (20 cycles each).
+; the struct is 16 bytes and is loaded/stored with movem - 4 longs cost
+; 44+40 cycles instead of ~132 for eleven move.w d16(An).
+;
+; the array is compacted in place while we walk it: survivors are written
+; back at a4, dead points are simply not written and vanish. that keeps
+; the array contiguous AND sorted oldest-first, which is what lets the
+; overflow handling below just skip the front.
+;
+; registers:
+;   a0 screen base   a1 y table   a2/a3 accel x/y   a4 write   a5 read
+;   d5/d6 clip limits            d7 counter
 drawPoints:
+; --- accel from a time table (16.16 longs now, accelTable must be dc.l)
 ; 		move.b	accelDuration,d0
 ; 		sub.b	#1,d0
 ; 		move.b	d0,accelDuration
@@ -189,55 +232,67 @@ drawPoints:
 ; 		lea		accelTable,a0
 ; 		move.b	accelOffset,d0
 ; 		ext.w	d0
-; 		move.b	(a0,d0),accelX
-; 		move.b	1(a0,d0),accelY
-; 		add.w	#2,d0
-; 		and.w	#$0f,d0
+; 		move.l	(a0,d0.w),accelX
+; 		move.l	4(a0,d0.w),accelY
+; 		add.w	#8,d0
+; 		and.w	#$3f,d0
 ; 		move.b	d0,accelOffset
 ; .noNextAccel
 
-		move.l	screenlocScroller,a0
-		lea		points,a5
-		move.l	#numPoints-1,d7	
-		moveq	#0,d0
-		moveq	#0,d1
+		move.w	activeCount,d7
+		beq		.done
 
-		move.b	accelX,d3
-		ext.w	d3
-		move.b	accelY,d4
-		ext.w	d4
+		lea		points,a4			; write (compaction) pointer
+		move.l	a4,a5				; read pointer
+
+		sub.w	#numPoints,d7		; more alive than we want to keep?
+		ble.s	.noOverflow
+		move.w	d7,d0				; -> retire that many of the oldest
+		lsl.w	#4,d0				; * point_len
+		add.w	d0,a5
+		move.w	#numPoints,d7
+		bra.s	.gotCount
+.noOverflow:
+		move.w	activeCount,d7
+.gotCount:
+		subq.w	#1,d7
+
+		move.l	screenlocScroller,a0	; plot base
+		lea		yTable,a1				; y -> y*li
+		move.l	accelX,a2				; acceleration, 16.16
+		move.l	accelY,a3
+		move.l	#game_width<<16,d5		; clip limits
+		move.l	#game_height<<16,d6
 .loop:
-		move.w	point_life(a5),d0
-		beq		.next
-		subq	#1,d0
-		move.w	d0,point_life(a5)
+		movem.l	(a5)+,d0-d3			; x, y, vx, vy
+		add.l	d2,d0				; x += vx
+		add.l	d3,d1				; y += vy
+		cmp.l	d5,d0				; unsigned -> catches < 0 as well
+		bhs.s	.kill
+		cmp.l	d6,d1
+		bhs.s	.kill
+		add.l	a2,d2				; vx += ax
+		add.l	a3,d3				; vy += ay
+		movem.l	d0-d3,(a4)			; survivor -> keep it
+		lea		point_len(a4),a4
 
-		move.w	point_xvelo(a5),d2
-		move.w	point_xfloat(a5),d0	; x fixed
-		add.w	d2,d0				; + x velocity
-		move.w	d0,point_xfloat(a5)	; store x
-		lsr.w	#7,d0				; convert to integer
-
-		add.w	d3,d2
-		; add.w	#$07,d2				; accelerate
-		; sub.w	#$03,d2				; accelerate
-		move.w	d2,point_xvelo(a5)
-
-		move.w	point_yvelo(a5),d2
-		move.w	point_yfloat(a5),d1	; y fixed
-		add.w	d2,d1				; + y velocity
-		move.w	d1,point_yfloat(a5)	; store y
-		lsr.w	#7,d1				; convert to integer
-
-		; add.w	#$2,d2				; accelerate
-;		addq	#1,d2				; accelerate
-		add.w	d4,d2
-		move.w	d2,point_yvelo(a5)
-
-		bsr		setPointScroller
-.next:
-		lea		point_len(a5),a5
+		swap	d0					; d0.w = x in pixels
+		swap	d1					; d1.w = y in pixels
+		add.w	d1,d1
+		move.w	(a1,d1.w),d3		; y * li
+		move.w	d0,d2
+		lsr.w	#3,d0				; x / 8
+		eor.w	#7,d2				; bit number, msb = leftmost pixel
+		add.w	d0,d3
+		bset	d2,(a0,d3.w)
+.kill:
 		dbf		d7,.loop
+
+		move.l	a4,d0				; survivors -> new active count
+		sub.l	#points,d0
+		lsr.l	#4,d0
+		move.w	d0,activeCount
+.done:
 		rts
 
 noiseX:
@@ -249,10 +304,13 @@ startAddX:
 startAddY:
 		dc.w	8
 
+; acceleration in 16.16 pixels/frame^2.
+; 1<<9 is exactly the old "1" in 9.7 units (1/128 pixel per frame).
+; later this can be fed from a time table without touching drawPoints.
 accelX:
-		dc.b	1
+		dc.l	1<<9
 accelY:
-		dc.b	1
+		dc.l	1<<9
 
 accelDuration:
 		dc.b	1
@@ -285,63 +343,47 @@ addPoints:
 		dbf		d6,.addloop
 		rts
 ;-------
-addPoint:				; add single point at y offset d7
-
-		lea		freePoint(pc),a0
-		move.w	(a0),d0
+addPoint:				; add single point at screen line d7
+		move.w	activeCount,d0
+		cmp.w	#pointsMax,d0
+		bhs.s	.full				; can't happen with maxSpawn headroom, but be safe
 		move.w	d0,d1
-		mulu	#point_len,d1
 		addq.w	#1,d0
-		cmp.w	#numPoints,d0
-		bne		.notend
-		clr.w	d0
-.notend:
-		move.w	d0,(a0)
+		move.w	d0,activeCount
+		lsl.w	#4,d1				; * point_len
 		lea		points,a5
-		add.w	d1,a5
-		move.w	#lifetime,point_life(a5)
+		add.w	d1,a5				; append at the end (= youngest)
 
-		move.w	#(8*8)+1,d0
-		lsl.w	#7,d0
-		move.w	d0,point_xfloat(a5)
+		move.l	#((8*8)+1)<<16,point_x(a5)	; start x, no fraction
 
-		move.w	d7,d0			; y offset
-		lsl.w	#7,d0
-		move.w	d0,point_yfloat(a5)
+		moveq	#0,d0				; start y = scroller line
+		move.w	d7,d0
+		swap	d0
+		move.l	d0,point_y(a5)
 
-		moveq	#0,d0			; x speed
+		moveq	#0,d0				; x speed
 		jsr		getRandomNumber
-		; and.w	#$03,d0			; slow
 		and.w	noiseX,d0
 		add.w	startAddX,d0
-		; sub.w	#$20,d0
-		; and.w	#$7f,d0		; fast
-		; add.w	#$60,d0
-
 		neg.w	d0
-		move.w	d0,point_xvelo(a5)
+		ext.l	d0
+		lsl.l	#8,d0				; 9.7 -> 16.16 (<<9)
+		add.l	d0,d0
+		move.l	d0,point_xvelo(a5)
 
-		move.w	#0,d0			; test y speed
+		moveq	#0,d0				; y speed
 		jsr		getRandomNumber
 		and.w	noiseY,d0
 		add.w	startAddY,d0
-		; and.w	#$03,d0
-		; sub.w	#$02,d0
-		; and.w	#$1f,d0
-		; sub.w	#$20,d0
-		move.w	d0,point_yvelo(a5)
-
-; 		add.w	#1,postest
-; 		cmp.w	#7,postest
-; 		bne		.nopostestend
-; 		move.w	#0,postest
-; .nopostestend:
-
+		ext.l	d0
+		lsl.l	#8,d0				; 9.7 -> 16.16 (<<9)
+		add.l	d0,d0
+		move.l	d0,point_yvelo(a5)
+.full:
 		moveq	#0,d0
 		rts
 
-freePoint:					; index of next free point
-		dc.w	0			
+
 
 postest:	
 		dc.w	0
@@ -376,7 +418,32 @@ copyloop2:
 		move.l	(a2)+,a1
 		add.l	d6,a1
 		move.w	(a2)+,d2
-		bsr		copyColumnShift
+; copyColumnShift inlined here - the bsr/rts pair cost 34 cycles
+; per table entry, 26 entries per frame
+			move.w	(a0),d0
+			and.w	d1,d0
+			ror.w	d2,d0
+			or.w	d0,(a1)
+			move.w	src_line*1(a0),d0
+			and.w	d1,d0
+			ror.w	d2,d0
+			or.w	d0,li*1(a1)
+			move.w	src_line*2(a0),d0
+			and.w	d1,d0
+			ror.w	d2,d0
+			or.w	d0,li*2(a1)
+			move.w	src_line*3(a0),d0
+			and.w	d1,d0
+			ror.w	d2,d0
+			or.w	d0,li*3(a1)
+			move.w	src_line*4(a0),d0
+			and.w	d1,d0
+			ror.w	d2,d0
+			or.w	d0,li*4(a1)
+			move.w	src_line*5(a0),d0
+			and.w	d1,d0
+			ror.w	d2,d0
+			or.w	d0,li*5(a1)
 		dbf		d7,copyloop2
 
 ;		rts
@@ -394,14 +461,12 @@ leftblock_words = 6
 		move.l	#li-(leftblock_words*2),d5			; dst modulo
 		moveq	#7-1,d6			; height
 lineloop:
-		moveq	#leftblock_words-1,d7
-rowloop:	
-		move.w	(a0)+,(a1)+
-;		move.w	#-1,(a1)+
-		dbf		d7,rowloop
-		add.l	d4,a0
-		add.l	d5,a1
-		dbf		d6,lineloop
+			move.l	(a0)+,(a1)+		; 6 words == 3 longs, both ends are even
+			move.l	(a0)+,(a1)+
+			move.l	(a0)+,(a1)+
+			add.l	d4,a0
+			add.l	d5,a1
+			dbf		d6,lineloop
 
 		; rts	; test only left block
 
@@ -415,16 +480,33 @@ rightblock_words = 12
 		move.l	#li-(rightblock_words*2),d5			; dst modulo
 		moveq	#7-1,d6			; height
 lineloop2:
-		moveq	#(rightblock_words*2)-1,d7
-rowloop2:	
-		move.b	(a0)+,(a1)+
-;		ror.l	#8,d0
-;		move.w	d0,(a1)+
-;		move.w	#-1,(a1)+
-		dbf		d7,rowloop2
-		add.l	d4,a0
-		add.l	d5,a1
-		dbf		d6,lineloop2
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			move.b	(a0)+,(a1)+
+			add.l	d4,a0
+			add.l	d5,a1
+			dbf		d6,lineloop2
 
 		rts
 ;-------
@@ -776,32 +858,23 @@ putchar:
 		move.b	250(a2),5*src_line(a1)
 		rts	
 
-        		rsreset
-point_life:	    rs.w	1		;life time
-point_xfloat:	rs.w	1		;x-coordinate (floating)
-point_yfloat:	rs.w	1		;y-coordinate (floating)
-point_xvelo:	rs.w	1		;x velocity
-point_yvelo:	rs.w	1		;y velocity
-point_len:	    rs.w	0
+				rsreset
+point_x:		rs.l	1		; x position, 16.16 fixed point
+point_y:		rs.l	1		; y position, 16.16 fixed point
+point_xvelo:	rs.l	1		; x velocity in pixels/frame, 16.16
+point_yvelo:	rs.l	1		; y velocity in pixels/frame, 16.16
+point_len:		rs.b	0		; = 16 bytes -> movem friendly, lsl #4 to index
 
-points:		ds.b	point_len*numPoints
+		even
+points:		ds.b	point_len*pointsMax
+activeCount:
+		dc.w	0
 
-setPointScroller:
-		cmp.w	#game_width-1,d0	; range check
-		bhi.s	.npoint
-		cmp.w	#game_height-1,d1
-		bhi.s	.npoint
+		even
+yTable:		ds.w	screenHeight	; y -> y*li, built once by buildYTable
 
-		mulu	#li,d1		; y * linesize	-> todo: use table to optimize
-		move.w	d0,d2
-		eor.w	#$07,d2
-		lsr.w	#3,d0
-		add.l	d0,d1
-		move.l	a0,a1
-		add.l	d1,a1
-		bset	d2,(a1)
-.npoint:
-		rts
+; setPointScroller was inlined into drawPoints - the bsr/rts pair alone
+; was 34 cycles per point, and the mulu #li another ~50.
 
 chartab:
 		dc.b	"abcdefghijklmnopqrstuvwxyz0123456789.,!()/$ ?-+='",-1
@@ -1310,7 +1383,6 @@ logoPos:
 			dc.w	0
 
 text:
-		dc.b    "quadlite and thrust present something ..... ",0
 		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
 		dc.b	"dandee -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
 		even
@@ -1659,4 +1731,3 @@ barcolorOffsets:
 ; lookup table for scroller chars
 rchartab:	
 		blk.w	256,0
-

@@ -125,8 +125,8 @@ spoint:		; sprite pointers
 
 		dc.w	$2001,$fffe			; stars start
 		dc.w	$0180,$0000	   ; black plane
-		dc.w	$0182,$066e	   ; line color
-		dc.w	$0192,$0224	   ; line anti alias color
+		dc.w	$0182,$0fff	   ; line color
+		dc.w	$0192,$0558	   ; line anti alias color
 		dc.w	BPLCON0,$1200		; one plane
 
 		; dc.w	BPLCON0,$1200		; 1 bitplanes on
