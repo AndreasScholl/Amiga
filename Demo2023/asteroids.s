@@ -1,4 +1,9 @@
 ; todo:
+;    letters explosion
+;		with lines
+;		     copy line data of letter (at obj init?)
+;			 line data can be manipulated by explosion rotuine
+;
 ;    letters centering
 ;    letter i offset smaller
 ;    letters explode after time
@@ -6,9 +11,10 @@
 ;    ship respawn
 ;    scroller without posteffect
 ;
-; ablauf
+; oder mit ablauf?
 ;    sterne im hintergrund -> weltraum :)
 ;    dann passieren verschiedene sachen vor dem sternenhintergrund
+;    	asteroids game mit namen
 ;       scroller
 ;       logo erscheint
 ;       ...
@@ -58,6 +64,7 @@ initGame::				;<initialize game>
 ; the starfield and the keyboard. this only sets up the game objects.
 ; screenloc is written by clearScroller every frame.
 initGameObjects::
+		bsr		buildYOffTab		; needed by drawline/set_point below
 		bsr		scaleLetters
 		bsr		shots_init
 		bsr		ship_init
@@ -426,20 +433,58 @@ obj_move:				;<calculate new object coords>
 		lea		sctab(pc),a3
 		movem.w	(a3,d0.w),d4/d5			; sin,cos
 
+		; --- fold the object scale into sin/cos once per object instead of
+		;     four muls + four asr per line. scale is 2..64 and sin/cos are
+		;     +-32767, so sin*scale>>6 still fits in a signed word.
+		move.w	obj_scale(a0),d6
+		muls.w	d6,d4
+		asr.l	#6,d4
+		muls.w	d6,d5
+		asr.l	#6,d5
+
 		move.w	(a1)+,d7				; no of lines
 		subq.w	#1,d7
 .lines:		
 		movem.w	(a1)+,d0-d3		
-		muls.w	obj_scale(a0),d0
-		muls.w	obj_scale(a0),d1
-		muls.w	obj_scale(a0),d2
-		muls.w	obj_scale(a0),d3
-		asr.w	#6,d0
-		asr.w	#6,d1
-		asr.w	#6,d2
-		asr.w	#6,d3
 		move.w	d7,-(a7)
-		bsr		rotate
+
+		; --- rotate, inlined. MULS costs 38+2n on the 68000 where n counts
+		;     bit transitions in the SOURCE operand, so the small coordinate
+		;     goes in the source slot and the trig value in the destination.
+		move.w	d5,d6
+		muls	d0,d6					; x1*cos
+		move.w	d4,d7
+		muls	d1,d7					; y1*sin
+		sub.l	d7,d6
+		lsl.l	#1,d6
+		swap	d6						; new x1
+		move.w	d4,d7
+		muls	d0,d7					; x1*sin
+		move.w	d5,d0
+		muls	d1,d0					; y1*cos
+		add.l	d0,d7
+		lsl.l	#1,d7
+		swap	d7						; new y1
+		move.w	d6,d0
+		move.w	d7,d1
+
+		move.w	d5,d6
+		muls	d2,d6					; x2*cos
+		move.w	d4,d7
+		muls	d3,d7					; y2*sin
+		sub.l	d7,d6
+		lsl.l	#1,d6
+		swap	d6						; new x2
+		move.w	d4,d7
+		muls	d2,d7					; x2*sin
+		move.w	d5,d2
+		muls	d3,d2					; y2*cos
+		add.l	d2,d7
+		lsl.l	#1,d7
+		swap	d7						; new y2
+		move.w	d6,d2
+		move.w	d7,d3
+
 		add.w	obj_xc(a0),d0
 		add.w	obj_xc(a0),d2
 		add.w	obj_yc(a0),d1
@@ -1018,10 +1063,10 @@ asteroids_init:
 		sub.l	#$10,d0
 ;		moveq	#0,d0		; test
 		move.l	d0,d3
-		jsr		getRandomNumber
-		and.l	#$1f,d0
-		sub.l	#$10,d0
-;		moveq	#0,d0		; test
+		; jsr		getRandomNumber
+		; and.l	#$1f,d0
+		; sub.l	#$10,d0
+		moveq	#0,d0		; zero out test
 		move.l	d0,d4
 		move.l	d6,d0
 
@@ -1228,6 +1273,20 @@ screenToggle:
 screenloc::		
 		dc.l	$70000
 ;---------------------------------------------
+; y -> y*game_lineBytes. built once, used by drawline and set_point.
+		even
+yOffTab:	ds.w	game_height
+
+buildYOffTab:
+		lea		yOffTab,a0
+		moveq	#0,d0
+		move.w	#game_height-1,d1
+.loop:
+		move.w	d0,(a0)+
+		add.w	#game_lineBytes,d0
+		dbf		d1,.loop
+		rts
+;---------------------------------------------
 set_line:
 		movem.w	d4-d5,-(a7)
 ;		bra		drawline
@@ -1385,7 +1444,9 @@ drawline:
 						; BltStart nach d6
 .l4:		
 		move.l	screenloc(pc),a4
-		mulu	#game_lineBytes,d3
+		lea		yOffTab(pc),a5			; y*game_lineBytes, kills a ~50 cycle mulu
+		add.w	d3,d3
+		move.w	(a5,d3.w),d3
 		and.w	#$fff0,d2
 		lsr.w	#3,d2
 		add.w	d3,a4
@@ -1427,7 +1488,9 @@ set_point:
 		bhi.s	.npoint
 
 		move.w	#-1,(a6)		;set flag for point (not line)
-		mulu	#game_lineBytes,d1
+		lea		yOffTab(pc),a2		; y*game_lineBytes, same table as drawline
+		add.w	d1,d1
+		move.w	(a2,d1.w),d1
 		move.w	d0,d2
 		eor.w	#$07,d2
 		lsr.w	#3,d0
@@ -1546,7 +1609,11 @@ objects_draw:
 		lea		linetab(pc),a0
 
 		lea		$dff000,a6
-		jsr		bbusy
+		; blitter nasty stays set for the whole batch and the wait is inlined.
+		; bbusy cost a jsr/rts plus two DMACON writes on every single line.
+		move.w	#$8400,$96(a6)
+.wait0:	btst	#6,2(a6)
+		bne.s	.wait0
 		move.w	#game_lineBytes,$60(a6)
 		move.w	#game_lineBytes,$66(a6)
 		; move.w	#$28,$60(a6)
@@ -1574,7 +1641,8 @@ objects_draw:
 		move.w	(a0)+,a5
 		move.w	(a0)+,d5
 
-		jsr		bbusy
+.wait1:	btst	#6,2(a6)
+		bne.s	.wait1
 		move.l	a4,$48(a6)
 		move.l	a4,$54(a6)
 		move.w	d3,$52(a6)
@@ -1583,6 +1651,7 @@ objects_draw:
 		move.w	d5,$58(a6)		;zeinchen der linie
 		bra.s	.objects
 .end:		
+		move.w	#$0400,$96(a6)	; blitter nasty off
 		rts
 ;----------------------------------------
 ;-------------------------------------------------------

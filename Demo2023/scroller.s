@@ -30,7 +30,8 @@ ds		 		= $14			; destination start	of scroller turn
 ; the length of the trail (there is no explicit lifetime counter any
 ; more - it cost ~30 cycles per point per frame and the pool was
 ; permanently saturated anyway, so it never actually expired).
-numPoints		= 160		; max points kept alive after an update pass
+; numPoints		= 160		; max points kept alive after an update pass
+numPoints		= 32		; max points kept alive after an update pass
 maxSpawn		= 8			; max points that can be spawned in one frame
 pointsMax		= numPoints+maxSpawn
 
@@ -167,7 +168,11 @@ updateScroller::
 ;     top of the next frame. it also has to come after addPoints, which
 ;     scans column 8 of the buffer and would otherwise spawn dots from the
 ;     vector graphics.
+
+		; move.w	#$aaa,$dff180
 		jsr		updateGameObjects
+		; move.w	#$000,$dff180
+
 		lea		$dff000,a6
 .scrollerEnded:
 		clr.b	kcode
@@ -1524,7 +1529,6 @@ logoEndWait:
 		dc.w	$00e2,$e000-li
 		dc.w	$0108,$ffd8			; even bitplanes modulo
 
-		; dc.w	$8401,$fffe		; start of "game" area
 		dc.w	$9c01,$fffe		; start of "game" area
 		dc.w	BPLCON0,$1200	; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
@@ -1536,6 +1540,9 @@ bp0:	dc.w	$00e2,$0000		;
 		dc.w	$0092,$0028
 		dc.w	$0094,$00d8
 
+		dc.w	$0182,$0eee	; game area before scroller color
+
+		dc.w	$bf01,$fffe
 		dc.w	$0182,$0777
 		dc.w	$c101,$fffe
 		dc.w	$0182,$0888
