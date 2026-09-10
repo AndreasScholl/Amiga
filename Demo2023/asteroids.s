@@ -40,7 +40,7 @@ game_lineBytes	= $2e			; screen line size in bytes
 ; and the dots fall from 35 downwards, so keep the game above ~32.
 ship_start_x	= 160
 ship_start_y	= 28
-ast_y_start		= 16
+ast_y_start		= 12
 
 		section "code",data,chip
 
@@ -1083,6 +1083,15 @@ ast_x_offset 	= 24
 ; ast_x_start		= 70+((8*16)/2)			; for small
 ; ast_x_offset 	= 16
 
+; --- word centring
+; the game area copperlist uses DDFSTRT $28, which is 16 colour clocks
+; earlier than the standard $38, so bitplane pixel 0 lands at hpos 97
+; while DIWSTRT is still at $81 (129). the leftmost 32 pixels of the
+; buffer are therefore behind the left border and the visible range is
+; x = 32..351 - hence game_width 352, and hence a visible centre of 192.
+; nudge this if you ever change DDFSTRT or the display window.
+ast_x_center	= 192
+
 		; init letter asteroids from names table
 asteroids_init:
 		lea		names,a3
@@ -1095,7 +1104,22 @@ asteroids_init:
 .noEnd:
 		add.l	#4,nameOffset
 .end:
-		move.w	#ast_x_start,d0		; x
+		; --- centre the word: count the characters (spaces included, they
+		;     advance x too) and start half the total width left of centre
+		move.l	a4,a3
+		moveq	#0,d1
+.countchars:
+		tst.b	(a3)+
+		beq.s	.counted
+		addq.w	#1,d1
+		bra.s	.countchars
+.counted:
+		move.w	#ast_x_center,d0	; x
+		subq.w	#1,d1				; gaps between letter centres
+		ble.s	.centred			; 0 or 1 characters -> dead centre
+		mulu	#ast_x_offset/2,d1
+		sub.w	d1,d0
+.centred:
 		move.w	#0,d2				; angle
 		move.w	#0,d3				; x velo
 		move.w	#0,d4				; y velo

@@ -325,7 +325,7 @@ startAddY:
 ; 1<<9 is exactly the old "1" in 9.7 units (1/128 pixel per frame).
 ; later this can be fed from a time table without touching drawPoints.
 accelX:
-		dc.l	1<<9
+		dc.l	3<<9
 accelY:
 		dc.l	1<<9
 
