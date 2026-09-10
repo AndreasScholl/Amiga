@@ -413,6 +413,12 @@ obj_move:				;<calculate new object coords>
 		lsr.w	#7,d0					; convert to integer
 		move.w	d0,obj_yc(a0)			; y integer
 .doneMove:		
+		; --- set up for set_point / set_line / drawline. these two are
+		;     invariant for the whole object, so they are loaded here rather
+		;     than on every single line.
+		move.l	screenloc,a2			; plot base
+		lea		yOffTab(pc),a5			; y -> y*game_lineBytes
+
 		lea		obj_coords(a0),a1		; coord table
 		move.w	(a1),d0					; no. of lines
 		tst.w	d0
@@ -437,17 +443,36 @@ obj_move:				;<calculate new object coords>
 		;     four muls + four asr per line. scale is 2..64 and sin/cos are
 		;     +-32767, so sin*scale>>6 still fits in a signed word.
 		move.w	obj_scale(a0),d6
+		cmp.w	#64,d6					; full size? then sin*64>>6 == sin
+		beq.s	.noScale
 		muls.w	d6,d4
 		asr.l	#6,d4
 		muls.w	d6,d5
 		asr.l	#6,d5
+.noScale:
+
+		; --- the letter coord tables are polylines: p1 of a line is usually
+		;     p2 of the line before it. cache the last raw and rotated p2 so
+		;     that shared vertex is only transformed once.
+		lea		lineCache(pc),a3
+		move.w	#$7fff,(a3)				; no coordinate can match this
+		movem.w	d4-d5,8(a3)				; sin/cos live here now, not on the
+										; stack around every set_line call
 
 		move.w	(a1)+,d7				; no of lines
 		subq.w	#1,d7
 .lines:		
 		movem.w	(a1)+,d0-d3		
 		move.w	d7,-(a7)
+		movem.w	8(a3),d4-d5				; reload sin/cos (clipy/clipx use them)
 
+		cmp.w	(a3),d0					; same vertex as the previous p2?
+		bne.s	.rotp1
+		cmp.w	2(a3),d1
+		bne.s	.rotp1
+		movem.w	4(a3),d0-d1				; yes - reuse the rotated one
+		bra.s	.gotp1
+.rotp1:
 		; --- rotate, inlined. MULS costs 38+2n on the 68000 where n counts
 		;     bit transitions in the SOURCE operand, so the small coordinate
 		;     goes in the source slot and the trig value in the destination.
@@ -456,34 +481,37 @@ obj_move:				;<calculate new object coords>
 		move.w	d4,d7
 		muls	d1,d7					; y1*sin
 		sub.l	d7,d6
-		lsl.l	#1,d6
+		add.l	d6,d6
 		swap	d6						; new x1
 		move.w	d4,d7
 		muls	d0,d7					; x1*sin
 		move.w	d5,d0
 		muls	d1,d0					; y1*cos
 		add.l	d0,d7
-		lsl.l	#1,d7
+		add.l	d7,d7
 		swap	d7						; new y1
 		move.w	d6,d0
 		move.w	d7,d1
+.gotp1:
+		movem.w	d2-d3,(a3)				; cache raw p2
 
 		move.w	d5,d6
 		muls	d2,d6					; x2*cos
 		move.w	d4,d7
 		muls	d3,d7					; y2*sin
 		sub.l	d7,d6
-		lsl.l	#1,d6
+		add.l	d6,d6
 		swap	d6						; new x2
 		move.w	d4,d7
 		muls	d2,d7					; x2*sin
 		move.w	d5,d2
 		muls	d3,d2					; y2*cos
 		add.l	d2,d7
-		lsl.l	#1,d7
+		add.l	d7,d7
 		swap	d7						; new y2
 		move.w	d6,d2
 		move.w	d7,d3
+		movem.w	d2-d3,4(a3)			; cache rotated p2
 
 		add.w	obj_xc(a0),d0
 		add.w	obj_xc(a0),d2
@@ -1277,6 +1305,9 @@ screenloc::
 		even
 yOffTab:	ds.w	game_height
 
+; raw p2 (2 words) + rotated p2 (2 words) of the previous line
+lineCache:	ds.w	6		; raw p2, rotated p2, then sin and cos
+
 buildYOffTab:
 		lea		yOffTab,a0
 		moveq	#0,d0
@@ -1287,111 +1318,55 @@ buildYOffTab:
 		dbf		d1,.loop
 		rts
 ;---------------------------------------------
-set_line:
-		movem.w	d4-d5,-(a7)
-;		bra		drawline
-.onceag:		
-		moveq	#0,d6
-		tst.w	d1			;y1 < 0 ?
-		bmi.s	.y11
-		tst.w	d3			;y2 < 0 ?
-		bmi.s	.y12
-		move.w	#game_height-1,d6
-		cmp.w	d6,d1		;y1 > 255 ?
-		bgt.s	.y21
-		cmp.w	d6,d3		;y2 > 255 ?
-		bgt.s	.y22
-
-		moveq	#0,d6
-		tst.w	d0			;x1 < 0 ?
-		bmi.s	.x11
-		tst.w	d2			;x2 < 0 ?
-		bmi.s	.x12
-		move.w	#game_width-1,d6
-		cmp.w	d6,d0		;x1 > 319 ?
-		bgt.s	.x21
-		cmp.w	d6,d2		;x2 > 319 ?
-		bgt.s	.x22
-		bra.s	drawline	
-.y11:
-		tst.w	d3			;y2 auch < 0 ?
-		bmi.s	.clpend		;dann gar nix
-		bsr.s	clipy
-		move.w	d4,d0		;neues x1
-		moveq	#0,d1		;y1 = 0
-		bra.s	.onceag
-.y12:		
-		bsr.s	clipy
-		move.w	d4,d2		;neues x2
-		moveq	#0,d3		;y2 = 0
-		bra.s	.onceag
-.y21:
-		cmp.w	d6,d3
-		bgt.s	.clpend
-		bsr.s	clipy
-		move.w	d4,d0
-		move.w	d6,d1
-		bra.s	.onceag
-.y22:		
-		bsr.s	clipy
-		move.w	d4,d2
-		move.w	d6,d3
-		bra.s	.onceag
-.x11:		
+;-------------------------------------
+; set_line / drawline layout notes:
+;   the four exits from the fast path are the only branches that cost
+;   anything, so the dispatch blocks they jump to sit immediately in
+;   front of set_line and stay reachable with short branches. the fast
+;   path then falls straight through into drawline instead of branching
+;   to it. everything on the clipping path is placed after drawline and
+;   uses explicit .w branches, so nothing there can go out of range no
+;   matter how much the routine grows.
+;-------------------------------------
+sl_cy1:
+		tst.w	d1
+		bmi.w	sl_y11			; below zero
+		move.w	#game_height-1,d6	; past the limit
+		bra.w	sl_y21
+sl_cy2:
+		tst.w	d3
+		bmi.w	sl_y12			; below zero
+		move.w	#game_height-1,d6	; past the limit
+		bra.w	sl_y22
+sl_cx1:
+		tst.w	d0
+		bmi.w	sl_x11			; below zero
+		move.w	#game_width-1,d6	; past the limit
+		bra.w	sl_x21
+sl_cx2:
 		tst.w	d2
-		bmi.s	.clpend
-		bsr.s	clipx
-		move.w	d4,d1
-		moveq	#0,d0
-		bra.s	.onceag
-.x12:
-		bsr.s	clipx
-		move.w	d4,d3
-		moveq	#0,d2
-		bra.s	.onceag
-.x21:		
-		cmp.w	d6,d2
-		bgt.s	.clpend
-		bsr.s	clipx
-		move.w	d4,d1
-		move.w	d6,d0
-		bra.s	.onceag
-.x22:
-		bsr.s	clipx
-		move.w	d4,d3
-		move.w	d6,d2
-		bra.s	.onceag
-.clpend:						;linie unsichtbar
-		movem.w	(a7)+,d4-d5
-		rts
+		bmi.w	sl_x12			; below zero
+		move.w	#game_width-1,d6	; past the limit
+		bra.w	sl_x22
 ;-------------------------------------
-clipy:
-		move.w	d0,d4
-		sub.w	d2,d4
-		move.w	d3,d5
-		move.w	d3,d7
-		sub.w	d6,d7
-		muls	d7,d4
-		sub.w	d1,d5
-		divs	d5,d4
-		add.w	d2,d4
-		rts
-;-------------------------------------
-clipx:		
-		move.w	d1,d4
-		sub.w	d3,d4
-		move.w	d2,d5
-		move.w	d2,d7
-		sub.w	d6,d7
-		muls	d7,d4
-		sub.w	d0,d5
-		divs	d5,d4
-		add.w	d3,d4
-		rts
+set_line:
+sl_again:
+		; one unsigned compare per coordinate catches both "< 0" and
+		; "> limit". a fully visible line costs four compares and four
+		; untaken branches, then falls through into drawline.
+		cmp.w	#game_height,d1
+		bhs.s	sl_cy1
+		cmp.w	#game_height,d3
+		bhs.s	sl_cy2
+		cmp.w	#game_width,d0
+		bhs.s	sl_cx1
+		cmp.w	#game_width,d2
+		bhs.s	sl_cx2
+		; --- falls through
 ;-------------------------------------
 drawline:	
-		move.l	a4,-(a7)
-
+		; a4 is scratch here - no caller of set_line needs it preserved,
+		; so the push/pop pair is gone.
 		moveq	#$f,d4
 		and.w	d2,d4
 		ror.w	#4,d4
@@ -1443,10 +1418,9 @@ drawline:
 		exg		d1,d0
 						; BltStart nach d6
 .l4:		
-		move.l	screenloc(pc),a4
-		lea		yOffTab(pc),a5			; y*game_lineBytes, kills a ~50 cycle mulu
+		move.l	a2,a4					; screenloc, preloaded by obj_move
 		add.w	d3,d3
-		move.w	(a5,d3.w),d3
+		move.w	(a5,d3.w),d3			; y*game_lineBytes
 		and.w	#$fff0,d2
 		lsr.w	#3,d2
 		add.w	d3,a4
@@ -1476,9 +1450,86 @@ notneg:
 		move.w	d1,(a6)+
 		move.w	d6,(a6)+
 		move.w	d5,(a6)+
-
-		move.l	(a7)+,a4
-		movem.w	(a7)+,d4-d5
+		rts
+;-------------------------------------
+; clipping - off the fast path, all branches explicitly .w
+sl_y11:
+		moveq	#0,d6
+		tst.w	d3			; y2 below zero as well ?
+		bmi.w	sl_clpend	; then nothing to draw
+		bsr.w	clipy
+		move.w	d4,d0		; new x1
+		moveq	#0,d1		; y1 = 0
+		bra.w	sl_again
+sl_y12:
+		moveq	#0,d6
+		bsr.w	clipy
+		move.w	d4,d2		; new x2
+		moveq	#0,d3		; y2 = 0
+		bra.w	sl_again
+sl_y21:
+		cmp.w	d6,d3
+		bgt.w	sl_clpend
+		bsr.w	clipy
+		move.w	d4,d0
+		move.w	d6,d1
+		bra.w	sl_again
+sl_y22:
+		bsr.w	clipy
+		move.w	d4,d2
+		move.w	d6,d3
+		bra.w	sl_again
+sl_x11:
+		moveq	#0,d6
+		tst.w	d2
+		bmi.w	sl_clpend
+		bsr.w	clipx
+		move.w	d4,d1
+		moveq	#0,d0
+		bra.w	sl_again
+sl_x12:
+		moveq	#0,d6
+		bsr.w	clipx
+		move.w	d4,d3
+		moveq	#0,d2
+		bra.w	sl_again
+sl_x21:
+		cmp.w	d6,d2
+		bgt.w	sl_clpend
+		bsr.w	clipx
+		move.w	d4,d1
+		move.w	d6,d0
+		bra.w	sl_again
+sl_x22:
+		bsr.w	clipx
+		move.w	d4,d3
+		move.w	d6,d2
+		bra.w	sl_again
+sl_clpend:				; line invisible
+		rts
+;-------------------------------------
+clipy:
+		move.w	d0,d4
+		sub.w	d2,d4
+		move.w	d3,d5
+		move.w	d3,d7
+		sub.w	d6,d7
+		muls	d7,d4
+		sub.w	d1,d5
+		divs	d5,d4
+		add.w	d2,d4
+		rts
+;-------------------------------------
+clipx:
+		move.w	d1,d4
+		sub.w	d3,d4
+		move.w	d2,d5
+		move.w	d2,d7
+		sub.w	d6,d7
+		muls	d7,d4
+		sub.w	d0,d5
+		divs	d5,d4
+		add.w	d3,d4
 		rts
 ;-------------------------------------------------------
 set_point:
@@ -1488,16 +1539,15 @@ set_point:
 		bhi.s	.npoint
 
 		move.w	#-1,(a6)		;set flag for point (not line)
-		lea		yOffTab(pc),a2		; y*game_lineBytes, same table as drawline
 		add.w	d1,d1
-		move.w	(a2,d1.w),d1
+		move.w	(a5,d1.w),d1	; y*game_lineBytes, preloaded by obj_move
 		move.w	d0,d2
 		eor.w	#$07,d2
 		lsr.w	#3,d0
 		ext.l	d0
 		ext.l	d1
 		add.l	d0,d1
-		add.l	screenloc(pc),d1
+		add.l	a2,d1			; screenloc, preloaded by obj_move
 		move.l	d1,2(a6)
 		move.w	d2,6(a6)
 		lea		16(a6),a6
@@ -1517,7 +1567,7 @@ point_rotate:
 		move.w	d1,d7			;y
 		muls	d5,d7			;*cos
 		add.l	d7,d6			;x*sin - y*cos
-		lsl.l	#1,d6
+		add.l	d6,d6
 		swap	d6			;new y
 		move.w	d6,d1
 		btst	#31,d6
@@ -1543,7 +1593,7 @@ rotate:					;<rotation>
 		move.w	d1,d7			;y
 		muls	d5,d7			;*cos
 		add.l	d7,d6			;x*sin - y*cos
-		lsl.l	#1,d6
+		add.l	d6,d6
 		swap	d6				;new y
 		move.w	d6,d1
 
@@ -1559,7 +1609,7 @@ rotate:					;<rotation>
 		move	d3,d7			;y
 		muls	d5,d7			;*cos
 		add.l	d7,d6			;x*sin - y*cos
-		lsl.l	#1,d6
+		add.l	d6,d6
 		swap	d6				;new y
 		move.w	d6,d3
 		rts
@@ -1837,32 +1887,84 @@ setupSpritelist:
 		move.l	#0,(a0)+	; end of sprite list
 		rts
 ;---------------------------------------------
+; the star lists are walked four entries at a time. bchg tests and toggles
+; the SH0 bit in one instruction (Z comes from the ORIGINAL bit, so "the
+; new bit is 1" is "Z set"), which replaces an eor.b plus a btst on the
+; same byte - 20 cycles instead of 32, per layer, per star.
+; stars_count must stay a multiple of 4.
 updateStars::
 		moveq	#1,d0
-		move.w	#stars_count-1,d7
+		move.w	#(stars_count/4)-1,d7
 		lea		slst0+1,a0
 .loop:
-		eor.b	d0,2(a0)
-		btst	#0,2(a0)
-		bne.s	.noinc
+		bchg	#0,2(a0)
+		beq.s	.n0
 		add.b	d0,(a0)
 
-		eor.b	d0,stars_count*8+2+4(a0)
-		btst	#0,stars_count*8+2+4(a0)
-		bne.s	.noinc
-		add.b	d0,stars_count*8+4(a0)
+		bchg	#0,stars_count*8+0+2+4(a0)
+		beq.s	.n0
+		add.b	d0,stars_count*8+0+4(a0)
 
-		eor.b	d0,stars_count*16+2+8(a0)
-		btst	#0,stars_count*16+2+8(a0)
-		bne.s	.noinc
-		add.b	d0,stars_count*16+8(a0)
+		bchg	#0,stars_count*16+0+2+8(a0)
+		beq.s	.n0
+		add.b	d0,stars_count*16+0+8(a0)
 
-		eor.b	d0,stars_count*24+2+12(a0)
-		btst	#0,stars_count*24+2+12(a0)
-		bne.s	.noinc
-		add.b	d0,stars_count*24+12(a0)
-.noinc
-		lea		8(a0),a0
+		bchg	#0,stars_count*24+0+2+12(a0)
+		beq.s	.n0
+		add.b	d0,stars_count*24+0+12(a0)
+.n0
+
+		bchg	#0,8+2(a0)
+		beq.s	.n8
+		add.b	d0,8(a0)
+
+		bchg	#0,stars_count*8+8+2+4(a0)
+		beq.s	.n8
+		add.b	d0,stars_count*8+8+4(a0)
+
+		bchg	#0,stars_count*16+8+2+8(a0)
+		beq.s	.n8
+		add.b	d0,stars_count*16+8+8(a0)
+
+		bchg	#0,stars_count*24+8+2+12(a0)
+		beq.s	.n8
+		add.b	d0,stars_count*24+8+12(a0)
+.n8
+
+		bchg	#0,16+2(a0)
+		beq.s	.n16
+		add.b	d0,16(a0)
+
+		bchg	#0,stars_count*8+16+2+4(a0)
+		beq.s	.n16
+		add.b	d0,stars_count*8+16+4(a0)
+
+		bchg	#0,stars_count*16+16+2+8(a0)
+		beq.s	.n16
+		add.b	d0,stars_count*16+16+8(a0)
+
+		bchg	#0,stars_count*24+16+2+12(a0)
+		beq.s	.n16
+		add.b	d0,stars_count*24+16+12(a0)
+.n16
+
+		bchg	#0,24+2(a0)
+		beq.s	.n24
+		add.b	d0,24(a0)
+
+		bchg	#0,stars_count*8+24+2+4(a0)
+		beq.s	.n24
+		add.b	d0,stars_count*8+24+4(a0)
+
+		bchg	#0,stars_count*16+24+2+8(a0)
+		beq.s	.n24
+		add.b	d0,stars_count*16+24+8(a0)
+
+		bchg	#0,stars_count*24+24+2+12(a0)
+		beq.s	.n24
+		add.b	d0,stars_count*24+24+12(a0)
+.n24
+		lea		32(a0),a0
 		dbf		d7,.loop	
 		rts
 		

@@ -31,7 +31,7 @@ ds		 		= $14			; destination start	of scroller turn
 ; more - it cost ~30 cycles per point per frame and the pool was
 ; permanently saturated anyway, so it never actually expired).
 ; numPoints		= 160		; max points kept alive after an update pass
-numPoints		= 32		; max points kept alive after an update pass
+numPoints		= 128		; max points kept alive after an update pass
 maxSpawn		= 8			; max points that can be spawned in one frame
 pointsMax		= numPoints+maxSpawn
 
