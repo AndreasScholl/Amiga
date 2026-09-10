@@ -128,7 +128,7 @@ name5:
 name6:
 		dc.b	"equalizer",0
 name7:
-		dc.b	"lpa",0
+		dc.b	"l p a",0
 name8:
 		dc.b	"phil",0
 
@@ -238,6 +238,13 @@ updateGame:
 *vector object_class                                                 *
 *
 max_objlines 	= 10
+
+; --- letter appear animation ------------------------------------------
+appear_frames	= 30		; how long one letter zooms and spins
+appear_astep	= 12		; degrees per frame (30*12 == one full turn)
+appear_scale0	= 4			; start scale, 64 == full size
+appear_sstep	= 2			; scale step (4 + 30*2 == 64)
+appear_stagger	= 15		; frames between letters -> 3 spinning at once
 
 				rsreset
 obj_xc:			rs.w	1		; x-coordinate
@@ -492,6 +499,8 @@ obj_move:				;<calculate new object coords>
 		swap	d7						; new y1
 		move.w	d6,d0
 		move.w	d7,d1
+		add.w	obj_xc(a0),d0			; freshly rotated p1 still needs
+		add.w	obj_yc(a0),d1			; translating; a cached one does not
 .gotp1:
 		movem.w	d2-d3,(a3)				; cache raw p2
 
@@ -511,23 +520,23 @@ obj_move:				;<calculate new object coords>
 		swap	d7						; new y2
 		move.w	d6,d2
 		move.w	d7,d3
-		movem.w	d2-d3,4(a3)			; cache rotated p2
 
-		add.w	obj_xc(a0),d0
-		add.w	obj_xc(a0),d2
-		add.w	obj_yc(a0),d1
-		add.w	obj_yc(a0),d3
+		add.w	obj_xc(a0),d2			; translate p2 first, then cache it -
+		add.w	obj_yc(a0),d3			; a reused vertex then needs no adds
+		movem.w	d2-d3,4(a3)
+
 		bsr		set_line
 		move.w	(a7)+,d7
 		dbf		d7,.lines
 		rts
 .norotobj:
+		move.w	obj_xc(a0),a3			; a3 survives set_line/drawline
 		move.w	(a1)+,d7
 		subq.w	#1,d7
 .norotlines:	
 		movem.w	(a1)+,d0-d3
-		add.w	obj_xc(a0),d0
-		add.w	obj_xc(a0),d2
+		add.w	a3,d0
+		add.w	a3,d2
 		add.w	obj_yc(a0),d1
 		add.w	obj_yc(a0),d3
 		move.w	d7,-(a7)
@@ -562,17 +571,25 @@ updateEnemies:
 		beq		.noAppear
 		subq	#1,d2
 		move.w	d2,obj_appear(a0)
-		moveq	#4,d1
+		move.w	#appear_astep,d1
 		bsr		obj_addangle
-		move.w	obj_scale(a0),d1
+
+		move.w	obj_scale(a0),d1	; grow, clamped at full size
 		cmp.w	#64,d1
-		beq		.doneScale
-		addq	#1,d1
+		bge.s	.doneScale
+		add.w	#appear_sstep,d1
+		cmp.w	#64,d1
+		blt.s	.storeScale
+		move.w	#64,d1
+.storeScale:
 		move.w	d1,obj_scale(a0)
-		bra		.appearing
 .doneScale:
-		tst.w	d2
+		tst.w	d2					; animation finished?
 		bne.s	.appearing
+		; freeze here whatever the scale/angle steps happened to be, so the
+		; timing constants can be retuned without the letter getting stuck
+		; in the (expensive) rotating path
+		move.w	#64,obj_scale(a0)
 		move.w	#$8000,obj_angle(a0)
 
 		; --- get random velocity
@@ -1091,10 +1108,10 @@ asteroids_init:
 		sub.l	#$10,d0
 ;		moveq	#0,d0		; test
 		move.l	d0,d3
-		; jsr		getRandomNumber
-		; and.l	#$1f,d0
-		; sub.l	#$10,d0
-		moveq	#0,d0		; zero out test
+		jsr		getRandomNumber
+		and.l	#$3,d0
+		add.l	#$1,d0
+		; moveq	#0,d0		; zero out test
 		move.l	d0,d4
 		move.l	d6,d0
 
@@ -1131,14 +1148,12 @@ asteroids_init:
 		; move.w	d7,d6
 		; lsl.w	#2,d6
 		; move.w	d6,obj_angle(a0)
-		move.w	#360/4,d5
-		; sub.w	d6,d5
-		move.w	d5,obj_appear(a0)
+		move.w	#appear_frames,obj_appear(a0)
 		move.w	#0,obj_angle(a0)
-		move.w	#2,obj_scale(a0)
+		move.w	#appear_scale0,obj_scale(a0)
 		move.w	d7,obj_wait(a0)
 
-		add.w	#10,d7		; next wait
+		add.w	#appear_stagger,d7		; next wait
 .skip:		
 		add.w	#ast_x_offset,d0
 

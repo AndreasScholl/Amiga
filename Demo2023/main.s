@@ -94,7 +94,7 @@ vblank:
 		jsr		(a0)
 .end:
 		movem.l	(a7)+,d0-d7/a0-a6
-		move.w	#$f0f,$dff180
+		; move.w	#$f0f,$dff180
 		move.w	#$0020,$dff09c
 .nvbl:		
 		rte
