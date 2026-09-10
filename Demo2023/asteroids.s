@@ -1,9 +1,4 @@
 ; todo:
-;    letters explosion
-;		with lines
-;		     copy line data of letter (at obj init?)
-;			 line data can be manipulated by explosion rotuine
-;
 ;    letters centering
 ;    letter i offset smaller
 ;    letters explode after time
@@ -11,10 +6,9 @@
 ;    ship respawn
 ;    scroller without posteffect
 ;
-; oder mit ablauf?
+; ablauf
 ;    sterne im hintergrund -> weltraum :)
 ;    dann passieren verschiedene sachen vor dem sternenhintergrund
-;    	asteroids game mit namen
 ;       scroller
 ;       logo erscheint
 ;       ...
@@ -27,29 +21,62 @@
 		INCLUDE     "hardware/cia.i"
 
 ; --- asteroids game screen
+; the game shares the scroller part's single bitplane buffer, so this MUST
+; match scroller.s: screenHeight and li. clipping and the vertical wrap in
+; obj_move are derived from it, and anything above it would draw past the
+; end of the 5888 byte buffer.
 game_width		= 352
-game_height		= 250
+game_height		= 128
 game_lineBytes	= $2e			; screen line size in bytes
+
+; --- object placement (buffer lines, not raster lines)
+; the visible window is buffer line 0..83. the scroll text sits at 36..64
+; and the dots fall from 35 downwards, so keep the game above ~32.
+ship_start_x	= 160
+ship_start_y	= 28
+ast_y_start		= 16
 
 		section "code",data,chip
 
+; standalone entry point - owns the copperlist, the buffer swap and the
+; sprite pointers. still reachable through demoParts for the hidden mode.
 initGame::				;<initialize game>
 		jsr		clear			;clear screen
 		jsr		clear			;
 
 		lea		spoint(pc),a5
 		jsr		setupStarfieldPointers	; starfield
-		bsr		scaleLetters
 
-		bsr		shots_init
-		bsr		ship_init
-		clr.l	enemy_con
-		sf		ship_exploding
-;		bsr		asteroids_init
+		bsr		initGameObjects
+		st		gameStandalone		; we own the screen
 
  		move.l	#clistGame,$dff080
 		clr.w	$dff088
 		rts
+;------
+; integrated entry point - the scroller part owns the buffer, the copperlist,
+; the starfield and the keyboard. this only sets up the game objects.
+; screenloc is written by clearScroller every frame.
+initGameObjects::
+		bsr		scaleLetters
+		bsr		shots_init
+		bsr		ship_init
+		clr.l	enemy_con
+		sf		ship_exploding
+		sf		gameStandalone
+		rts
+;------
+; integrated per frame update. must be called after the scroller has
+; finished with the blitter (objects_draw leaves BLTAFWM/BLTALWM at
+; $ffff0000, which the scroll blit would otherwise inherit).
+updateGameObjects::
+		bsr		updateGame
+		lea		$dff000,a6
+		rts
+;------
+gameStandalone:
+		dc.b	0
+		even
 ;------
 updateGamePart::				;<update game>
 		cmp.b	#$50,kcode
@@ -177,7 +204,12 @@ updateGame:
 		tst.b	ship_next		; ship destroyed?
 		beq.s	.nrestart
 		sf		ship_next
+		tst.b	gameStandalone		; don't reinstall clistGame when integrated
+		beq.s	.restartObjects
 		bsr		initGame
+		bra.s	.nrestart
+.restartObjects:
+		bsr		initGameObjects
 .nrestart:
 		tst.l	enemy_con
 		bne.s	.noLetterInit
@@ -918,6 +950,9 @@ ship_set:				;<set ship, keyboard control>
 		rts
 ;---------------------------------------------
 scaleLetters:
+		tst.b	lettersScaled		; the coord tables are scaled in place, so a
+		bne.s	.done				; second call would shrink them again
+		st		lettersScaled
 		lea		coord_tabs+(5*4),a5	; letter start
 		moveq	#26-1,d7
 .loop:
@@ -934,7 +969,12 @@ scaleLetters:
 		dbf		d6,.line
 
 		dbf		d7,.loop
+.done:
 		rts
+
+lettersScaled:
+		dc.b	0
+		even
 
 scaleOffset:
 		muls.w	#3,d0
@@ -986,7 +1026,7 @@ asteroids_init:
 		move.l	d6,d0
 
 .loop:
-		move.w	#100,d1				; y
+		move.w	#ast_y_start,d1		; y
 
 		lea		coord_tabs+(5*4),a5	; letter start
 		move.b	(a4)+,d6
@@ -1067,6 +1107,15 @@ shots_init:				;<initialize shot status>
 		clr.w	shot_con
 		rts
 ;---------------------------------------------
+clearShipScratch:			;<wipe the 32x32 scan corner of the buffer>
+		move.l	screenloc,a0
+		moveq	#32-1,d0
+.line:
+		clr.l	(a0)
+		lea		game_lineBytes(a0),a0
+		dbf		d0,.line
+		rts
+;---------------------------------------------
 ship_pcoords:				;<get point coords from ship lines>
 		lea		ship_struct(pc),a0
 		move.w	#16,d0			;x
@@ -1134,12 +1183,18 @@ check_point:				;<check if point is set in bitmap>
 ship_ptab:	ds.l	100
 ;---------------------------------------------
 ship_init:				;<initialize ship pos,angle>
-		
+
+; ship_pcoords renders the ship at (16,16) and reads it back out of the
+; buffer, so the top left 32x32 corner has to be clean before and after.
+; standalone mode got that from the double "clear" in initGame; when the
+; scroller owns the buffer we have to do it ourselves.
+		bsr	clearShipScratch
 		bsr	ship_pcoords
+		bsr	clearShipScratch
 
 		lea	ship_struct(pc),a0
-		move.w	#160,d0			;x
-		move.w	#128,d1			;y
+		move.w	#ship_start_x,d0	;x
+		move.w	#ship_start_y,d1	;y
 		move.w	#0,d2			;angle
 		move.w	#0,d3			;x velo
 		move.w	#0,d4			;y velo

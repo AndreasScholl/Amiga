@@ -9,10 +9,11 @@ src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
 screenHeight	= 128
-; the scroller band starts at line 35 and dots only ever move down
-; from there, so lines 0..clearTop-1 never get dirty and do not need
-; clearing. keep this below the topmost pixel anything can write.
-clearTop		= 30
+; first buffer line that needs clearing every frame. the asteroids game
+; draws into the top of the buffer now, so this has to stay at 0. if the
+; game is ever removed again it can go back up to 30 (the scroll band
+; starts at line 35 and the dots only ever fall downwards from there).
+clearTop		= 0
 li				= $2e			; screen line size in bytes
 
 sc_offset		= 58			; scroller dest y offset
@@ -50,6 +51,7 @@ initScroller::
 		jsr		setupStarfield	; starfield
 		bsr		setupScroller
 		bsr		initPoints
+		jsr		initGameObjects		; asteroids share this part's bitplane
 
  		move.l	#clist,$dff080
 		clr.w	$dff088
@@ -95,7 +97,6 @@ updateLogoPointers:
 ;-------
 updateScroller::
 		lea		$dff000,a6
-		move.w	#$882,$180(a6)
         bsr     clearScroller		; starts the screen clear blit
 
 ; --- the clear blit is now running. everything down to the bbusy inside
@@ -107,7 +108,7 @@ updateScroller::
 		; bsr		updateLogoColors		; super slow :(
 		bsr		updateLogoPos
 		jsr		updateStars
-		; move.w	#$0,$180(a6)
+		; move.w	#$882,$180(a6)
 
 		; --- debug key stuff for point movement
 		bsr		getkey
@@ -145,13 +146,12 @@ updateScroller::
 		move.w	#3,noiseX
 .nxToggle:		
 
-		clr.b	kcode
-
 ; --- from here on we need the cleared buffer. "scroll" starts with a
 ;     bbusy, which is where the blitter is finally waited for - by now
 ;     it has had the whole block above to finish the clear.
         ; cmp.w   #stateEnd,scrollerState
         ; beq.s   .scrollerEnded
+		lea		$dff000,a6			; updateStars/getkey may have trashed a6
 		bsr		scroll
 		; move.w	#$424,$180(a6)
 		bsr		postEffect
@@ -160,8 +160,17 @@ updateScroller::
 		; move.w	#$266,$180(a6)
 		bsr		addPoints
 		bsr		drawPoints
-		move.w	#$000,$180(a6)
+		; move.w	#$000,$180(a6)
+
+; --- asteroids last: objects_draw leaves BLTAFWM/BLTALWM at $ffff0000 and
+;     puts the blitter in line mode, and clearScroller resets both at the
+;     top of the next frame. it also has to come after addPoints, which
+;     scans column 8 of the buffer and would otherwise spawn dots from the
+;     vector graphics.
+		jsr		updateGameObjects
+		lea		$dff000,a6
 .scrollerEnded:
+		clr.b	kcode
         rts
 ;-------
 initPoints:
@@ -191,6 +200,7 @@ clearScroller:				;<switch screens and clear>
 		move.w	#$8000,bp0+2
 		move.l	#$70000,screenlocScroller
 .s1:
+		move.l	screenlocScroller,screenloc	; asteroids module draws here too
 		bsr		bbusy
 		move.l	screenlocScroller,d0
 		add.l	#clearTop*li,d0

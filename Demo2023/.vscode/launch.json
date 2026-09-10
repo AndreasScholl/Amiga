@@ -5,7 +5,7 @@
             "type": "amiga-assembly",
             "request": "launch",
             "name": "WinUAE Debug",
-            "stopOnEntry": false,
+            "stopOnEntry": true,
             "program": "${workspaceFolder}/uae/dh0/d",
             "remoteProgram": "SYS:d",
             "emulatorType": "winuae",
@@ -21,10 +21,11 @@
             "name": "FS-UAE Debug",
             "stopOnEntry": true,
             "program": "${workspaceFolder}/uae/dh0/d",
-            "remoteProgram": "SYS:d",
+            "remoteProgram": "d",
             "emulatorType": "fs-uae",
             "emulatorArgs": [
                 "--hard_drive_0=${workspaceFolder}/uae/dh0",
+                "--remote_debugger=200",
                 "--automatic_input_grab=0"
             ],
             "preLaunchTask": "amigaassembly: build"

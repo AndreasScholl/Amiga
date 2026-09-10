@@ -33,9 +33,6 @@ st:
 
 		lea		$dff000,a6
 
-        ; jsr     setupStarfield
-        ; jsr     initGame
-        ; jsr     initScroller
         bsr		initDemoPart
 
 		move.w	$dff01c,d0			;get intena
@@ -120,7 +117,7 @@ activePart::
 demoParts::
         dc.l    initGame, 		updateGamePart
         dc.l    initScroller, 	updateScroller
-        dc.l    initCopper,		updateCopper
+        ; dc.l    initCopper,		updateCopper
 
 ;-------
 getRandomNumber::
