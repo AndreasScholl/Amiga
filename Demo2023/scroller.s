@@ -43,6 +43,19 @@ sc_top			= yTop*li		;
 ss		 		= $6e014		; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
+; --- where the scroll text stops being drawn and turns into dots -------
+; postEffect draws the scroller from dissolveByte rightwards, so the
+; leftmost column it puts down is dissolveX. addPoints samples exactly
+; that column every frame and spawns a dot for each lit pixel, which is
+; what makes the letters appear to crumble there.
+;   must be even (the block copy moves longs)
+;   must be less than $14, where the twist columns take over
+;   the visible screen starts at x 32, so below byte 4 the dissolve
+;   happens off the left edge
+; bigger value = shorter text, longer visible dot trail.
+dissolveByte	= 14
+dissolveX		= dissolveByte*8	; = 64 pixels
+
 ; --- dissolve point system -------------------------------------------
 ; a point stays alive until it leaves the play area, or until it is
 ; among the oldest when the pool overflows. numPoints therefore sets
@@ -85,6 +98,13 @@ logoY			= $30       ; logo start y
 logo_height      = 96       ; logo gfx height
 logo_area_height = 73       ; logo visible (copperlist) height
 logo_color_count = 10   ;14
+; the bottom of the gradient never fades below this level (0..256), so the
+; logo stays a faint silhouette rather than a hole that swallows the sprite
+; stars behind it. this is a floor on the FADE LEVEL, not a colour added to
+; the components - the result is a straight scale of the original colour,
+; so hues survive instead of everything sliding towards neutral grey.
+; 0 restores the old fade-to-black.
+logo_minfade     = 32
 
 ; d1: offset in bytes
 updateLogoPointers:
@@ -359,9 +379,9 @@ accelTable:
 ;-------
 addPoints:
 		move.l	screenlocScroller,a1
-		add.l	#sc_top+8,a1
-		moveq	#yTop,d7
-		moveq	#6-1,d6
+		add.l	#sc_top+dissolveByte,a1	; the column the text stops at
+		moveq	#yTop,d7			; first scroller line
+		moveq	#6-1,d6				; how many lines dissolve
 .addloop:		
 		move.b	(a1),d0
 		btst	#7,d0
@@ -388,7 +408,7 @@ addPoint:				; add single point at screen line d7
 		lea		points,a5
 		add.w	d1,a5				; append at the end (= youngest)
 
-		move.l	#((8*8)+1)<<16,point_x(a5)	; start x, no fraction
+		move.l	#(dissolveX+1)<<16,point_x(a5)	; start x, no fraction
 
 		moveq	#0,d0				; start y = scroller line
 		move.w	d7,d0
@@ -1056,18 +1076,23 @@ copyloop2:
 ; leftblock_words = 10
 ; 		lea		src_adr,a0
 ; 		lea 	$70000,a1
-leftblock_words = 6
- 		lea		src_adr+8,a0
+; the left block runs from dissolveByte up to byte $14, where the twist
+; column table takes over, so its width follows the dissolve position
+leftblock_words = ($14-dissolveByte)/2
+ 		lea		src_adr+dissolveByte,a0
  		;  lea 	$70000+8,a1							; dst
 		move.l	screenlocScroller,a1
-		add.l 	#sc_top+8,a1						; dest
+		add.l 	#sc_top+dissolveByte,a1				; dest
 		move.l	#src_line-(leftblock_words*2),d4	; src modulo
 		move.l	#li-(leftblock_words*2),d5			; dst modulo
 		moveq	#7-1,d6			; height
 lineloop:
-			move.l	(a0)+,(a1)+		; 6 words == 3 longs, both ends are even
+			REPT	leftblock_words/2	; both ends are even, so move longs
 			move.l	(a0)+,(a1)+
-			move.l	(a0)+,(a1)+
+			ENDR
+			IFNE	leftblock_words&1	; ... plus a word if the count is odd
+			move.w	(a0)+,(a1)+
+			ENDC
 			add.l	d4,a0
 			add.l	d5,a1
 			dbf		d6,lineloop
@@ -1572,6 +1597,14 @@ buildLogoColors:
 			move.w	(a2)+,d2				; color add value
 			move.w	(a3)+,d7				; fade level
 ;			move.w	#256,d7
+
+			; never let the ramp reach zero. scaling the whole colour keeps
+			; its hue, where adding a flat value to r, g and b would drag
+			; every colour towards grey.
+			cmp.w	#logo_minfade,d7
+			bge.s	.fadeOk
+			move.w	#logo_minfade,d7
+.fadeOk:
 
 			lea		logoColorsOrig,a0
 			move.w	#logo_color_count-1,d3
@@ -2111,7 +2144,7 @@ logoEndWait:
  		dc.w	$6c01,$fffe			; logo end wait
 		dc.w	BPLCON0,$0200		; bitplanes off
 
-		; dc.w	$0180,$0fff	   ; debug testk
+;		dc.w	$0180,$0fff	   ; debug test
 		dc.w	$0182,$0000	   ; black plane
 		dc.w	BPLCON0,$1200		; one plane
 		dc.w	$00e0,$0006

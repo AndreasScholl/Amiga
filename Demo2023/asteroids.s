@@ -44,7 +44,7 @@ ship_start_y	= 28
 
 ; visible centre of the play area (see the note by asteroids_init)
 ast_x_center	= 192
-ast_y_start		= 12
+ast_y_start		= 16
 
 		section "code",data,chip
 
@@ -1055,7 +1055,7 @@ ai_patience		= 20		; ... but take any shot after this many dry frames
 
 ; --- entrance
 ai_enterangle	= 90		; obj_angle that points due right
-ai_enterspeed	= 80		; xvelo for the fly-in (128 == 1 pixel/frame)
+ai_enterspeed	= 150		; xvelo for the fly-in (128 == 1 pixel/frame)
 
 ; --- firing. a player does not line up every single shot, they point
 ; roughly the right way, squeeze off a burst and reposition. the strays
@@ -1228,7 +1228,7 @@ ai_findTarget:
 		bmi.s	.repick
 		bsr		ai_valid			; still worth shooting at?
 		tst.w	d0
-		bne.s	.have
+		bne		.have
 .repick:
 		move.w	#ai_retargetms,ai_retarget
 		moveq	#-1,d3				; best bit so far
@@ -1494,7 +1494,7 @@ ai_fire:
 		move.w	d0,ai_burst
 .inBurst:
 		subq.w	#1,ai_burst
-		bsr.s	ai_shoot
+		bsr		ai_shoot
 		tst.w	ai_burst
 		beq.s	.burstOver
 		jsr		getRandomNumber		; 4..7 frames to the next one
@@ -1772,7 +1772,9 @@ ast_count = 8
 ; ast_x_offset 	= 32
 
 ast_x_start		= 100			; for medium
-ast_x_offset 	= 24
+ast_x_offset 	= 24			; the nominal slot width. letterAdvance below
+								; is written as offsets from it, so changing this
+								; still scales the whole word
 
 ; ast_x_start		= 70+((8*16)/2)			; for small
 ; ast_x_offset 	= 16
@@ -1784,6 +1786,64 @@ ast_x_offset 	= 24
 ; buffer are therefore behind the left border and the visible range is
 ; x = 32..351 - hence game_width 352, and hence a visible centre of 192.
 ; nudge this if you ever change DDFSTRT or the display window.
+
+; d6 (byte) = character  ->  d6 (word) = how far x moves on to the next
+; letter. anything that is not a..z gets the space width.
+;---------------------------------------------
+advanceOf:
+		and.w	#$00ff,d6
+		cmp.w	#' ',d6
+		beq.s	.space
+		sub.w	#'a',d6
+		cmp.w	#26,d6
+		blo.s	.lookup
+.space:
+		moveq	#26,d6				; last entry is the space
+.lookup:
+		add.w	d6,d6
+		lea		letterAdvance(pc),a2
+		move.w	(a2,d6.w),d6
+		rts
+
+;---------------------------------------------
+; per letter spacing. the glyphs themselves are nearly all 24 pixels wide
+; after scaleLetters takes its 3/4, so a flat 24 advance looks right for
+; almost everything. the exceptions are the ones that used to look loose:
+;
+;     i  13 px wide      j  20      v  23      e, l  25      rest  24
+;
+; the slot was always 24, so a narrow letter simply sat in a gap. entries
+; are written relative to ast_x_offset so the whole word still scales.
+;---------------------------------------------
+letterAdvance:
+		dc.w	ast_x_offset		; a
+		dc.w	ast_x_offset		; b
+		dc.w	ast_x_offset		; c
+		dc.w	ast_x_offset		; d
+		dc.w	ast_x_offset		; e
+		dc.w	ast_x_offset		; f
+		dc.w	ast_x_offset		; g
+		dc.w	ast_x_offset		; h
+		dc.w	ast_x_offset-8		; i   narrow glyph, 13 px
+		dc.w	ast_x_offset-3		; j   narrow glyph, 20 px
+		dc.w	ast_x_offset		; k
+		dc.w	ast_x_offset		; l
+		dc.w	ast_x_offset		; m
+		dc.w	ast_x_offset		; n
+		dc.w	ast_x_offset		; o
+		dc.w	ast_x_offset		; p
+		dc.w	ast_x_offset		; q
+		dc.w	ast_x_offset		; r
+		dc.w	ast_x_offset		; s
+		dc.w	ast_x_offset		; t
+		dc.w	ast_x_offset		; u
+		dc.w	ast_x_offset		; v
+		dc.w	ast_x_offset		; w
+		dc.w	ast_x_offset		; x
+		dc.w	ast_x_offset		; y
+		dc.w	ast_x_offset		; z
+		dc.w	ast_x_offset+4		; space - word gaps want to be wider
+
 		; init letter asteroids from names table
 asteroids_init:
 		lea		names,a3
@@ -1796,20 +1856,23 @@ asteroids_init:
 .noEnd:
 		add.l	#4,nameOffset
 .end:
-		; --- centre the word: count the characters (spaces included, they
-		;     advance x too) and start half the total width left of centre
+		; --- centre the word. the distance from the first letter's centre
+		;     to the last one's is the sum of every character's advance
+		;     except the last, so walk the string and add them up.
+		moveq	#0,d1				; running span
 		move.l	a4,a3
-		moveq	#0,d1
-.countchars:
-		tst.b	(a3)+
-		beq.s	.counted
-		addq.w	#1,d1
-		bra.s	.countchars
-.counted:
+		tst.b	(a3)
+		beq.s	.spandone			; empty name
+.spanloop:
+		move.b	(a3)+,d6
+		tst.b	(a3)
+		beq.s	.spandone			; that was the last one - no advance after it
+		bsr		advanceOf			; d6 char -> d6 advance
+		add.w	d6,d1
+		bra.s	.spanloop
+.spandone:
+		lsr.w	#1,d1
 		move.w	#ast_x_center,d0	; x
-		subq.w	#1,d1				; gaps between letter centres
-		ble.s	.centred			; 0 or 1 characters -> dead centre
-		mulu	#ast_x_offset/2,d1
 		sub.w	d1,d0
 .centred:
 		move.w	#0,d2				; angle
@@ -1871,7 +1934,9 @@ asteroids_init:
 
 		add.w	#appear_stagger,d7		; next wait
 .skip:		
-		add.w	#ast_x_offset,d0
+		move.b	-1(a4),d6			; the character we just placed
+		bsr		advanceOf
+		add.w	d6,d0
 
 		tst.b	(a4)
 		bne		.loop
@@ -2899,9 +2964,9 @@ h_coords:
 
 i_coords:
 		dc.w 3
-		dc.w -7,-16,10,-13
-		dc.w 10,-13,3,17
-		dc.w 3,17,-7,-16	
+		dc.w -7-8,-16,10-8,-13
+		dc.w 10-8,-13,3-8,17
+		dc.w 3-8,17,-7-8,-16
 
 j_coords:
 		dc.w 6
