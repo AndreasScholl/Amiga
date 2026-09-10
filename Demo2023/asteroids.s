@@ -44,7 +44,7 @@ ship_start_y	= 28
 
 ; visible centre of the play area (see the note by asteroids_init)
 ast_x_center	= 192
-ast_y_start		= 16
+ast_y_start		= 12
 
 		section "code",data,chip
 

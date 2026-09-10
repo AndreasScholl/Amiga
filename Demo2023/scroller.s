@@ -18,7 +18,24 @@ TWIST_UNROLLED	= 1
 clearTop		= 0
 li				= $2e			; screen line size in bytes
 
-sc_offset		= 58			; scroller dest y offset
+; --- where the game area starts on the raster -------------------------
+; the logo bobs up and down, so its bottom edge is not fixed. logoEndWait
+; is ((logoPos+8)>>4) + logoY - 16 + logo_area_height, and logoPos settles
+; into 0..576, so the >>4 contributes at most 36. gameTop sits one raster
+; line below the lowest the logo ever reaches.
+;
+; THIS HAS NO SLACK. If you change the logo bob (the asr.w #4 or the
+; cmp.w #48 in updateLogoPos) recompute logoBobMax, or the copper will
+; still be waiting on logoEndWait when it should already be starting the
+; game area, and the whole lower half of the screen drops out for a frame.
+logoBobMax		= 36			; max of (logoPos+8)>>4
+logoBottom		= logoBobMax+logoY-16+logo_area_height	; $8d, lowest logo row
+gameTop			= logoBottom+1	; $8e
+gameShift		= $9c-gameTop	; 14 raster lines gained at the top
+
+sc_offset		= 58+gameShift	; scroller dest y offset. pushed down in the
+								; buffer by the same amount the window moved
+								; up, so the scroll text stays put on screen
 ho				= li*sc_offset	; dst height start offset
 yTop			= sc_offset-23	; scroller top y pos (for copy and pixel effect)
 sc_top			= yTop*li		;
@@ -2094,14 +2111,14 @@ logoEndWait:
  		dc.w	$6c01,$fffe			; logo end wait
 		dc.w	BPLCON0,$0200		; bitplanes off
 
-;		dc.w	$0180,$0fff	   ; debug test
+		; dc.w	$0180,$0fff	   ; debug testk
 		dc.w	$0182,$0000	   ; black plane
 		dc.w	BPLCON0,$1200		; one plane
 		dc.w	$00e0,$0006
 		dc.w	$00e2,$e000-li
 		dc.w	$0108,$ffd8			; even bitplanes modulo
 
-		dc.w	$9c01,$fffe		; start of "game" area
+		dc.w	(gameTop<<8)+1,$fffe	; start of "game" area
 		dc.w	BPLCON0,$1200	; 1 bitplanes on
 		dc.w	$00e0,$0007		; bitplane 0 
 bp0:	dc.w	$00e2,$0000		;
@@ -2128,7 +2145,9 @@ bp0:	dc.w	$00e2,$0000		;
 		dc.w	$0100,$2600			; 2 bitplanes on	(dual playfield mode)
 		dc.w	$00e4,$0007			; bitplane 01
 		; dc.w	$00e6,(li*75)-2		; + lines offset to adjust shadow pos
-		dc.w	$00e6,(li*51)-2		; + lines offset to adjust shadow pos
+		; shifted with the rest of the buffer content so the shadow keeps
+		; reading the same lines it used to
+		dc.w	$00e6,(li*(51+gameShift))-2	; + lines offset to adjust shadow pos
 		dc.w	$0192,$0000	   ; shadow color
 
 		dc.w	$c501,$fffe
