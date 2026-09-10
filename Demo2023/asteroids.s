@@ -38,9 +38,13 @@ game_lineBytes	= $2e			; screen line size in bytes
 ; --- object placement (buffer lines, not raster lines)
 ; the visible window is buffer line 0..83. the scroll text sits at 36..64
 ; and the dots fall from 35 downwards, so keep the game above ~32.
-ship_start_x	= 160
+ship_start_x	= 16		; off the left edge - the visible window is x 32..351,
+							; so the ship waits here until the first word is up
 ship_start_y	= 28
-ast_y_start		= 12
+
+; visible centre of the play area (see the note by asteroids_init)
+ast_x_center	= 192
+ast_y_start		= 16
 
 		section "code",data,chip
 
@@ -196,7 +200,13 @@ updateGame:
 		move.l	a6,-(a7)
 ;		bsr		shipcoll		; collision
 		move.l	(a7)+,a6
+		tst.b	ai_enabled			; autopilot or keyboard?
+		beq.s	.manualShip
+		jsr		ship_auto
+		bra.s	.shipDone
+.manualShip:
 		jsr		ship_set
+.shipDone:
 .nsdraw:
 		bsr		ship_explode
 		bsr		shots_set
@@ -546,6 +556,8 @@ obj_move:				;<calculate new object coords>
 		rts
 ;---------------------------------------------
 updateEnemies:
+		sf		ai_forming			; set again below by any letter that is
+									; still waiting or still zooming in
 		move.l	enemy_con(pc),d0
 		lea		enemy_structs(pc),a0
 		moveq	#31,d7
@@ -558,6 +570,7 @@ updateEnemies:
 		beq		.noWait
 		subq.w	#1,d1
 		move.w	d1,obj_wait(a0)
+		st		ai_forming			; hasn't even started yet
 		bra		.nenemy
 .noWait:
 		movem.l	d0/d7,-(a7)
@@ -571,6 +584,7 @@ updateEnemies:
 		beq		.noAppear
 		subq	#1,d2
 		move.w	d2,obj_appear(a0)
+		st		ai_forming			; still zooming in
 		move.w	#appear_astep,d1
 		bsr		obj_addangle
 
@@ -985,6 +999,686 @@ ship_explode:
 .noexplosion:	
 		rts
 ;---------------------------------------------
+;---------------------------------------------
+; AUTOPILOT
+;---------------------------------------------
+; Drives ship_struct through exactly the same four calls the keyboard
+; path uses - obj_addangle, obj_subangle, obj_thrust, shot_init - so it
+; cannot do anything a player could not.
+;
+; No atan2 anywhere. The ship's facing vector is
+;     f = (cos(angle-90), sin(angle-90))
+; straight out of sctab, and for the vector d to the target:
+;
+;     cross = fx*dy - fy*dx      sign says which way to turn
+;     dot   = fx*dx + fy*dy      positive means the target is ahead
+;
+; d(f)/d(angle) has a positive cross product with f, so cross > 0 always
+; means "increase obj_angle to turn towards d". And since
+; |cross|/dot == tan(angle error), the alignment tests are a couple of
+; shifts and a compare - no square roots, no division.
+;
+; The flying is deliberately lazy: thrust happens in short bursts with
+; random lengths, then the ship coasts. Above a speed limit it gives up
+; on aiming, turns to face its own reverse velocity and counter-thrusts
+; until it has slowed down, which is what produces the drifting,
+; over-correcting look of somebody actually playing.
+;---------------------------------------------
+ai_turnrate		= 4			; degrees per frame, same as the player gets
+ai_thrust		= 8			; thrust impulse, same as the player gets
+ai_maxspeed		= 300		; |xvelo|+|yvelo| above which it brakes
+ai_slowspeed	= 110		; ... and below which it stops braking
+ai_thrustodds	= 230		; out of 256 - chance of a burst. high, because a
+							; player is almost never sitting still
+ai_firebase		= 9			; unused now - superseded by the burst timings
+ai_thrustbase	= 4			; + 0..7 frames of thrust per burst
+ai_coastbase	= 8			; + 0..31 frames of coasting
+ai_brakebase	= 14		; + 0..15 frames of braking
+ai_retargetms	= 45		; frames before looking for a nearer letter
+ai_holdframes	= 100		; frames to admire a finished word before shooting
+							; (50 == 1 second, 100 == 2 seconds)
+
+; --- side attack. the ship works along the row from one end instead of
+; picking whatever letter happens to be nearest, so the letters go off in
+; sequence. it holds station just outside the end of the word and a little
+; BELOW the row - level with the row would mean flying through the letters.
+ai_standoff		= 45		; how far past the end letter it sits
+ai_stationdy	= 16		; ... and how far below the row
+ai_stationr		= 95		; manhattan slack before it bothers repositioning
+ai_travelodds	= 230		; out of 256 - keener to thrust while repositioning
+ai_keepaway		= 75		; don't burn straight at a letter closer than this
+ai_minclose		= 128		; a shot must close at least this fast (128 == 1 px
+							; per frame) or it never gets there
+ai_pointblank	= 40		; a letter this close gets shot at, full stop
+ai_fireflat		= 3			; want |dy|*3 < |dx|, i.e. a shot along the row
+ai_patience		= 20		; ... but take any shot after this many dry frames
+
+; --- entrance
+ai_enterangle	= 90		; obj_angle that points due right
+ai_enterspeed	= 80		; xvelo for the fly-in (128 == 1 pixel/frame)
+
+; --- firing. a player does not line up every single shot, they point
+; roughly the right way, squeeze off a burst and reposition. the strays
+; are half the fun - they wander off and take out something else.
+ai_burstlen		= 3			; shots per burst, plus 0..ai_burstvar
+ai_burstvar		= 2			; must be 1,3,7... - used as an AND mask
+ai_burstgap		= 5			; frames between shots inside a burst, + 0..gapvar
+ai_gapvar		= 3			; ditto, an AND mask
+ai_burstpause	= 10		; + 0..31 frames before the next burst
+
+; --- how often a word gets the tidy along-the-row treatment instead of a
+; general brawl. 256 would be always, 0 never.
+ai_sideodds		= 160
+ai_wrapx		= game_width+32		; obj_move's wrap periods
+ai_wrapy		= game_height+32
+ai_homex		= ast_x_center	; where it loiters while a word zooms in
+ai_homey		= ship_start_y
+
+ai_enabled:		dc.b	1		; 0 hands the ship back to the keyboard
+				even
+ai_target:		dc.w	-1		; enemy_con BIT number, -1 = none
+ai_retarget:	dc.w	0
+ai_fireWait:	dc.w	0
+ai_thrustLeft:	dc.w	0
+ai_coastLeft:	dc.w	0
+ai_brake:		dc.w	0
+ai_dx:			dc.w	0		; wrapped vector to the target
+ai_dy:			dc.w	0
+ai_cross:		dc.l	0		; alignment against the target
+ai_dot:			dc.l	0
+ai_forming:		dc.b	0		; a letter of this word is still arriving
+				even
+ai_holdFire:	dc.w	ai_holdframes
+ai_wasForming:	dc.b	0
+ai_travel:		dc.b	0		; repositioning rather than attacking
+				even
+ai_side:		dc.w	-1		; which end of the word we attack from
+ai_dry:			dc.w	0		; frames since the last shot
+ai_burst:		dc.w	0		; shots left in the current burst
+ai_entered:		dc.b	0		; has the ship flown in yet?
+ai_sidemode:	dc.b	0		; along-the-row attack for this word?
+				even
+
+;---------------------------------------------
+ship_auto:
+		lea		ship_struct(pc),a0
+
+		; --- wait off screen until the first word is actually up, then come
+		;     in from the left under power
+		tst.b	ai_entered
+		bne.s	.flying
+		move.l	enemy_con(pc),d0
+		beq.s	.parked				; no word yet
+		tst.b	ai_forming
+		bne.s	.parked				; still arriving
+		st		ai_entered
+		move.w	#ai_enterangle,obj_angle(a0)
+		move.w	#ai_enterspeed,obj_xvelo(a0)
+		clr.w	obj_yvelo(a0)
+.parked:
+		bsr		obj_move
+		rts
+.flying:
+
+		tst.w	ai_fireWait
+		beq.s	.nfw
+		subq.w	#1,ai_fireWait
+.nfw:
+		; hold fire until the whole word has finished arriving, then for a
+		; further ai_holdframes so it can actually be read. the timer is
+		; reloaded the whole time any letter is still waiting or zooming,
+		; so it only starts running down once the word is complete.
+		tst.b	ai_forming
+		beq.s	.formed
+		move.w	#ai_holdframes,ai_holdFire
+		st		ai_wasForming
+		bra.s	.holdDone
+.formed:
+		tst.b	ai_wasForming		; first frame of a complete word?
+		beq.s	.sidePicked
+		sf		ai_wasForming
+		moveq	#-1,d0				; attack from whichever end we are nearer
+		cmp.w	#ast_x_center,obj_xc(a0)
+		blt.s	.sideSet
+		moveq	#1,d0
+.sideSet:
+		move.w	d0,ai_side
+		jsr		getRandomNumber		; and does this word get the tidy treatment?
+		and.w	#255,d0
+		sf		ai_sidemode
+		cmp.w	#ai_sideodds,d0
+		bcc.s	.sidePicked
+		st		ai_sidemode
+.sidePicked:
+		tst.w	ai_holdFire
+		beq.s	.holdDone
+		subq.w	#1,ai_holdFire
+.holdDone:
+		addq.w	#1,ai_dry
+		bsr		ai_findTarget		; -> ai_target, ai_dx/dy, ai_cross/dot
+
+		; --- station keeping. the spot we want is ai_standoff past the end
+		;     letter on our side and ai_stationdy below the row. while we are
+		;     a long way off we steer at the station; once there we steer at
+		;     the letter, which from that spot is a shot straight along the row.
+		sf		ai_travel
+		tst.b	ai_sidemode
+		beq.s	.noStation			; brawl mode keeps no station
+		move.w	ai_target,d7
+		bmi.s	.noStation
+		bsr		ai_ptr
+		move.w	obj_xc(a1),d0
+		sub.w	obj_xc(a0),d0
+		move.w	#ai_standoff,d6
+		tst.w	ai_side
+		bpl.s	.offPos
+		neg.w	d6
+.offPos:
+		add.w	d6,d0
+		move.w	obj_yc(a1),d1
+		add.w	#ai_stationdy,d1
+		sub.w	obj_yc(a0),d1
+		bsr		ai_wrap
+		move.w	d0,d6
+		bpl.s	.sx
+		neg.w	d6
+.sx:
+		move.w	d1,d7
+		bpl.s	.sy
+		neg.w	d7
+.sy:
+		add.w	d7,d6
+		cmp.w	#ai_stationr,d6
+		ble.s	.noStation
+		st		ai_travel			; too far off station - go there first
+		bsr		ai_crossdot
+		bra.s	.aimSet
+.noStation:
+		move.l	ai_cross,d2
+		move.l	ai_dot,d3
+.aimSet:
+		tst.w	ai_brake
+		beq.s	.aimOk
+		; braking: aim at the reverse of our own velocity instead
+		move.w	obj_xvelo(a0),d0
+		move.w	obj_yvelo(a0),d1
+		neg.w	d0
+		neg.w	d1
+		asr.w	#4,d0				; keep the muls well inside a long
+		asr.w	#4,d1
+		bsr		ai_crossdot
+.aimOk:
+		bsr		ai_turn
+		bsr		ai_fire
+		bsr		ai_move
+
+		bsr		obj_move
+		rts
+
+;---------------------------------------------
+; pick the nearest live letter, or fall back to loitering near the
+; middle of the play area while a word is still appearing.
+; out: ai_target, ai_dx/ai_dy, ai_cross/ai_dot
+;---------------------------------------------
+ai_findTarget:
+		tst.w	ai_retarget
+		beq.s	.repick
+		subq.w	#1,ai_retarget
+		move.w	ai_target,d7
+		bmi.s	.repick
+		bsr		ai_valid			; still worth shooting at?
+		tst.w	d0
+		bne.s	.have
+.repick:
+		move.w	#ai_retargetms,ai_retarget
+		moveq	#-1,d3				; best bit so far
+		move.w	#$7fff,d5			; best x (min end) or best distance
+		tst.b	ai_sidemode
+		beq.s	.wantLeft			; brawl mode -> nearest letter
+		tst.w	ai_side
+		bmi.s	.wantLeft
+		move.w	#$8000,d5			; ... or max end
+.wantLeft:
+		move.l	enemy_con(pc),d4
+		lea		enemy_structs(pc),a1
+		moveq	#31,d7				; bit 31 is struct 0
+.scan:
+		btst	d7,d4
+		beq.s	.next
+		tst.w	obj_appear(a1)		; not shootable while it zooms in
+		bne.s	.next
+		tst.w	obj_flag(a1)		; already hit and exploding
+		bne.s	.next
+		tst.b	ai_sidemode
+		bne.s	.edgePick
+		move.w	obj_xc(a1),d0		; brawl mode - just take the nearest
+		sub.w	obj_xc(a0),d0
+		move.w	obj_yc(a1),d1
+		sub.w	obj_yc(a0),d1
+		bsr		ai_wrap
+		tst.w	d0
+		bpl.s	.nx
+		neg.w	d0
+.nx:
+		tst.w	d1
+		bpl.s	.ny
+		neg.w	d1
+.ny:
+		add.w	d1,d0
+		cmp.w	d5,d0
+		bge.s	.next
+		bra.s	.take
+.edgePick:
+		move.w	obj_xc(a1),d0		; furthest letter towards our side
+		tst.w	ai_side
+		bmi.s	.leftEnd
+		cmp.w	d5,d0
+		ble.s	.next
+		bra.s	.take
+.leftEnd:
+		cmp.w	d5,d0
+		bge.s	.next
+.take:
+		move.w	d0,d5
+		move.w	d7,d3
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.scan
+		move.w	d3,ai_target
+		move.w	d3,d7
+		bmi.s	.loiter
+.have:
+		bsr		ai_ptr				; d7 = bit -> a1 = struct
+		move.w	obj_xc(a1),d0
+		sub.w	obj_xc(a0),d0
+		move.w	obj_yc(a1),d1
+		sub.w	obj_yc(a0),d1
+		bra.s	.gotDelta
+.loiter:
+		; nothing to shoot yet - drift back towards the middle instead,
+		; so the ship keeps moving while the next word zooms in
+		move.w	#ai_homex,d0
+		sub.w	obj_xc(a0),d0
+		move.w	#ai_homey,d1
+		sub.w	obj_yc(a0),d1
+.gotDelta:
+		bsr		ai_wrap
+		move.w	d0,ai_dx
+		move.w	d1,ai_dy
+		bsr		ai_crossdot
+		move.l	d2,ai_cross
+		move.l	d3,ai_dot
+		rts
+
+;---------------------------------------------
+; d7 = bit number -> a1 = enemy struct (bit 31 is struct 0)
+;---------------------------------------------
+ai_ptr:
+		lea		enemy_structs(pc),a1
+		moveq	#31,d6
+		sub.w	d7,d6
+		mulu	#obj_len,d6
+		add.l	d6,a1
+		rts
+
+;---------------------------------------------
+; d7 = bit number -> d0 non zero if still a valid target, a1 = struct
+;---------------------------------------------
+ai_valid:
+		moveq	#0,d0
+		move.l	enemy_con(pc),d6
+		btst	d7,d6
+		beq.s	.bad
+		bsr.s	ai_ptr
+		tst.w	obj_appear(a1)
+		bne.s	.bad
+		tst.w	obj_flag(a1)
+		bne.s	.bad
+		moveq	#1,d0
+.bad:
+		rts
+
+;---------------------------------------------
+; d0/d1 -> shortest delta the wrapped play area allows, so the ship will
+; happily shoot across the border rather than fly the long way round
+;---------------------------------------------
+ai_wrap:
+		cmp.w	#ai_wrapx/2,d0
+		ble.s	.x1
+		sub.w	#ai_wrapx,d0
+.x1:
+		cmp.w	#-ai_wrapx/2,d0
+		bge.s	.x2
+		add.w	#ai_wrapx,d0
+.x2:
+		cmp.w	#ai_wrapy/2,d1
+		ble.s	.y1
+		sub.w	#ai_wrapy,d1
+.y1:
+		cmp.w	#-ai_wrapy/2,d1
+		bge.s	.y2
+		add.w	#ai_wrapy,d1
+.y2:
+		rts
+
+;---------------------------------------------
+; in:  a0 = ship, d0 = dx, d1 = dy
+; out: d2 = cross (long), d3 = dot (long)
+;---------------------------------------------
+ai_crossdot:
+		move.w	obj_angle(a0),d6
+		sub.w	#90,d6
+		bpl.s	.ok
+		add.w	#360,d6
+.ok:
+		lsl.w	#2,d6
+		lea		sctab(pc),a3
+		move.w	2(a3,d6.w),d4		; fx = cos(angle-90)
+		move.w	(a3,d6.w),d5		; fy = sin(angle-90)
+
+		move.w	d4,d2
+		muls	d1,d2				; fx*dy
+		move.w	d5,d6
+		muls	d0,d6				; fy*dx
+		sub.l	d6,d2				; cross
+
+		move.w	d4,d3
+		muls	d0,d3				; fx*dx
+		move.w	d5,d6
+		muls	d1,d6				; fy*dy
+		add.l	d6,d3				; dot
+		rts
+
+;---------------------------------------------
+; in: d2 = cross, d3 = dot. turn towards it, with a deadzone so the ship
+; does not jitter once it is lined up.
+;---------------------------------------------
+ai_turn:
+		move.l	d2,d4
+		bpl.s	.pos
+		neg.l	d4
+.pos:
+		tst.l	d3
+		bmi.s	.turn				; behind us - always turn
+		add.l	d4,d4
+		add.l	d4,d4
+		add.l	d4,d4				; |cross|*8 vs dot -> about 7 degrees
+		cmp.l	d3,d4
+		blt.s	.done
+.turn:
+		moveq	#ai_turnrate,d1
+		tst.l	d2
+		bmi.s	.left
+		bsr		obj_addangle
+		rts
+.left:
+		bsr		obj_subangle
+.done:
+		rts
+
+;---------------------------------------------
+; fire when lined up on the TARGET (not on whatever we are steering
+; towards), with a random cooldown so it does not machine gun
+;---------------------------------------------
+ai_fire:
+		; --- if any letter is right on top of us, shoot. no aiming test, no
+		;     waiting for a tidy angle, no read pause - a player mashes fire
+		;     when a rock is in their face rather than gliding over it.
+		bsr		ai_pointblankNear
+		tst.w	d0
+		beq.s	.normal
+		tst.w	ai_fireWait
+		bne.w	.no
+		bra.w	.takeIt
+.normal:
+		tst.w	ai_holdFire			; word not settled yet - keep circling
+		bne.w	.no
+		tst.w	ai_fireWait
+		bne.w	.no
+		move.w	ai_target,d0
+		bmi.w	.no					; nothing to shoot at
+		; a shot inherits our velocity, so firing while backing away from
+		; the target produces one that crawls and never arrives. work out
+		; how fast the shot would actually close: 256 is its own speed, plus
+		; however much of ours is along the nose.
+		move.w	obj_xvelo(a0),d0
+		move.w	obj_yvelo(a0),d1
+		bsr		ai_crossdot			; d3 = our speed along the nose, Q15
+		add.l	d3,d3
+		swap	d3
+		ext.l	d3					; -> 1/128 pixel units
+		add.w	#256,d3				; the shot's own muzzle speed
+		cmp.w	#ai_minclose,d3
+		blt.w	.no					; would never catch up - hold fire
+
+		; once a burst is running the rest of it goes off regardless of aim.
+		; the ship is still turning and drifting, so the tail of the burst
+		; sprays and picks off whatever wanders into it
+		tst.w	ai_burst
+		bne.s	.takeIt
+		move.l	ai_dot,d3
+		bmi.w	.no					; target behind us
+		move.l	ai_cross,d4
+		bpl.s	.pos
+		neg.l	d4
+.pos:
+		add.l	d4,d4
+		add.l	d4,d4				; |cross|*4 vs dot -> about 14 degrees
+		cmp.l	d3,d4
+		bge.w	.no
+
+		tst.b	ai_sidemode			; only side attacks care about the angle
+		beq.s	.takeIt
+		; hold out for a shot along the row, but not for ever
+		cmp.w	#ai_patience,ai_dry
+		bge.s	.takeIt
+		move.w	ai_dy,d0
+		bpl.s	.fy
+		neg.w	d0
+.fy:
+		muls	#ai_fireflat,d0
+		move.w	ai_dx,d1
+		bpl.s	.fx
+		neg.w	d1
+.fx:
+		ext.l	d1
+		cmp.l	d1,d0
+		bge.w	.no					; too steep, wait for a better angle
+.takeIt:
+		clr.w	ai_dry
+		tst.w	ai_burst
+		bne.s	.inBurst
+		jsr		getRandomNumber		; start a new burst, 2..4 shots
+		and.w	#ai_burstvar,d0
+		add.w	#ai_burstlen,d0
+		move.w	d0,ai_burst
+.inBurst:
+		subq.w	#1,ai_burst
+		bsr.s	ai_shoot
+		tst.w	ai_burst
+		beq.s	.burstOver
+		jsr		getRandomNumber		; 4..7 frames to the next one
+		and.w	#ai_gapvar,d0
+		add.w	#ai_burstgap,d0
+		move.w	d0,ai_fireWait
+		rts
+.burstOver:
+		jsr		getRandomNumber
+		and.w	#31,d0
+		add.w	#ai_burstpause,d0
+		move.w	d0,ai_fireWait
+.no:
+		rts
+
+;---------------------------------------------
+; is ANY live letter within ai_pointblank of us? -> d0 non zero.
+; checks every letter, not just the current target, because the one we
+; happen to be flying through is often not the one we are aiming at.
+; the wrap is folded into the compares instead of calling ai_wrap, and it
+; stops at the first hit, so it usually costs far less than the full 32.
+;---------------------------------------------
+ai_pointblankNear:
+		moveq	#0,d5
+		move.l	enemy_con(pc),d4
+		beq.s	.done
+		lea		enemy_structs(pc),a1
+		moveq	#31,d7
+.loop:
+		btst	d7,d4
+		beq.s	.next
+		tst.w	obj_appear(a1)		; not solid yet
+		bne.s	.next
+		tst.w	obj_flag(a1)		; already blowing up
+		bne.s	.next
+
+		move.w	obj_xc(a1),d0
+		sub.w	obj_xc(a0),d0
+		bpl.s	.ax
+		neg.w	d0
+.ax:
+		cmp.w	#ai_pointblank,d0
+		blt.s	.xok
+		cmp.w	#ai_wrapx-ai_pointblank,d0
+		blt.s	.next				; too far even going round the border
+		sub.w	#ai_wrapx,d0		; wrapped - take the short way
+		neg.w	d0
+.xok:
+		move.w	obj_yc(a1),d1
+		sub.w	obj_yc(a0),d1
+		bpl.s	.ay
+		neg.w	d1
+.ay:
+		cmp.w	#ai_pointblank,d1
+		blt.s	.yok
+		cmp.w	#ai_wrapy-ai_pointblank,d1
+		blt.s	.next
+		sub.w	#ai_wrapy,d1
+		neg.w	d1
+.yok:
+		add.w	d1,d0
+		cmp.w	#ai_pointblank,d0
+		bge.s	.next
+		moveq	#1,d5				; got one - stop looking
+		bra.s	.done
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.loop
+.done:
+		move.w	d5,d0
+		rts
+
+;---------------------------------------------
+; same shot setup the keyboard fire path uses
+;---------------------------------------------
+ai_shoot:
+		move.w	obj_xc(a0),d0
+		move.w	obj_yc(a0),d1
+		move.w	obj_angle(a0),d2
+		sub.w	#90,d2
+		bpl.s	.ok
+		add.w	#360,d2
+.ok:
+		lsl.w	#2,d2
+		lea		sctab(pc),a3
+		move.w	#256,d3
+		muls	2(a3,d2.w),d3
+		lsl.l	#1,d3
+		swap	d3
+		move.w	#256,d4
+		muls	(a3,d2.w),d4
+		lsl.l	#1,d4
+		swap	d4
+		add.w	obj_xvelo(a0),d3
+		add.w	obj_yvelo(a0),d4
+		bsr		shot_init
+		rts
+
+;---------------------------------------------
+; thrust bursts, coasting and counter-thrust braking
+;---------------------------------------------
+ai_move:
+		move.w	obj_xvelo(a0),d0	; rough speed, manhattan
+		bpl.s	.px
+		neg.w	d0
+.px:
+		move.w	obj_yvelo(a0),d1
+		bpl.s	.py
+		neg.w	d1
+.py:
+		add.w	d1,d0
+
+		tst.w	ai_brake
+		beq.s	.noBrake
+		subq.w	#1,ai_brake
+		cmp.w	#ai_slowspeed,d0
+		blt.s	.brakeDone
+		moveq	#ai_thrust,d2		; we are pointing backwards, so this slows us
+		bsr		obj_thrust
+		rts
+.brakeDone:
+		clr.w	ai_brake
+		rts
+.noBrake:
+		cmp.w	#ai_maxspeed,d0
+		blt.s	.notFast
+		jsr		getRandomNumber		; too quick - turn round and burn it off
+		and.w	#15,d0
+		add.w	#ai_brakebase,d0
+		move.w	d0,ai_brake
+		rts
+.notFast:
+		tst.w	ai_thrustLeft
+		beq.s	.notThrusting
+		subq.w	#1,ai_thrustLeft
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+		rts
+.notThrusting:
+		tst.w	ai_coastLeft
+		beq.s	.decide
+		subq.w	#1,ai_coastLeft
+		rts
+.decide:
+		; thrust in the direction we happen to be aiming, on a coin flip.
+		; the ship's movement is a by-product of aiming, which is exactly
+		; how a person plays this - drift past, turn, come back.
+		move.w	#ai_travelodds,d2
+		tst.b	ai_travel
+		bne.s	.odds				; repositioning - get on with it
+		move.w	#ai_thrustodds,d2
+		; the only reason not to burn is that we are pointing straight at
+		; something close. thrusting part way through a turn is exactly what
+		; keeps a real player moving, so that is allowed.
+		move.l	ai_dot,d1
+		bmi.s	.odds				; nose is away from it - safe to burn
+		move.w	ai_dx,d0
+		bpl.s	.kx
+		neg.w	d0
+.kx:
+		move.w	ai_dy,d1
+		bpl.s	.ky
+		neg.w	d1
+.ky:
+		add.w	d1,d0
+		cmp.w	#ai_keepaway,d0
+		blt.s	.coast				; would ram it
+.odds:
+		jsr		getRandomNumber
+		and.w	#255,d0
+		cmp.w	d2,d0
+		bcc.s	.coast
+		jsr		getRandomNumber
+		and.w	#7,d0
+		add.w	#ai_thrustbase,d0
+		move.w	d0,ai_thrustLeft
+		rts
+.coast:
+		jsr		getRandomNumber
+		and.w	#31,d0
+		add.w	#ai_coastbase,d0
+		move.w	d0,ai_coastLeft
+		rts
+;---------------------------------------------
 ship_set:				;<set ship, keyboard control>
 		lea		ship_struct(pc),a0
 
@@ -1090,8 +1784,6 @@ ast_x_offset 	= 24
 ; buffer are therefore behind the left border and the visible range is
 ; x = 32..351 - hence game_width 352, and hence a visible centre of 192.
 ; nudge this if you ever change DDFSTRT or the display window.
-ast_x_center	= 192
-
 		; init letter asteroids from names table
 asteroids_init:
 		lea		names,a3
