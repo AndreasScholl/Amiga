@@ -79,6 +79,7 @@ initScroller::
         bsr.s   updateLogoPointers
 
 		bsr		buildLogoColors
+		bsr		introInit		; stash the finished colours, start from black
 
 		lea		spoint(pc),a5
 		jsr		setupStarfield	; starfield
@@ -90,6 +91,26 @@ initScroller::
 		clr.w	$dff088
 		rts
 ;-------
+; --- intro build up ---------------------------------------------------
+; everything below is measured in frames from the first frame of the part
+; (50 frames == 1 second at PAL), so the whole sequence can be lined up
+; against the music by editing these five numbers.
+;
+;   0                nothing but the starfield
+;   introLogoStart   logo fades up out of black
+;   introGameStart   first name starts zooming in, ship flies in after it
+;   introBarStart    scroller bar fades up
+;   introScrollStart scroll text starts moving in from the right
+;
+introLogoStart   = 100      ; logo begins to appear
+introLogoLines   = 21       ; gradient lines stepped per frame. the fade
+                            ; takes logo_area_height*15/this frames, so
+                            ; 21 is about one second. lower = slower.
+introGameStart   = 350      ; first name begins to appear
+introBarStart    = 500      ; scroller bar begins to appear
+introBarSpeed    = 4        ; frames per step, 15 steps -> 60 frames
+introScrollStart = 600      ; scroll text begins to appear
+
 stateStarted = 0
 stateEnd     = 1
 scrollerState:  dc.w    stateStarted
@@ -138,6 +159,8 @@ updateLogoPointers:
 updateScroller::
 		lea		$dff000,a6
         bsr     clearScroller		; starts the screen clear blit
+
+		bsr		introUpdate			; build up sequencer
 
 ; --- the clear blit is now running. everything down to the bbusy inside
 ;     "scroll" is work that never touches the scroll buffer, so it runs
@@ -192,6 +215,12 @@ updateScroller::
         ; cmp.w   #stateEnd,scrollerState
         ; beq.s   .scrollerEnded
 		lea		$dff000,a6			; updateStars/getkey may have trashed a6
+
+		; --- scroll text. until its time comes none of this runs, so the
+		;     source buffer stays empty and the text walks in from the right
+		;     on its own the moment it starts.
+		cmp.w	#introScrollStart,introTime
+		blo.s	.noScroller
 		bsr		scroll
 		; move.w	#$424,$180(a6)
 		bsr		postEffect
@@ -201,6 +230,7 @@ updateScroller::
 		bsr		addPoints
 		bsr		drawPoints
 		; move.w	#$000,$180(a6)
+.noScroller:
 
 ; --- asteroids last: objects_draw leaves BLTAFWM/BLTALWM at $ffff0000 and
 ;     puts the blitter in line mode, and clearScroller resets both at the
@@ -209,10 +239,15 @@ updateScroller::
 ;     vector graphics.
 
 		; move.w	#$aaa,$dff180
+		; --- asteroids. the first call spawns the first word, and ship_auto
+		;     keeps the ship parked off screen until that word is complete.
+		cmp.w	#introGameStart,introTime
+		blo.s	.noGame
 		jsr		updateGameObjects
 		; move.w	#$000,$dff180
 
 		lea		$dff000,a6
+.noGame:
 .scrollerEnded:
 		clr.b	kcode
         rts
@@ -1996,6 +2031,265 @@ fadeOutLogo:
             ; move.l  d0,updateFunction
 .noPartSwitch:
             rts
+;---------------------------------------------
+; INTRO BUILD UP
+;---------------------------------------------
+; buildLogoColors has already produced the finished gradient by the time
+; introInit runs, so the cheapest way to fade the logo up is to keep that
+; result as the target, blank the live copperlist copy, and walk it back
+; up one nibble at a time. Same trick for the bar. Nothing here does a
+; multiply, and only a slice of the gradient is touched each frame.
+;---------------------------------------------
+introInit:
+			; snapshot once only. initScroller runs again if the part is
+			; restarted, and a second pass would capture the blanked copies
+			; as the targets and nothing would ever fade up.
+			tst.b	introTaken
+			bne		introRestart
+			st		introTaken
+
+			clr.w	introTime
+			clr.w	introLogoLine
+			clr.w	introLogoPass
+			clr.w	introBarTick
+			sf		introLogoDone
+			sf		introBarDone
+
+			; --- stash the finished gradient. only the colour VALUES are
+			;     read; the copper waits and the register numbers in between
+			;     stay exactly where they are.
+			lea		logoColors+2,a0			; first colour value
+			lea		logoColorsTarget,a1
+			move.w	#logo_area_height-1,d1
+.line:
+			move.l	a0,a2
+			moveq	#logo_color_count-1,d0
+.col:
+			move.w	(a2),(a1)+
+			lea		4(a2),a2
+			dbf		d0,.col
+			lea		(2*2)+(logo_color_count*2*2)(a0),a0
+			dbf		d1,.line
+
+			; --- same for the scroller bar
+			lea		clist,a0
+			lea		barcolorOffsets,a1
+			lea		barColorsTarget,a2
+			moveq	#19-1,d0
+.bar:
+			move.w	(a1)+,d1
+			move.w	(a0,d1.w),(a2)+
+			dbf		d0,.bar
+
+introRestart:
+			bsr		blankLogo
+			clr.w	introTime
+			clr.w	introLogoLine
+			clr.w	introLogoPass
+			clr.w	introBarTick
+			sf		introLogoDone
+			sf		introBarDone
+			sf		introLogoShown
+			bsr		blankBar
+			bsr		introHideLogo
+			rts
+
+;---------------------------------------------
+; A black logo is still a logo as far as the blitter... sorry, as far as
+; the display hardware is concerned: the bitplanes are fetched, the pixels
+; are drawn in colour 0, and playfield priority puts them in front of the
+; sprites. So the starfield disappears behind a black rectangle. Hiding it
+; properly means making the logo region look exactly like the empty single
+; plane region above it - one plane, pointed at the blank line, modulo
+; -40 so it repeats.
+;---------------------------------------------
+introHideLogo:
+			move.w	#$1200,logoPlanes		; one plane instead of five
+			move.w	#$ffd8,logoPlaneMod
+			move.w	#$0006,logobp0h			; ... aimed at the empty line
+			move.w	#$e000-li,logobp0l
+			rts
+
+introShowLogo:
+			move.w	#$4200,logoPlanes
+			move.w	#$0000,logoPlaneMod
+			moveq	#0,d1
+			bsr		updateLogoPointers		; bp0..bp3 back onto the logo
+			rts
+
+;---------------------------------------------
+blankLogo:
+			lea		logoColors+2,a0
+			move.w	#logo_area_height-1,d1
+.line:
+			move.l	a0,a2
+			moveq	#logo_color_count-1,d0
+.col:
+			clr.w	(a2)
+			lea		4(a2),a2
+			dbf		d0,.col
+			lea		(2*2)+(logo_color_count*2*2)(a0),a0
+			dbf		d1,.line
+			rts
+
+;---------------------------------------------
+blankBar:
+			lea		clist,a0
+			lea		barcolorOffsets,a1
+			moveq	#19-1,d0
+.b:
+			move.w	(a1)+,d1
+			clr.w	(a0,d1.w)
+			dbf		d0,.b
+			rts
+
+;---------------------------------------------
+introUpdate:
+			move.w	introTime,d0
+			cmp.w	#$7000,d0			; stop counting, never wrap
+			bhs.s	.noTick
+			addq.w	#1,d0
+			move.w	d0,introTime
+.noTick:
+			cmp.w	#introLogoStart,d0
+			blo.s	.noLogo
+			tst.b	introLogoShown		; switch the bitplanes on once, at the
+			bne.s	.logoOn				; moment the fade starts
+			st		introLogoShown
+			bsr		introShowLogo
+.logoOn:
+			bsr		fadeInLogo
+.noLogo:
+			cmp.w	#introBarStart,d0
+			bhs.s	.barTime
+			bsr		blankBar			; held black until its cue, every frame,
+			bra.s	.noBar				; so nothing can sneak it back in early
+.barTime:
+			subq.w	#1,introBarTick
+			bpl.s	.noBar
+			move.w	#introBarSpeed-1,introBarTick
+			bsr		fadeInBar
+.noBar:
+			rts
+
+;---------------------------------------------
+; step one nibble of each colour towards its target
+; d0 = current, d1 = target -> d6 = stepped. uses d2/d3.
+;---------------------------------------------
+colorFadeIn:
+			moveq	#0,d6
+			move.w	d0,d2
+			and.w	#$00f,d2
+			move.w	d1,d3
+			and.w	#$00f,d3
+			cmp.w	d3,d2
+			bge.s	.bOk
+			addq.w	#1,d2
+.bOk:
+			or.w	d2,d6
+
+			move.w	d0,d2
+			and.w	#$0f0,d2
+			move.w	d1,d3
+			and.w	#$0f0,d3
+			cmp.w	d3,d2
+			bge.s	.gOk
+			add.w	#$010,d2
+.gOk:
+			or.w	d2,d6
+
+			move.w	d0,d2
+			and.w	#$f00,d2
+			move.w	d1,d3
+			and.w	#$f00,d3
+			cmp.w	d3,d2
+			bge.s	.rOk
+			add.w	#$100,d2
+.rOk:
+			or.w	d2,d6
+			rts
+
+;---------------------------------------------
+fadeInLogo:
+			tst.b	introLogoDone
+			bne.s	.done
+			moveq	#introLogoLines-1,d4
+.lineFader:
+			move.w	introLogoLine,d0
+
+			lea		logoColors+2,a0		; live line, 44 bytes per line
+			move.w	d0,d1
+			mulu.w	#(2*2)+(logo_color_count*2*2),d1
+			add.l	d1,a0
+
+			lea		logoColorsTarget,a1	; target line, packed
+			move.w	d0,d1
+			mulu.w	#logo_color_count*2,d1
+			add.l	d1,a1
+
+			moveq	#logo_color_count-1,d7
+.fadeColor:
+			move.w	(a0),d0
+			move.w	(a1)+,d1
+			bsr		colorFadeIn
+			move.w	d6,(a0)
+			lea		4(a0),a0
+			dbf		d7,.fadeColor
+
+			addq.w	#1,introLogoLine
+			cmp.w	#logo_area_height,introLogoLine
+			blo.s	.noWrap
+			clr.w	introLogoLine
+			addq.w	#1,introLogoPass
+			cmp.w	#15,introLogoPass	; $0 to $f is fifteen steps
+			blo.s	.noWrap
+			st		introLogoDone
+			bra.s	.done
+.noWrap:
+			dbf		d4,.lineFader
+.done:
+			rts
+
+;---------------------------------------------
+fadeInBar:
+			tst.b	introBarDone
+			bne.s	.done
+			lea		clist,a0
+			lea		barcolorOffsets,a1
+			lea		barColorsTarget,a2
+			moveq	#19-1,d7
+			moveq	#1,d5				; assume everything has arrived
+.barfade:
+			move.w	(a1)+,d4			; offset of the colour word in clist
+			move.w	(a0,d4.w),d0
+			move.w	(a2)+,d1
+			cmp.w	d0,d1
+			beq.s	.arrived
+			moveq	#0,d5
+.arrived:
+			bsr		colorFadeIn
+			move.w	d6,(a0,d4.w)
+			dbf		d7,.barfade
+			tst.w	d5
+			beq.s	.done
+			st		introBarDone
+.done:
+			rts
+
+introTime:		dc.w	0		; frames since the part started
+introLogoLine:	dc.w	0
+introLogoPass:	dc.w	0
+introBarTick:	dc.w	0
+introLogoDone:	dc.b	0
+introBarDone:	dc.b	0
+introLogoShown:	dc.b	0		; logo bitplanes switched on yet?
+introTaken:		dc.b	0		; colour snapshot already taken?
+				even
+logoColorsTarget:
+				blk.w	logo_color_count*logo_area_height,0
+barColorsTarget:
+				blk.w	19,0
+
 ; --------------------
 fadeOutBar:
             lea     clist,a0
@@ -2115,8 +2409,15 @@ logobp3l:
 
 logoStartWait:
  		dc.w	$4001,$fffe
-		dc.w	BPLCON0,$4200		; 5 bitplanes
-		dc.w	$0108,$0000			; even bitplanes modulo
+		dc.w	BPLCON0
+logoPlanes:
+		dc.w	$4200				; 5 bitplanes. patched to $1200 while the logo
+								; is still hidden, so the region behaves exactly
+								; like the empty single plane above it and the
+								; sprites keep showing through
+		dc.w	$0108
+logoPlaneMod:
+		dc.w	$0000				; even bitplanes modulo, patched to $ffd8
 
         ; note: logo bp0 has to be set here as we have a empty bitplane 0
         ;       before the logo starts or else the sprites (stars) won't display

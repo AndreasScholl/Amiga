@@ -136,6 +136,7 @@ name7:
 name8:
 		dc.b	"phil",0
 
+		even
 clistGame:		
 		dc.w	BPLCON0,$0200		; bitplanes off
 
