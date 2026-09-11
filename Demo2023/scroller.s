@@ -103,13 +103,14 @@ initScroller::
 ;   introScrollStart scroll text starts moving in from the right
 ;
 introLogoStart   = 100      ; logo begins to appear
-introLogoLines   = 21       ; gradient lines stepped per frame. the fade
+introGameStart   = 500      ; first name begins to appear
+introBarStart    = 1000      ; scroller bar begins to appear
+introScrollStart = 1500      ; scroll text begins to appear
+
+introLogoLines   = 15       ; gradient lines stepped per frame. the fade
                             ; takes logo_area_height*15/this frames, so
                             ; 21 is about one second. lower = slower.
-introGameStart   = 350      ; first name begins to appear
-introBarStart    = 500      ; scroller bar begins to appear
 introBarSpeed    = 4        ; frames per step, 15 steps -> 60 frames
-introScrollStart = 600      ; scroll text begins to appear
 
 stateStarted = 0
 stateEnd     = 1
@@ -2071,15 +2072,36 @@ introInit:
 			lea		(2*2)+(logo_color_count*2*2)(a0),a0
 			dbf		d1,.line
 
-			; --- same for the scroller bar
-			lea		clist,a0
-			lea		barcolorOffsets,a1
+			; --- and the bar. rather than a hand written offset list this
+			;     walks the copperlist between the two markers and picks up
+			;     every colour write in it - $0180 for the flat background
+			;     and $0182 for the shading on top of it. Blanking only the
+			;     background is not enough: the shading is playfield colour 1
+			;     and shows up as a grey and blue-grey band on its own.
+			;     Copper instructions are four bytes whether they are MOVEs or
+			;     WAITs, and a WAIT always has bit 0 set in its first word, so
+			;     it can never be mistaken for a colour register.
+			lea		barRegionStart,a0
+			lea		barColorAddr,a1
 			lea		barColorsTarget,a2
-			moveq	#19-1,d0
-.bar:
-			move.w	(a1)+,d1
-			move.w	(a0,d1.w),(a2)+
-			dbf		d0,.bar
+			moveq	#0,d0
+.scan:
+			cmp.l	#barRegionEnd,a0
+			bhs.s	.scanned
+			move.w	(a0),d1
+			cmp.w	#$0180,d1
+			beq.s	.takeIt
+			cmp.w	#$0182,d1
+			bne.s	.nextInst
+.takeIt:
+			move.l	a0,(a1)+		; where the value word lives
+			move.w	2(a0),(a2)+		; ... and what it should end up as
+			addq.w	#1,d0
+.nextInst:
+			lea		4(a0),a0
+			bra.s	.scan
+.scanned:
+			move.w	d0,barColorCount
 
 introRestart:
 			bsr		blankLogo
@@ -2134,16 +2156,23 @@ blankLogo:
 
 ;---------------------------------------------
 blankBar:
-			lea		clist,a0
-			lea		barcolorOffsets,a1
-			moveq	#19-1,d0
+			move.w	barColorCount,d0
+			beq.s	.none
+			subq.w	#1,d0
+			lea		barColorAddr,a1
 .b:
-			move.w	(a1)+,d1
-			clr.w	(a0,d1.w)
+			move.l	(a1)+,a0
+			clr.w	2(a0)
 			dbf		d0,.b
+.none:
 			rts
 
 ;---------------------------------------------
+; NOTE: every test below reads introTime straight out of memory rather
+; than caching it in a register. fadeInLogo, fadeInBar, blankBar and
+; updateLogoPointers all use d0 as scratch, so a cached copy would be a
+; logo colour value by the time the bar gets tested - and colour values
+; happen to be in the same numeric range as the cue times.
 introUpdate:
 			move.w	introTime,d0
 			cmp.w	#$7000,d0			; stop counting, never wrap
@@ -2151,7 +2180,7 @@ introUpdate:
 			addq.w	#1,d0
 			move.w	d0,introTime
 .noTick:
-			cmp.w	#introLogoStart,d0
+			cmp.w	#introLogoStart,introTime
 			blo.s	.noLogo
 			tst.b	introLogoShown		; switch the bitplanes on once, at the
 			bne.s	.logoOn				; moment the fade starts
@@ -2160,7 +2189,7 @@ introUpdate:
 .logoOn:
 			bsr		fadeInLogo
 .noLogo:
-			cmp.w	#introBarStart,d0
+			cmp.w	#introBarStart,introTime
 			bhs.s	.barTime
 			bsr		blankBar			; held black until its cue, every frame,
 			bra.s	.noBar				; so nothing can sneak it back in early
@@ -2254,21 +2283,22 @@ fadeInLogo:
 fadeInBar:
 			tst.b	introBarDone
 			bne.s	.done
-			lea		clist,a0
-			lea		barcolorOffsets,a1
+			move.w	barColorCount,d7
+			beq.s	.done
+			subq.w	#1,d7
+			lea		barColorAddr,a1
 			lea		barColorsTarget,a2
-			moveq	#19-1,d7
 			moveq	#1,d5				; assume everything has arrived
 .barfade:
-			move.w	(a1)+,d4			; offset of the colour word in clist
-			move.w	(a0,d4.w),d0
+			move.l	(a1)+,a0
+			move.w	2(a0),d0
 			move.w	(a2)+,d1
 			cmp.w	d0,d1
 			beq.s	.arrived
 			moveq	#0,d5
 .arrived:
 			bsr		colorFadeIn
-			move.w	d6,(a0,d4.w)
+			move.w	d6,2(a0)
 			dbf		d7,.barfade
 			tst.w	d5
 			beq.s	.done
@@ -2287,8 +2317,11 @@ introTaken:		dc.b	0		; colour snapshot already taken?
 				even
 logoColorsTarget:
 				blk.w	logo_color_count*logo_area_height,0
+barColorCount:	dc.w	0		; how many colour writes the scan found
+				even
+barColorAddr:	blk.l	96,0	; address of each copper MOVE in the bar
 barColorsTarget:
-				blk.w	19,0
+				blk.w	96,0	; ... and the value it should finish on
 
 ; --------------------
 fadeOutBar:
@@ -2465,6 +2498,8 @@ bp0:	dc.w	$00e2,$0000		;
 
 		dc.w	$0182,$0eee	; game area before scroller color
 
+barRegionStart:				; everything from here to barRegionEnd is the
+								; scroller bar, background AND shading
 		dc.w	$bf01,$fffe
 		dc.w	$0182,$0777
 		dc.w	$c101,$fffe
@@ -2611,6 +2646,7 @@ barc18:	dc.w	$0180,$0001	; wall
 barc19: dc.w	$0180,$0001	; wall 
 		dc.w	$ef01,$fffe
 		dc.w	$0180,$0000	; wall 
+barRegionEnd:
 
 		; dc.w	$f001,$fffe
 		; dc.w	$0180,$0000	; wall end
