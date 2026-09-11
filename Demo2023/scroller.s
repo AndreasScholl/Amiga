@@ -102,10 +102,10 @@ initScroller::
 ;   introBarStart    scroller bar fades up
 ;   introScrollStart scroll text starts moving in from the right
 ;
-introLogoStart   = 100      ; logo begins to appear
+introLogoStart   = 128      ; logo begins to appear
 introGameStart   = 500      ; first name begins to appear
-introBarStart    = 1000      ; scroller bar begins to appear
-introScrollStart = 1500      ; scroll text begins to appear
+introBarStart    = 2000      ; scroller bar begins to appear
+introScrollStart = 2500      ; scroll text begins to appear
 
 introLogoLines   = 15       ; gradient lines stepped per frame. the fade
                             ; takes logo_area_height*15/this frames, so
@@ -2075,9 +2075,11 @@ introInit:
 			; --- and the bar. rather than a hand written offset list this
 			;     walks the copperlist between the two markers and picks up
 			;     every colour write in it - $0180 for the flat background
-			;     and $0182 for the shading on top of it. Blanking only the
-			;     background is not enough: the shading is playfield colour 1
-			;     and shows up as a grey and blue-grey band on its own.
+			;     Only $0180. Colour 1 is what the ship, the letters and the
+			;     bar shading are drawn in, so blanking that would make the
+			;     game invisible in the lower half of the screen. Anything
+			;     stray down there is dealt with by switching the bitplane
+			;     off instead - see introHideGame.
 			;     Copper instructions are four bytes whether they are MOVEs or
 			;     WAITs, and a WAIT always has bit 0 set in its first word, so
 			;     it can never be mistaken for a colour register.
@@ -2090,10 +2092,7 @@ introInit:
 			bhs.s	.scanned
 			move.w	(a0),d1
 			cmp.w	#$0180,d1
-			beq.s	.takeIt
-			cmp.w	#$0182,d1
 			bne.s	.nextInst
-.takeIt:
 			move.l	a0,(a1)+		; where the value word lives
 			move.w	2(a0),(a2)+		; ... and what it should end up as
 			addq.w	#1,d0
@@ -2112,8 +2111,10 @@ introRestart:
 			sf		introLogoDone
 			sf		introBarDone
 			sf		introLogoShown
+			sf		introGameOn
 			bsr		blankBar
 			bsr		introHideLogo
+			bsr		introHideGame
 			rts
 
 ;---------------------------------------------
@@ -2137,6 +2138,26 @@ introShowLogo:
 			move.w	#$0000,logoPlaneMod
 			moveq	#0,d1
 			bsr		updateLogoPointers		; bp0..bp3 back onto the logo
+			rts
+
+;---------------------------------------------
+; Nothing should be drawn in the game area before the game starts, so
+; rather than blacking out colours - which would also black out the ship
+; and the letters once they do appear - the bitplane is simply pointed at
+; the blank line and the shadow playfield is switched off. clearScroller
+; rewrites bp0 every frame, so the hide has to be reapplied each frame.
+;---------------------------------------------
+introHideGame:
+			move.w	#$0006,gamebp0h
+			move.w	#$e000-li,bp0+2
+			move.w	#$ffd2,gamePlaneMod		; -li, repeats the blank line
+			move.w	#$1200,gamePlanes2		; one plane, no dual playfield
+			rts
+
+introShowGame:
+			move.w	#$0007,gamebp0h
+			move.w	#$0000,gamePlaneMod
+			move.w	#$2600,gamePlanes2
 			rts
 
 ;---------------------------------------------
@@ -2189,6 +2210,16 @@ introUpdate:
 .logoOn:
 			bsr		fadeInLogo
 .noLogo:
+			cmp.w	#introGameStart,introTime
+			bhs.s	.gameTime
+			bsr		introHideGame		; every frame, clearScroller undoes it
+			bra.s	.gameOn
+.gameTime:
+			tst.b	introGameOn
+			bne.s	.gameOn
+			st		introGameOn
+			bsr		introShowGame
+.gameOn:
 			cmp.w	#introBarStart,introTime
 			bhs.s	.barTime
 			bsr		blankBar			; held black until its cue, every frame,
@@ -2313,6 +2344,7 @@ introBarTick:	dc.w	0
 introLogoDone:	dc.b	0
 introBarDone:	dc.b	0
 introLogoShown:	dc.b	0		; logo bitplanes switched on yet?
+introGameOn:	dc.b	0		; game area bitplane switched on yet?
 introTaken:		dc.b	0		; colour snapshot already taken?
 				even
 logoColorsTarget:
@@ -2487,10 +2519,15 @@ logoEndWait:
 
 		dc.w	(gameTop<<8)+1,$fffe	; start of "game" area
 		dc.w	BPLCON0,$1200	; 1 bitplanes on
-		dc.w	$00e0,$0007		; bitplane 0 
+		dc.w	$00e0
+gamebp0h:
+		dc.w	$0007			; bitplane 0, patched to the blank line while
+							; the game has not started yet
 bp0:	dc.w	$00e2,$0000		;
 
-		dc.w	$0108,$0000		; even bitplanes modulo
+		dc.w	$0108
+gamePlaneMod:
+		dc.w	$0000			; even bitplanes modulo, patched to -li
 		dc.w	$010a,$0000		; odd bitplanes modulo
 
 		dc.w	$0092,$0028
@@ -2511,7 +2548,11 @@ barRegionStart:				; everything from here to barRegionEnd is the
 
 		dc.w	$c401,$fffe
 		dc.w	$0182,$0bbb
-		dc.w	$0100,$2600			; 2 bitplanes on	(dual playfield mode)
+		dc.w	$0100
+gamePlanes2:
+		dc.w	$2600			; 2 bitplanes on	(dual playfield mode), patched
+							; to $1200 so the shadow plane is not fetched
+							; before the game starts
 		dc.w	$00e4,$0007			; bitplane 01
 		; dc.w	$00e6,(li*75)-2		; + lines offset to adjust shadow pos
 		; shifted with the rest of the buffer content so the shadow keeps

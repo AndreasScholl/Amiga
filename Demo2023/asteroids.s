@@ -26,25 +26,349 @@
 		INCLUDE     "graphics/graphics_lib.i"
 		INCLUDE     "hardware/cia.i"
 
-; --- asteroids game screen
+;======================================================================
+; TUNING CONSTANTS
+;======================================================================
+; Everything adjustable lives here. Order matters only where one
+; constant is defined in terms of another, which is why the groups run
+; geometry first and the autopilot last.
+;
+;----------------------------------------------------------------------
+; screen and play area. game_height must stay at or below the number of
+; buffer lines the display window actually shows, or objects spend part of
+; their time drawn somewhere nobody can see.
+;----------------------------------------------------------------------
 ; the game shares the scroller part's single bitplane buffer, so this MUST
 ; match scroller.s: screenHeight and li. clipping and the vertical wrap in
 ; obj_move are derived from it, and anything above it would draw past the
 ; end of the 5888 byte buffer.
 game_width		= 352
-game_height		= 128
+; the display window only shows buffer lines 0..101, but obj_move wraps
+; over game_height+32 lines. At 128 that left 26 lines that objects were
+; drawn on and never seen, which is where the ship kept vanishing to.
+game_height		= 102
 game_lineBytes	= $2e			; screen line size in bytes
 
+;----------------------------------------------------------------------
+; object types and limits
+;----------------------------------------------------------------------
+max_objlines 	= 10
+; object type ids, index into coord_tabs
+ship	=	0		; own spaceship
+shot	=	1		; own shot
+big		=	2		; big asteroid
+medium	=	3		; medium asteroid
+small	=	4		; small asteroid
+letter	=	5
+
+;----------------------------------------------------------------------
+; word and letter placement
+;----------------------------------------------------------------------
+ast_count = 8
+ast_x_start		= 100			; for medium
+ast_x_offset 	= 24			; the nominal slot width. letterAdvance below
+								; is written as offsets from it, so changing this
+								; still scales the whole word
+; visible centre of the play area - DDFSTRT $28 puts bitplane pixel 0
+; at hpos 97 while DIWSTRT is 129, so x 0..31 is behind the border
+ast_x_center	= 192
+ast_y_start		= 16
+wordGap			= 40		; frames after the last shot dies before the
+							; next word is allowed to appear
+
+;----------------------------------------------------------------------
+; letter appear animation
+;----------------------------------------------------------------------
+appear_frames	= 30		; how long one letter zooms and spins
+appear_astep	= 12		; degrees per frame (30*12 == one full turn)
+appear_scale0	= 4			; start scale, 64 == full size
+appear_sstep	= 2			; scale step (4 + 30*2 == 64)
+appear_stagger	= 15		; frames between letters -> 3 spinning at once
+
+;----------------------------------------------------------------------
+; the player ship
+;----------------------------------------------------------------------
 ; --- object placement (buffer lines, not raster lines)
-; the visible window is buffer line 0..83. the scroll text sits at 36..64
-; and the dots fall from 35 downwards, so keep the game above ~32.
+; buffer lines, not raster lines. the window shows 0..101 and the
+; scroll text sits at 50..77.
 ship_start_x	= 16		; off the left edge - the visible window is x 32..351,
 							; so the ship waits here until the first word is up
 ship_start_y	= 28
+; AUTOPILOT
+; Drives ship_struct through exactly the same four calls the keyboard
+; path uses - obj_addangle, obj_subangle, obj_thrust, shot_init - so it
+; cannot do anything a player could not.
+;
+; No atan2 anywhere. The ship's facing vector is
+;     f = (cos(angle-90), sin(angle-90))
+; straight out of sctab, and for the vector d to the target:
+;
+;     cross = fx*dy - fy*dx      sign says which way to turn
+;     dot   = fx*dx + fy*dy      positive means the target is ahead
+;
+; d(f)/d(angle) has a positive cross product with f, so cross > 0 always
+; means "increase obj_angle to turn towards d". And since
+; |cross|/dot == tan(angle error), the alignment tests are a couple of
+; shifts and a compare - no square roots, no division.
+;
+; The flying is deliberately lazy: thrust happens in short bursts with
+; random lengths, then the ship coasts. Above a speed limit it gives up
+; on aiming, turns to face its own reverse velocity and counter-thrusts
+; until it has slowed down, which is what produces the drifting,
+; over-correcting look of somebody actually playing.
+obj_maxvelo		= 128+64	; per axis, in 1/128 pixel per frame
 
-; visible centre of the play area (see the note by asteroids_init)
-ast_x_center	= 192
-ast_y_start		= 16
+;----------------------------------------------------------------------
+; starfield
+;----------------------------------------------------------------------
+; starfield
+;stars_count		= 105
+stars_count		= 120
+
+;----------------------------------------------------------------------
+; autopilot - flying
+;----------------------------------------------------------------------
+ai_turnrate		= 4			; degrees per frame, same as the player gets
+; The engine fires only when the ship is NOT turning - rotate first, then
+; burn in a straight line. Burning part way through a turn sweeps the
+; thrust round in an arc and the ship just circles.
+;
+; The turn itself has hysteresis: it stops once inside a narrow cone and
+; only starts again outside a wider one. With a single threshold the ship
+; jitters left-right-left as the bearing drifts across it, which is what a
+; player never does. The two cones are hard coded as shift-and-add
+; sequences in ai_turn (x8, about 7 degrees, and x6, about 9.5) because
+; |cross| is a full longword and muls.w cannot scale it.
+ai_thrust		= 8			; thrust impulse, same as the player gets
+ai_maxspeed		= 300		; |xvelo|+|yvelo| above which it brakes
+ai_slowspeed	= 110		; ... and below which it stops braking
+ai_thrustodds	= 0			; out of 256 - chance of a burst while ATTACKING.
+							; 0 means it holds position and shoots, which is
+							; what a player does once lined up. Raising it
+							; makes the ship wander off its station and the
+							; worst case clear time climbs sharply.
+ai_travelodds	= 256		; out of 256, i.e. always. Flying to a spot is a
+							; deliberate act - once the nose is lined up there
+							; is no reason to roll dice about it. Lower it if
+							; the approach looks too mechanical.
+ai_thrustbase	= 4			; + 0..7 frames of thrust per burst
+ai_travelburst	= 3			; + 0..1 - shorter bursts while repositioning,
+							; because a long burn overshoots the station
+ai_coastbase	= 8			; + 0..31 frames of coasting
+ai_keepaway		= 75		; don't burn straight at a letter closer than this
+
+;----------------------------------------------------------------------
+; autopilot - staying on screen
+;----------------------------------------------------------------------
+; The viewer is trying to follow the ship, so letting it wrap off an edge
+; is worse than the small loss of asteroids authenticity. Every frame the
+; position is projected ai_lookahead frames along the current velocity; if
+; that lands outside the box the AI takes over the steering. It cannot
+; just point at the middle and burn - at 4 degrees a frame a turn takes 45
+; frames and it would be long gone - so it kills the drift first and only
+; heads for the middle once it is slow.
+ai_keepbox		= 1			; 0 to go back to free flight
+ai_lookahead	= 40		; frames of prediction
+ai_boxx0		= 72
+ai_boxx1		= 280
+ai_boxy0		= 10
+ai_boxy1		= 68
+ai_boxcx		= (ai_boxx0+ai_boxx1)/2
+ai_boxcy		= (ai_boxy0+ai_boxy1)/2
+
+;----------------------------------------------------------------------
+; autopilot - the entrance
+;----------------------------------------------------------------------
+; --- entrance
+ai_enterangle	= 90		; obj_angle that points due right
+ai_enterspeed	= 90	; xvelo for the fly-in (128 == 1 pixel/frame)
+ai_enterwait	= 240	; frames after the first word STARTS appearing
+						; before the ship flies in. Triggering on the spawn
+						; rather than on the finished word gives it the whole
+						; zoom-in plus the read pause to reach its station,
+						; instead of arriving late and ploughing through.
+
+;----------------------------------------------------------------------
+; autopilot - picking a target
+;----------------------------------------------------------------------
+ai_retargetms	= 90		; frames before looking for a nearer letter
+; --- how often a word gets the tidy along-the-row treatment instead of a
+; general brawl. 256 would be always, 0 never.
+; the along-the-row attack is now permanent. The screen is far wider than
+; it is tall, so working the word from one end both looks tidier and keeps
+; the ship in the part of the play area where there is room to manoeuvre.
+; ai_sidemode is set once at init and never cleared.
+; --- side attack. the ship works along the row from one end instead of
+; picking whatever letter happens to be nearest, so the letters go off in
+; sequence. it holds station just outside the end of the word and a little
+; BELOW the row - level with the row would mean flying through the letters.
+; --- the station. This is the spot the ship flies to before it starts
+; shooting: level with the target letter and ai_stationdx to the side of
+; it, on whichever end of the word we are attacking from.
+ai_stationdx	= 30		; sideways offset from the letter. A letter is
+							; about 24 wide and the ship about 10, so 24 left
+							; only a 7 pixel gap and the ship kept clipping the
+							; end letter on the way in. 40 gives it room.
+ai_stationdy	= 0			; and vertical - 0 keeps the shot along the row,
+							; raise it if the ship clips the letters
+
+; --- flying states. APPROACH flies to the station, ARRIVE turns round and
+; brakes because it is about to get there too fast to stop, ATTACK sits
+; still and shoots. The two distances overlap deliberately: entering
+; ATTACK at ai_arrivedist and only leaving it past ai_leavedist stops the
+; ship dithering between "fly there" and "shoot" on the boundary.
+; --- debug overlay. 0 removes it completely (IFNE, so no runtime cost).
+;       +   the station - the point the ship is flying to
+;       X   the target letter - what it is aiming and shooting at
+;     a bar bottom left shows the state: 1 segment APPROACH, 2 ARRIVE,
+;     3 ATTACK, and a 4th appears while it is turning.
+; --- HOVER
+; Hold a spot near one side of the screen. Face it, burn, sail past it,
+; turn round, burn again - there is no brake in this game so the position
+; is held by oscillating about it rather than by stopping on it.
+;
+; The whole behaviour is just "aim at the point, thrust when lined up".
+; The turn-around is not special cased: once the ship is past the point
+; the vector to it reverses, so aiming at it IS aiming backwards, and the
+; thrust becomes a brake. Only the speed needs limiting, because the
+; overshoot is set by how far the ship drifts during the 45 frames a 180
+; degree turn takes:
+;      32 -> about 12 px      96 -> about 38 px
+;      64 -> about 25 px     192 -> about 86 px
+ai_hoveronly	= 1			; 1 = hover and nothing else, for tuning
+ai_hovermargin	= 32		; gap from the visible screen edge (x 32..351)
+ai_hoverleft	= 32+ai_hovermargin
+ai_hoverright	= 351-ai_hovermargin
+ai_hovery		= ast_y_start	; level with the letter row
+; The hover runs as three phases rather than as a continuous correction:
+;
+;   ROTATE  swing the nose onto the point, no thrust
+;   BURN    a fixed shove with the nose HELD STILL, no re-aiming
+;   COAST   drift until close, or until we have sailed past
+;
+; Both halves of that matter. Re-aiming while the engine is lit sweeps the
+; thrust vector round and the ship flies an arc. But the discrete cycle on
+; its own is not enough either - measured with no drift correction it
+; still settles into a 71..108 pixel orbit. Thrust towards a point only
+; changes the velocity component along the line to it; the sideways
+; component is never touched. So the ROTATE phase aims at the point minus
+; our own drift, which is what a person does without thinking: if you are
+; sliding past something you point somewhere between it and your own
+; reverse heading.
+HS_ROTATE		= 0
+HS_BURN			= 1
+HS_COAST		= 2
+ai_hoverlead	= 64		; frames of drift to subtract when aiming
+; How long each shove lasts. A FIXED length was the cause of three
+; separate complaints: close in it is far too much thrust, so the ship
+; races away (peak speed 216, a quarter of the time off screen), and the
+; resulting wide miss means the closest-approach point arrives early and
+; far out - which looks exactly like turning round before getting there.
+; Scaling it with distance fixed all three at once: peak speed 35, off
+; screen 0.7%.
+;       frames = distance >> ai_hoverburnshift, clamped
+; ai_hoverburnmin is what stops it becoming a twitch when it is nearly
+; there - it sets how big the smallest correction looks.
+ai_hoverburnshift = 2		; divide the distance by 4
+ai_hoverburnmin	= 6
+ai_hoverburnmax	= 16
+ai_hovercoastmax = 60		; give up on a drift after this many frames
+
+; Coasting until the closest approach is fine from a few pixels away, but
+; from across the screen it means arriving at full speed, sailing a long
+; way past, turning round and doing it again - slow and dull to watch.
+; This ends the drift once the point is less than this many frames away at
+; the current speed, so the turn-and-brake starts before arrival rather
+; than after it. Measured from the far corner: 347 frames to settle
+; without it, 235 with.
+ai_hoverbrake	= 75		; start braking this many frames out
+
+; --- ATTACK
+; One pass along the row. Aim at the near end letter, one shove, then
+; coast the whole length of the word shooting - the letters are in a line,
+; so simulated over ten runs it clears all nine every time in 115..148
+; frames without needing a single mid-run correction.
+; Aim is straight at the letter, not drift corrected: shots go where the
+; nose points, so pointing anywhere else means missing.
+AS_HOVER		= 0
+AS_ATTACK		= 1
+ai_attackdelay	= 60		; frames the finished word must sit still first
+; ...and the ship has to be READY as well, not just the word. Without
+; these two the countdown ran while the ship was still crossing the screen
+; at speed from the previous pass, so it launched its attack from wherever
+; it happened to be and never got a clean run at the row.
+ai_attackready	= 40		; must be this close to the hover point
+ai_attackreadyspd = 70		; ...and this slow (|xvelo|+|yvelo|)
+; A pass that has not worked is better abandoned than persisted with -
+; going back to the hover point and setting up again is what gets a clean
+; line, and it is the one thing this AI is now good at.
+ai_attackmax	= 400		; give up on a pass after this many frames
+ai_attackburn	= 16		; the one shove that carries us along the row
+; Checking the aim every 40 frames against a lax 26 degree cone meant the
+; ship shot down the wrong line for seconds at a time, and when it did
+; correct it used the full ai_attackburn shove, which threw the trajectory
+; out again. Checking four times as often against a 14 degree cone, and
+; nudging rather than shoving, is what a player does. With realistic
+; vertical jitter on the letters: 403 frames and 9 words in 12 cleared
+; before, 142 frames and 12 in 12 after.
+ai_attackregrip	= 6			; frames between "am I still lined up?" checks.
+							; 12 was too slow to hold the line - the ship shot
+							; down the wrong one long enough to sail past a
+							; letter, and recovering from that is what caused
+							; the re-hover. Verified on hardware at 6.
+ai_attackfix	= 4			; a correction nudge, against ai_attackburn for
+							; the launch (the cone is the two add.l in .arun,
+							; x4, about 14 degrees)
+ai_hoverdead	= 30		; close enough to stop and drift (manhattan)
+ai_hoverwrap	= 0			; 1 = allowed to reach the hover point the short
+							; way round the screen edge. Off by default: for
+							; station keeping it just makes the ship vanish off
+							; one side to reach a point near the other.
+
+ai_debug		= 0
+ai_marksize		= 5			; half width of the + and X
+
+ST_APPROACH		= 0
+ST_ARRIVE		= 1
+ST_ATTACK		= 2
+ai_arrivedist	= 40		; close enough to the station to stop flying at it
+; MUST be larger than ai_arrivedist, which is why it is written as a
+; multiple of it rather than as its own number. If it is smaller the
+; hysteresis inverts: the ship enters ATTACK at, say, 39 and instantly
+; satisfies "further than 35", so it flips state every single frame. The
+; aim then jumps between the station, the reverse velocity and the letter
+; frame by frame and the ship can never finish a turn - it just sits there
+; rotating. Raise the multiplier to make it snipe from further out, lower
+; it (but never below about 1.5) to make it close the gap more eagerly.
+ai_leavedist	= ai_arrivedist*2
+ai_arrivespeed	= 40		; brake to below this before settling in to shoot
+ai_homex		= ast_x_center	; where it loiters while a word zooms in
+ai_homey		= ship_start_y
+ai_wrapx		= game_width+32		; obj_move's wrap periods
+ai_wrapy		= game_height+32
+
+;----------------------------------------------------------------------
+; autopilot - shooting
+;----------------------------------------------------------------------
+ai_holdframes	= 60		; frames to admire a finished word before shooting
+							; (50 == 1 second, 100 == 2 seconds)
+ai_pbholdfire	= 1
+ai_minclose		= 128		; a shot must close at least this fast (128 == 1 px
+							; per frame) or it never gets there
+ai_pointblank	= 40		; a letter this close gets shot at, full stop
+ai_fireflat		= 3			; want |dy|*3 < |dx|, i.e. a shot along the row
+ai_patience		= 20		; ... but take any shot after this many dry frames
+; --- firing. a player does not line up every single shot, they point
+; roughly the right way, squeeze off a burst and reposition. the strays
+; are half the fun - they wander off and take out something else.
+ai_burstlen		= 3			; shots per burst, plus 0..ai_burstvar
+ai_burstvar		= 2			; must be 1,3,7... - used as an AND mask
+ai_burstgap		= 5			; frames between shots inside a burst, + 0..gapvar
+ai_gapvar		= 3			; ditto, an AND mask
+ai_burstpause	= 10		; + 0..31 frames before the next burst
+ai_firebase		= 9			; unused now - superseded by the burst timings
+
+;======================================================================
 
 		section "code",data,chip
 
@@ -68,6 +392,7 @@ initGame::				;<initialize game>
 ; the starfield and the keyboard. this only sets up the game objects.
 ; screenloc is written by clearScroller every frame.
 initGameObjects::
+		st		ai_sidemode			; always work the word from one end
 		bsr		buildYOffTab		; needed by drawline/set_point below
 		bsr		scaleLetters
 		bsr		shots_init
@@ -211,6 +536,9 @@ updateGame:
 .nsdraw:
 		bsr		ship_explode
 		bsr		shots_set
+		IFNE	ai_debug
+		bsr		ai_debugMarks
+		ENDC
 		clr.w	(a6)			; and of draw table
 ;		move.w	#$0ff,$dff180
 		bsr		objects_draw
@@ -232,6 +560,21 @@ updateGame:
 		tst.l	enemy_con
 		bne.s	.noLetterInit
 
+		; --- word is gone. nothing new until the sky is clear, or a shot
+		;     still in the air from the last word takes out a letter of the
+		;     new one before the ship has even started firing.
+		tst.w	shot_con
+		beq.s	.noShotsLeft
+		move.w	#wordGap,wordGapTimer
+		bra.s	.noLetterInit
+.noShotsLeft:
+		tst.w	wordGapTimer
+		beq.s	.gapOver
+		subq.w	#1,wordGapTimer
+		bra.s	.noLetterInit
+.gapOver:
+		move.w	#wordGap,wordGapTimer
+
 		; letter counter and initialization
 		; lea		letters_init,a0
 		; tst.w	(a0)
@@ -248,14 +591,6 @@ updateGame:
 **********************************************************************
 *vector object_class                                                 *
 *
-max_objlines 	= 10
-
-; --- letter appear animation ------------------------------------------
-appear_frames	= 30		; how long one letter zooms and spins
-appear_astep	= 12		; degrees per frame (30*12 == one full turn)
-appear_scale0	= 4			; start scale, 64 == full size
-appear_sstep	= 2			; scale step (4 + 30*2 == 64)
-appear_stagger	= 15		; frames between letters -> 3 spinning at once
 
 				rsreset
 obj_xc:			rs.w	1		; x-coordinate
@@ -371,21 +706,21 @@ obj_thrust:				;<accelerate object, value in d2>
 		swap	d2
 		add.w	d2,obj_yvelo(a0)
 
-		cmp.w	#4*128,obj_xvelo(a0)	;x velocity too high?
+		cmp.w	#obj_maxvelo,obj_xvelo(a0)	;x velocity too high?
 		blt.s	.nhxv
-		move.w	#4*128,obj_xvelo(a0)
+		move.w	#obj_maxvelo,obj_xvelo(a0)
 .nhxv:		
-		cmp.w	#-4*128,obj_xvelo(a0)	;x velocity too low?
+		cmp.w	#-obj_maxvelo,obj_xvelo(a0)	;x velocity too low?
 		bgt.s	.nlxv
-		move.w	#-4*128,obj_xvelo(a0)
+		move.w	#-obj_maxvelo,obj_xvelo(a0)
 .nlxv:
-		cmp.w	#4*128,obj_yvelo(a0)	;y velocity too high?
+		cmp.w	#obj_maxvelo,obj_yvelo(a0)	;y velocity too high?
 		blt.s	.nhyv
-		move.w	#4*128,obj_yvelo(a0)
+		move.w	#obj_maxvelo,obj_yvelo(a0)
 .nhyv:		
-		cmp.w	#-4*128,obj_yvelo(a0)	;y velocity too low?
+		cmp.w	#-obj_maxvelo,obj_yvelo(a0)	;y velocity too low?
 		bgt.s	.nlyv
-		move.w	#-4*128,obj_yvelo(a0)
+		move.w	#-obj_maxvelo,obj_yvelo(a0)
 .nlyv:
 		rts
 ;---------------------------------------------
@@ -999,81 +1334,6 @@ ship_explode:
 		dbf		d7,.setpoints
 .noexplosion:	
 		rts
-;---------------------------------------------
-;---------------------------------------------
-; AUTOPILOT
-;---------------------------------------------
-; Drives ship_struct through exactly the same four calls the keyboard
-; path uses - obj_addangle, obj_subangle, obj_thrust, shot_init - so it
-; cannot do anything a player could not.
-;
-; No atan2 anywhere. The ship's facing vector is
-;     f = (cos(angle-90), sin(angle-90))
-; straight out of sctab, and for the vector d to the target:
-;
-;     cross = fx*dy - fy*dx      sign says which way to turn
-;     dot   = fx*dx + fy*dy      positive means the target is ahead
-;
-; d(f)/d(angle) has a positive cross product with f, so cross > 0 always
-; means "increase obj_angle to turn towards d". And since
-; |cross|/dot == tan(angle error), the alignment tests are a couple of
-; shifts and a compare - no square roots, no division.
-;
-; The flying is deliberately lazy: thrust happens in short bursts with
-; random lengths, then the ship coasts. Above a speed limit it gives up
-; on aiming, turns to face its own reverse velocity and counter-thrusts
-; until it has slowed down, which is what produces the drifting,
-; over-correcting look of somebody actually playing.
-;---------------------------------------------
-ai_turnrate		= 4			; degrees per frame, same as the player gets
-ai_thrust		= 8			; thrust impulse, same as the player gets
-ai_maxspeed		= 300		; |xvelo|+|yvelo| above which it brakes
-ai_slowspeed	= 110		; ... and below which it stops braking
-ai_thrustodds	= 230		; out of 256 - chance of a burst. high, because a
-							; player is almost never sitting still
-ai_firebase		= 9			; unused now - superseded by the burst timings
-ai_thrustbase	= 4			; + 0..7 frames of thrust per burst
-ai_coastbase	= 8			; + 0..31 frames of coasting
-ai_brakebase	= 14		; + 0..15 frames of braking
-ai_retargetms	= 45		; frames before looking for a nearer letter
-ai_holdframes	= 100		; frames to admire a finished word before shooting
-							; (50 == 1 second, 100 == 2 seconds)
-
-; --- side attack. the ship works along the row from one end instead of
-; picking whatever letter happens to be nearest, so the letters go off in
-; sequence. it holds station just outside the end of the word and a little
-; BELOW the row - level with the row would mean flying through the letters.
-ai_standoff		= 45		; how far past the end letter it sits
-ai_stationdy	= 16		; ... and how far below the row
-ai_stationr		= 95		; manhattan slack before it bothers repositioning
-ai_travelodds	= 230		; out of 256 - keener to thrust while repositioning
-ai_keepaway		= 75		; don't burn straight at a letter closer than this
-ai_minclose		= 128		; a shot must close at least this fast (128 == 1 px
-							; per frame) or it never gets there
-ai_pointblank	= 40		; a letter this close gets shot at, full stop
-ai_fireflat		= 3			; want |dy|*3 < |dx|, i.e. a shot along the row
-ai_patience		= 20		; ... but take any shot after this many dry frames
-
-; --- entrance
-ai_enterangle	= 90		; obj_angle that points due right
-ai_enterspeed	= 150		; xvelo for the fly-in (128 == 1 pixel/frame)
-
-; --- firing. a player does not line up every single shot, they point
-; roughly the right way, squeeze off a burst and reposition. the strays
-; are half the fun - they wander off and take out something else.
-ai_burstlen		= 3			; shots per burst, plus 0..ai_burstvar
-ai_burstvar		= 2			; must be 1,3,7... - used as an AND mask
-ai_burstgap		= 5			; frames between shots inside a burst, + 0..gapvar
-ai_gapvar		= 3			; ditto, an AND mask
-ai_burstpause	= 10		; + 0..31 frames before the next burst
-
-; --- how often a word gets the tidy along-the-row treatment instead of a
-; general brawl. 256 would be always, 0 never.
-ai_sideodds		= 160
-ai_wrapx		= game_width+32		; obj_move's wrap periods
-ai_wrapy		= game_height+32
-ai_homex		= ast_x_center	; where it loiters while a word zooms in
-ai_homey		= ship_start_y
 
 ai_enabled:		dc.b	1		; 0 hands the ship back to the keyboard
 				even
@@ -1082,7 +1342,6 @@ ai_retarget:	dc.w	0
 ai_fireWait:	dc.w	0
 ai_thrustLeft:	dc.w	0
 ai_coastLeft:	dc.w	0
-ai_brake:		dc.w	0
 ai_dx:			dc.w	0		; wrapped vector to the target
 ai_dy:			dc.w	0
 ai_cross:		dc.l	0		; alignment against the target
@@ -1090,12 +1349,39 @@ ai_dot:			dc.l	0
 ai_forming:		dc.b	0		; a letter of this word is still arriving
 				even
 ai_holdFire:	dc.w	ai_holdframes
-ai_wasForming:	dc.b	0
-ai_travel:		dc.b	0		; repositioning rather than attacking
+ai_sidePicked:	dc.b	0		; side chosen for the word now on screen
+				even			; <- without this ai_aimcross lands on an odd
+							;    address and the first move.l to it bus errors
+ai_aimcross:	dc.l	0		; cross/dot of whatever we are STEERING at,
+ai_aimdot:		dc.l	0		; which is the station while repositioning and
+							; the reverse velocity while braking or recovering.
+							; ai_cross/ai_dot are always the target letter.
+ai_state:		dc.b	ST_APPROACH
+ai_over:		dc.b	0		; sailed past the station
+ai_turning:		dc.b	1		; nose still swinging round
+				even
+ai_sdx:			dc.w	0		; vector to the station
+ai_sdy:			dc.w	0
+ai_sdist:		dc.w	0		; ... and its manhattan length
+ai_hx:			dc.w	0		; hover point, absolute screen position
+ai_hy:			dc.w	0
+ai_hdist:		dc.w	0		; manhattan distance to the hover point
+ai_coastTick:	dc.w	0
+ai_burnLeft:	dc.w	0		; frames of shove still to go
+ai_hstate:		dc.b	HS_ROTATE
+ai_astate:		dc.b	AS_HOVER
+				even
+ai_settleTick:	dc.w	0
+ai_regripTick:	dc.w	0
+ai_attackTick:	dc.w	0
+ai_launched:	dc.b	0		; the launch shove has been spent
+				even
+ai_recover:		dc.b	0		; steering back onto the screen
 				even
 ai_side:		dc.w	-1		; which end of the word we attack from
 ai_dry:			dc.w	0		; frames since the last shot
 ai_burst:		dc.w	0		; shots left in the current burst
+ai_enterTimer:	dc.w	ai_enterwait
 ai_entered:		dc.b	0		; has the ship flown in yet?
 ai_sidemode:	dc.b	0		; along-the-row attack for this word?
 				even
@@ -1109,9 +1395,15 @@ ship_auto:
 		tst.b	ai_entered
 		bne.s	.flying
 		move.l	enemy_con(pc),d0
-		beq.s	.parked				; no word yet
-		tst.b	ai_forming
-		bne.s	.parked				; still arriving
+		beq.s	.parkHold			; no word yet
+		tst.w	ai_enterTimer		; word has spawned - hold for ai_enterwait
+		beq.s	.launch				; frames, then go
+		subq.w	#1,ai_enterTimer
+		bra.s	.parked
+.parkHold:
+		move.w	#ai_enterwait,ai_enterTimer
+		bra.s	.parked
+.launch:
 		st		ai_entered
 		move.w	#ai_enterangle,obj_angle(a0)
 		move.w	#ai_enterspeed,obj_xvelo(a0)
@@ -1120,6 +1412,11 @@ ship_auto:
 		bsr		obj_move
 		rts
 .flying:
+		IFNE	ai_hoveronly
+		bsr		ai_pilot
+		bsr		obj_move
+		rts
+		ENDC
 
 		tst.w	ai_fireWait
 		beq.s	.nfw
@@ -1129,86 +1426,99 @@ ship_auto:
 		; further ai_holdframes so it can actually be read. the timer is
 		; reloaded the whole time any letter is still waiting or zooming,
 		; so it only starts running down once the word is complete.
-		tst.b	ai_forming
-		beq.s	.formed
-		move.w	#ai_holdframes,ai_holdFire
-		st		ai_wasForming
-		bra.s	.holdDone
-.formed:
-		tst.b	ai_wasForming		; first frame of a complete word?
-		beq.s	.sidePicked
-		sf		ai_wasForming
+		; --- which end do we attack from? Decided the moment a word
+		;     appears, not when it has finished zooming in, so the ship can
+		;     be on its way to that end while the letters are still arriving.
+		move.l	enemy_con(pc),d0
+		bne.s	.haveWord
+		sf		ai_sidePicked		; no word - arm for the next one
+		bra.s	.sideDone
+.haveWord:
+		tst.b	ai_sidePicked
+		bne.s	.sideDone
+		st		ai_sidePicked
 		moveq	#-1,d0				; attack from whichever end we are nearer
 		cmp.w	#ast_x_center,obj_xc(a0)
 		blt.s	.sideSet
 		moveq	#1,d0
 .sideSet:
 		move.w	d0,ai_side
-		jsr		getRandomNumber		; and does this word get the tidy treatment?
-		and.w	#255,d0
-		sf		ai_sidemode
-		cmp.w	#ai_sideodds,d0
-		bcc.s	.sidePicked
-		st		ai_sidemode
-.sidePicked:
+		move.b	#ST_APPROACH,ai_state	; new word - fly clear of it first
+.sideDone:
+		tst.b	ai_forming
+		beq.s	.formed
+		move.w	#ai_holdframes,ai_holdFire
+		bra.s	.holdDone
+.formed:
 		tst.w	ai_holdFire
 		beq.s	.holdDone
 		subq.w	#1,ai_holdFire
 .holdDone:
 		addq.w	#1,ai_dry
 		bsr		ai_findTarget		; -> ai_target, ai_dx/dy, ai_cross/dot
+		bsr		ai_checkBox			; -> ai_recover
+		bsr		ai_station			; -> ai_sdx/sdy/sdist, ai_over
+		bsr		ai_states			; -> ai_state
 
-		; --- station keeping. the spot we want is ai_standoff past the end
-		;     letter on our side and ai_stationdy below the row. while we are
-		;     a long way off we steer at the station; once there we steer at
-		;     the letter, which from that spot is a shot straight along the row.
-		sf		ai_travel
-		tst.b	ai_sidemode
-		beq.s	.noStation			; brawl mode keeps no station
-		move.w	ai_target,d7
-		bmi.s	.noStation
-		bsr		ai_ptr
-		move.w	obj_xc(a1),d0
-		sub.w	obj_xc(a0),d0
-		move.w	#ai_standoff,d6
-		tst.w	ai_side
-		bpl.s	.offPos
-		neg.w	d6
-.offPos:
-		add.w	d6,d0
-		move.w	obj_yc(a1),d1
-		add.w	#ai_stationdy,d1
-		sub.w	obj_yc(a0),d1
-		bsr		ai_wrap
-		move.w	d0,d6
-		bpl.s	.sx
-		neg.w	d6
-.sx:
-		move.w	d1,d7
-		bpl.s	.sy
-		neg.w	d7
-.sy:
-		add.w	d7,d6
-		cmp.w	#ai_stationr,d6
-		ble.s	.noStation
-		st		ai_travel			; too far off station - go there first
-		bsr		ai_crossdot
-		bra.s	.aimSet
-.noStation:
-		move.l	ai_cross,d2
+		; --- steer at whatever the current state says: the station while
+		;     approaching, our own reverse velocity while braking, and the
+		;     letter itself once we have settled.
+		tst.b	ai_recover			; heading off the screen beats everything
+		bne.s	.recoverAim
+		cmp.b	#ST_APPROACH,ai_state
+		beq.s	.stationAim
+		cmp.b	#ST_ARRIVE,ai_state
+		beq.s	.brakeAim
+		move.l	ai_cross,d2			; ATTACK - nose on the letter
 		move.l	ai_dot,d3
-.aimSet:
-		tst.w	ai_brake
-		beq.s	.aimOk
-		; braking: aim at the reverse of our own velocity instead
-		move.w	obj_xvelo(a0),d0
+		bra		.aimSet
+
+.stationAim:
+		move.w	ai_sdx,d0
+		move.w	ai_sdy,d1
+		bsr		ai_crossdot
+		bra		.aimSet
+
+.brakeAim:
+		move.w	obj_xvelo(a0),d0	; nose round to face backwards so the
+		move.w	obj_yvelo(a0),d1	; thrust takes speed off
+		neg.w	d0
+		neg.w	d1
+		asr.w	#4,d0
+		asr.w	#4,d1
+		bsr		ai_crossdot
+		bra		.aimSet
+
+.recoverAim:
+		move.w	obj_xvelo(a0),d0	; how fast are we drifting?
+		bpl.s	.rvx
+		neg.w	d0
+.rvx:
+		move.w	obj_yvelo(a0),d1
+		bpl.s	.rvy
+		neg.w	d1
+.rvy:
+		add.w	d1,d0
+		cmp.w	#ai_slowspeed,d0
+		blt.s	.headHome			; slow enough - now aim for the middle
+		move.w	obj_xvelo(a0),d0	; still quick - kill the drift first
 		move.w	obj_yvelo(a0),d1
 		neg.w	d0
 		neg.w	d1
 		asr.w	#4,d0				; keep the muls well inside a long
 		asr.w	#4,d1
+		bra.s	.recoverGo
+.headHome:
+		move.w	#ai_boxcx,d0
+		sub.w	obj_xc(a0),d0
+		move.w	#ai_boxcy,d1
+		sub.w	obj_yc(a0),d1
+		bsr		ai_wrap
+.recoverGo:
 		bsr		ai_crossdot
-.aimOk:
+.aimSet:
+		move.l	d2,ai_aimcross
+		move.l	d3,ai_aimdot
 		bsr		ai_turn
 		bsr		ai_fire
 		bsr		ai_move
@@ -1246,8 +1556,6 @@ ai_findTarget:
 .scan:
 		btst	d7,d4
 		beq.s	.next
-		tst.w	obj_appear(a1)		; not shootable while it zooms in
-		bne.s	.next
 		tst.w	obj_flag(a1)		; already hit and exploding
 		bne.s	.next
 		tst.b	ai_sidemode
@@ -1296,6 +1604,7 @@ ai_findTarget:
 		sub.w	obj_yc(a0),d1
 		bra.s	.gotDelta
 .loiter:
+		clr.w	ai_burst			; do not carry a part fired burst across
 		; nothing to shoot yet - drift back towards the middle instead,
 		; so the ship keeps moving while the next word zooms in
 		move.w	#ai_homex,d0
@@ -1309,6 +1618,697 @@ ai_findTarget:
 		bsr		ai_crossdot
 		move.l	d2,ai_cross
 		move.l	d3,ai_dot
+		rts
+
+		IFNE	ai_debug
+;---------------------------------------------
+; DEBUG OVERLAY
+;---------------------------------------------
+; Appends a few lines to the draw table so the state machine can actually
+; be watched. Must be called with a6 still pointing at the free end of
+; linetab, i.e. after shots_set and before the terminating clr.w (a6).
+; set_line needs a2 = screenloc and a5 = yOffTab, the same contract
+; obj_move sets up, so those are reloaded here.
+;---------------------------------------------
+ai_debugMarks:
+		lea		ship_struct(pc),a0
+		move.l	screenloc,a2
+		lea		yOffTab(pc),a5
+
+		IFEQ	ai_hoveronly
+		move.w	ai_target,d7
+		bmi.s	.noTarget
+		ENDC
+
+		; --- + on the point we are flying to
+		IFNE	ai_hoveronly
+		move.w	ai_hx,dbgx			; absolute, so the wrap cannot hide it
+		move.w	ai_hy,dbgy
+		ELSE
+		move.w	obj_xc(a0),d0
+		add.w	ai_sdx,d0
+		move.w	d0,dbgx
+		move.w	obj_yc(a0),d0
+		add.w	ai_sdy,d0
+		move.w	d0,dbgy
+		ENDC
+		bsr.s	ai_markPlus
+
+		; --- X on the target letter
+		move.w	ai_target,d7
+		bmi.s	.noTarget
+		bsr		ai_ptr
+		move.w	obj_xc(a1),dbgx
+		move.w	obj_yc(a1),dbgy
+		bsr.s	ai_markCross
+.noTarget:
+
+		; --- state bar, bottom left. one segment per state, plus a fourth
+		;     while the nose is still swinging round.
+		moveq	#0,d6
+		IFNE	ai_hoveronly
+		move.b	ai_hstate,d6		; 1 rotate, 2 burn, 3 coast
+		tst.b	ai_astate
+		beq.s	.hoverBar
+		addq.w	#4,d6				; 5..7 while attacking
+.hoverBar:
+		ELSE
+		move.b	ai_state,d6
+		ENDC
+		addq.w	#1,d6				; 1 = APPROACH, 2 = ARRIVE, 3 = ATTACK
+		mulu	#6,d6
+		move.w	#ai_boxx0,d0
+		move.w	#ai_boxy1,d1
+		move.w	d0,d2
+		add.w	d6,d2
+		move.w	d1,d3
+		bsr		set_line
+		tst.b	ai_turning
+		beq.s	.notTurning
+		move.w	#ai_boxx0,d0		; second, shorter bar under it
+		move.w	#ai_boxy1,d1
+		addq.w	#3,d1
+		move.w	d0,d2
+		addq.w	#6,d2
+		move.w	d1,d3
+		bsr		set_line
+.notTurning:
+		rts
+
+;---------------------------------------------
+; dbgx/dbgy hold the centre, because set_line uses every data register
+;---------------------------------------------
+ai_markPlus:
+		move.w	dbgx,d0
+		sub.w	#ai_marksize,d0
+		move.w	dbgy,d1
+		move.w	dbgx,d2
+		add.w	#ai_marksize,d2
+		move.w	dbgy,d3
+		bsr		set_line
+		move.w	dbgx,d0
+		move.w	dbgy,d1
+		sub.w	#ai_marksize,d1
+		move.w	dbgx,d2
+		move.w	dbgy,d3
+		add.w	#ai_marksize,d3
+		bsr		set_line
+		rts
+
+ai_markCross:
+		move.w	dbgx,d0
+		sub.w	#ai_marksize,d0
+		move.w	dbgy,d1
+		sub.w	#ai_marksize,d1
+		move.w	dbgx,d2
+		add.w	#ai_marksize,d2
+		move.w	dbgy,d3
+		add.w	#ai_marksize,d3
+		bsr		set_line
+		move.w	dbgx,d0
+		add.w	#ai_marksize,d0
+		move.w	dbgy,d1
+		sub.w	#ai_marksize,d1
+		move.w	dbgx,d2
+		sub.w	#ai_marksize,d2
+		move.w	dbgy,d3
+		add.w	#ai_marksize,d3
+		bsr		set_line
+		rts
+
+dbgx:			dc.w	0
+dbgy:			dc.w	0
+		ENDC
+
+		IFNE	ai_hoveronly
+;---------------------------------------------
+; Top level: hover until the word has settled, then make one pass at it.
+;---------------------------------------------
+ai_pilot:
+		tst.w	ai_fireWait
+		beq.s	.nofw
+		subq.w	#1,ai_fireWait
+.nofw:
+		bsr		ai_pickEdge			; -> ai_target, nearest letter on our side
+		cmp.b	#AS_ATTACK,ai_astate
+		beq		ai_attack
+
+		bsr		ai_hover
+
+		; --- time to go? the word must be complete, and have been complete
+		;     for ai_attackdelay frames running.
+		tst.b	ai_forming
+		bne.s	.notSettled
+		move.l	enemy_con(pc),d0
+		beq.s	.notSettled			; no word at all yet
+		tst.w	ai_target
+		bmi.s	.notSettled			; nothing shootable in it
+
+		; --- are WE ready? on station and slow enough to steer.
+		cmp.w	#ai_attackready,ai_hdist
+		bhs.s	.notSettled
+		move.w	obj_xvelo(a0),d0
+		bpl.s	.rsx
+		neg.w	d0
+.rsx:
+		move.w	obj_yvelo(a0),d1
+		bpl.s	.rsy
+		neg.w	d1
+.rsy:
+		add.w	d1,d0
+		cmp.w	#ai_attackreadyspd,d0
+		bhs.s	.notSettled
+
+		addq.w	#1,ai_settleTick
+		cmp.w	#ai_attackdelay,ai_settleTick
+		blo.s	.pdone
+		move.b	#AS_ATTACK,ai_astate
+		move.b	#HS_ROTATE,ai_hstate
+		st		ai_turning
+		clr.w	ai_burst
+		clr.w	ai_attackTick
+		sf		ai_launched
+		rts
+.notSettled:
+		clr.w	ai_settleTick
+.pdone:
+		rts
+
+;---------------------------------------------
+; The letter at whichever end of the word we are attacking from. Picking
+; the end rather than the nearest means they die in order along the row.
+;---------------------------------------------
+ai_pickEdge:
+		moveq	#-1,d3
+		move.w	#$7fff,d5			; looking for the smallest x ...
+		tst.w	ai_side
+		bmi.s	.wantMin
+		move.w	#$8000,d5			; ... or the largest
+.wantMin:
+		move.l	enemy_con(pc),d4
+		beq.s	.store
+		lea		enemy_structs(pc),a1
+		moveq	#31,d7
+.scan:
+		btst	d7,d4
+		beq.s	.next
+		tst.w	obj_appear(a1)		; not solid yet
+		bne.s	.next
+		tst.w	obj_flag(a1)		; already hit
+		bne.s	.next
+		move.w	obj_xc(a1),d0
+		tst.w	ai_side
+		bmi.s	.leftEnd
+		cmp.w	d5,d0
+		ble.s	.next
+		bra.s	.take
+.leftEnd:
+		cmp.w	d5,d0
+		bge.s	.next
+.take:
+		move.w	d0,d5
+		move.w	d7,d3
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.scan
+.store:
+		move.w	d3,ai_target
+		rts
+
+;---------------------------------------------
+; ATTACK - aim, one shove, then ride through the word shooting.
+;---------------------------------------------
+ai_attack:
+		move.w	ai_target,d7
+		bmi		.wordCleared
+
+		addq.w	#1,ai_attackTick	; a pass that is going nowhere is better
+		cmp.w	#ai_attackmax,ai_attackTick	; restarted from the hover point
+		bhs		.giveUp
+
+		bsr		ai_ptr
+		move.w	obj_xc(a1),d0
+		move.w	d0,ai_hx			; debug X sits here
+		move.w	obj_xc(a0),d4
+		bsr		ai_signedCoord
+		sub.w	d4,d0
+		move.w	obj_yc(a1),d1
+		move.w	d1,ai_hy
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		sub.w	d4,d1
+
+		bsr		ai_crossdot
+		move.l	d2,ai_aimcross
+		move.l	d3,ai_aimdot
+
+		cmp.b	#HS_BURN,ai_hstate
+		beq.s	.aburn
+		cmp.b	#HS_COAST,ai_hstate
+		beq.s	.arun
+
+; --------------- AIM ---------------
+		bsr		ai_turn
+		bsr		ai_aligned
+		tst.w	d0
+		beq.s	.afire
+		move.b	#HS_BURN,ai_hstate
+		move.w	#ai_attackburn,d4	; one big shove to launch the run,
+		tst.b	ai_launched			; nudges after that
+		beq.s	.firstShove
+		move.w	#ai_attackfix,d4
+.firstShove:
+		st		ai_launched
+		move.w	d4,ai_burnLeft
+		bra.s	.afire
+
+; --------------- BURN ---------------
+.aburn:
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+		subq.w	#1,ai_burnLeft
+		bgt.s	.afire
+		move.b	#HS_COAST,ai_hstate
+		move.w	#ai_attackregrip,ai_regripTick
+		bra.s	.afire
+
+; --------------- RUN ---------------
+; Hold the nose still and shoot. A player does not steer all the way down
+; a row of rocks, so the aim is only re-checked every ai_attackregrip
+; frames, and only a big error is worth turning for.
+.arun:
+		subq.w	#1,ai_regripTick
+		bgt.s	.afire
+		move.w	#ai_attackregrip,ai_regripTick
+		move.l	ai_aimdot,d3
+		ble.s	.regrip				; it is behind us now
+		move.l	ai_aimcross,d4
+		bpl.s	.apos
+		neg.l	d4
+.apos:
+		add.l	d4,d4
+		add.l	d4,d4				; |cross| * 4, about 14 degrees
+		cmp.l	d3,d4
+		blt.s	.afire				; near enough, carry on
+.regrip:
+		move.b	#HS_ROTATE,ai_hstate
+		st		ai_turning
+.afire:
+		bsr		ai_attackFire
+		rts
+
+; --- nothing left to shoot: settle on the far side and wait for the
+;     next word. The side flips because we have just flown across.
+.wordCleared:
+		move.b	#AS_HOVER,ai_astate
+		move.w	ai_side,d0
+		neg.w	d0
+		move.w	d0,ai_side
+		st		ai_sidePicked
+		bra.s	.backToHover
+
+; --- the pass ran out of time. Set up again from whichever side we are
+;     nearer now, rather than flying back across the word.
+.giveUp:
+		move.b	#AS_HOVER,ai_astate
+		moveq	#-1,d0
+		cmp.w	#ast_x_center,obj_xc(a0)
+		blt.s	.gaSide
+		moveq	#1,d0
+.gaSide:
+		move.w	d0,ai_side
+		st		ai_sidePicked
+.backToHover:
+		move.b	#HS_ROTATE,ai_hstate
+		st		ai_turning
+		clr.w	ai_settleTick
+		rts
+
+;---------------------------------------------
+ai_attackFire:
+		tst.w	ai_fireWait
+		bne.s	.nofire
+		move.l	ai_aimdot,d3
+		ble.s	.nofire
+		move.l	ai_aimcross,d4
+		bpl.s	.fpos
+		neg.l	d4
+.fpos:
+		add.l	d4,d4
+		add.l	d4,d4				; |cross|*4, about 14 degrees
+		cmp.l	d3,d4
+		bge.s	.nofire
+
+		tst.w	ai_burst
+		bne.s	.shootIt
+		jsr		getRandomNumber
+		and.w	#ai_burstvar,d0
+		add.w	#ai_burstlen,d0
+		move.w	d0,ai_burst
+.shootIt:
+		subq.w	#1,ai_burst
+		bsr		ai_shoot
+		tst.w	ai_burst
+		beq.s	.pause
+		jsr		getRandomNumber
+		and.w	#ai_gapvar,d0
+		add.w	#ai_burstgap,d0
+		move.w	d0,ai_fireWait
+		rts
+.pause:
+		jsr		getRandomNumber
+		and.w	#31,d0
+		add.w	#ai_burstpause,d0
+		move.w	d0,ai_fireWait
+.nofire:
+		rts
+
+;---------------------------------------------
+; obj_move keeps its position as a fixed point value and shifts it right
+; with lsr - UNSIGNED. So an object that has drifted just above or just
+; left of the play area does not report a small negative coordinate, it
+; reports 496..511. Anything in that range is really -16..-1.
+;
+; Left uncorrected the vector to the hover point comes out around -480,
+; ai_wrap (which only corrects by one period) turns that into -346, and
+; the ship sits there pointing at a target that is nowhere near where the
+; maths thinks it is - facing it, and never arriving.
+;
+; in/out: d4
+;---------------------------------------------
+ai_signedCoord:
+		cmp.w	#480,d4				; no real coordinate ever reaches this
+		blo.s	.positive
+		sub.w	#512,d4
+.positive:
+		rts
+
+;---------------------------------------------
+; HOVER - the whole autopilot, for now.
+; a0 must already point at ship_struct.
+;---------------------------------------------
+ai_hover:
+		; --- which side? whichever half of the screen we are in, decided
+		;     once and then left alone so the ship does not change its mind
+		;     half way across.
+		tst.b	ai_sidePicked
+		bne.s	.gotSide
+		st		ai_sidePicked
+		moveq	#-1,d0
+		cmp.w	#ast_x_center,obj_xc(a0)
+		blt.s	.sideSet
+		moveq	#1,d0
+.sideSet:
+		move.w	d0,ai_side
+.gotSide:
+
+		; --- vector to the hover point. The absolute position is kept too,
+		;     because ai_wrap returns the SHORTEST way round the screen and
+		;     ship+delta can then land outside the buffer entirely - which is
+		;     why the debug marker kept vanishing.
+		move.w	#ai_hoverleft,d0
+		tst.w	ai_side
+		bmi.s	.gotX
+		move.w	#ai_hoverright,d0
+.gotX:
+		move.w	d0,ai_hx
+		move.w	obj_xc(a0),d4
+		bsr		ai_signedCoord
+		sub.w	d4,d0
+		move.w	#ai_hovery,d1
+		move.w	d1,ai_hy
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		sub.w	d4,d1
+		IFNE	ai_hoverwrap
+		bsr		ai_wrap
+		ENDC
+
+		move.w	d0,ai_sdx			; kept so the debug + lands on it
+		move.w	d1,ai_sdy
+
+		move.w	d0,d4				; and the manhattan distance, which every
+		bpl.s	.dx					; phase below needs
+		neg.w	d4
+.dx:
+		move.w	d1,d5
+		bpl.s	.dy
+		neg.w	d5
+.dy:
+		add.w	d5,d4
+		move.w	d4,ai_hdist
+
+		; d0/d1 now hold the true vector to the hover point, and stay that
+		; way - only the ROTATE phase below works on a modified copy.
+		cmp.b	#HS_BURN,ai_hstate
+		beq.s	.burning
+		cmp.b	#HS_COAST,ai_hstate
+		beq.s	.coasting
+
+; --------------- ROTATE ---------------
+		move.w	obj_xvelo(a0),d4	; aim at the point minus our own drift
+		muls	#ai_hoverlead,d4
+		asr.l	#7,d4				; velocity is 1/128 pixel per frame
+		sub.w	d4,d0
+		move.w	obj_yvelo(a0),d4
+		muls	#ai_hoverlead,d4
+		asr.l	#7,d4
+		sub.w	d4,d1
+
+		bsr		ai_crossdot
+		move.l	d2,ai_aimcross
+		move.l	d3,ai_aimdot
+		bsr		ai_turn
+
+		bsr		ai_aligned			; nose finally settled?
+		tst.w	d0
+		beq.s	.hdone
+		move.b	#HS_BURN,ai_hstate
+
+		move.w	ai_hdist,d4			; shove in proportion to how far it is
+		lsr.w	#ai_hoverburnshift,d4
+		cmp.w	#ai_hoverburnmin,d4
+		bhs.s	.notTooShort
+		move.w	#ai_hoverburnmin,d4
+.notTooShort:
+		cmp.w	#ai_hoverburnmax,d4
+		bls.s	.notTooLong
+		move.w	#ai_hoverburnmax,d4
+.notTooLong:
+		move.w	d4,ai_burnLeft
+.hdone:
+		rts
+
+; --------------- BURN ---------------
+; A fixed shove with the nose held still. Nothing is re-aimed here, which
+; is the whole point - a thrust vector that rotates draws a circle.
+.burning:
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+		subq.w	#1,ai_burnLeft
+		bgt.s	.hdone2
+		move.b	#HS_COAST,ai_hstate
+		clr.w	ai_coastTick
+.hdone2:
+		rts
+
+; --------------- COAST ---------------
+; Drift until we are near the point, or until we have sailed past it.
+; "Past it" is the dot product of the vector to the point with our own
+; velocity going negative - the moment we stop closing.
+.coasting:
+		addq.w	#1,ai_coastTick		; do not drift for ever if the closing
+		cmp.w	#ai_hovercoastmax,ai_coastTick	; test never trips
+		bhs.s	.hagain
+		cmp.w	#ai_hoverdead,ai_hdist
+		blo.s	.hagain				; close enough
+
+		; --- how many frames until we get there at this speed? if it is
+		;     fewer than ai_hoverbrake, start turning round now.
+		move.w	obj_xvelo(a0),d5
+		bpl.s	.bvx
+		neg.w	d5
+.bvx:
+		move.w	obj_yvelo(a0),d6
+		bpl.s	.bvy
+		neg.w	d6
+.bvy:
+		add.w	d6,d5
+		beq.s	.notClosing			; not moving, no arrival to anticipate
+		muls	#ai_hoverbrake,d5
+		move.w	ai_hdist,d4
+		ext.l	d4
+		lsl.l	#7,d4				; into the same 1/128 pixel units
+		cmp.l	d5,d4
+		blt.s	.hagain
+.notClosing:
+
+		move.w	d0,d4
+		muls	obj_xvelo(a0),d4
+		move.w	d1,d5
+		muls	obj_yvelo(a0),d5
+		add.l	d5,d4
+		bgt.s	.hdone3				; still closing - keep drifting
+.hagain:
+		move.b	#HS_ROTATE,ai_hstate
+		st		ai_turning			; make the next turn start from scratch
+.hdone3:
+		rts
+		ENDC
+
+;---------------------------------------------
+; Where we want to be: level with the target letter, ai_stationdx to the
+; side of it. Also works out whether we have sailed past it, which is the
+; other reason to stop flying and start shooting.
+;---------------------------------------------
+ai_station:
+		sf		ai_over
+		move.w	#$7fff,ai_sdist
+		move.w	ai_target,d7
+		bmi		.none
+
+		tst.b	ai_forming
+		beq.s	.letterStation
+
+		; --- A word is still arriving. Sitting among letters that are about
+		;     to materialise looks wrong - the ship is flying through solid
+		;     objects and visibly not dying. So go and wait at the edge of
+		;     the play box on our side until the word has finished, then
+		;     come in from outside.
+		move.w	#ai_boxx0,d0
+		tst.w	ai_side
+		bmi.s	.gotSafe
+		move.w	#ai_boxx1,d0
+.gotSafe:
+		sub.w	obj_xc(a0),d0
+		move.w	#ast_y_start,d1		; level with the row, ready to attack
+		sub.w	obj_yc(a0),d1
+		bsr		ai_wrap
+		move.w	d0,ai_sdx
+		move.w	d1,ai_sdy
+		bra.s	.measure
+
+.letterStation:
+		bsr		ai_ptr
+		move.w	#ai_stationdx,d6
+		tst.w	ai_side
+		bpl.s	.offPos
+		neg.w	d6
+.offPos:
+		move.w	obj_xc(a1),d0
+		add.w	d6,d0
+		sub.w	obj_xc(a0),d0
+		move.w	obj_yc(a1),d1
+		add.w	#ai_stationdy,d1
+		sub.w	obj_yc(a0),d1
+		bsr		ai_wrap
+		move.w	d0,ai_sdx
+		move.w	d1,ai_sdy
+
+		; overshot? on the way in the station is ahead of us, so ai_sdx has
+		; the opposite sign to ai_side. once we are past it they match.
+		muls	ai_side,d0
+		ble.s	.measure
+		st		ai_over
+.measure:
+		move.w	ai_sdx,d0
+		bpl.s	.ax
+		neg.w	d0
+.ax:
+		move.w	ai_sdy,d1
+		bpl.s	.ay
+		neg.w	d1
+.ay:
+		add.w	d1,d0
+		move.w	d0,ai_sdist
+.none:
+		rts
+
+;---------------------------------------------
+; APPROACH -> ARRIVE -> ATTACK -> APPROACH
+;---------------------------------------------
+ai_states:
+		move.w	obj_xvelo(a0),d0	; how fast are we going?
+		bpl.s	.sx
+		neg.w	d0
+.sx:
+		move.w	obj_yvelo(a0),d1
+		bpl.s	.sy
+		neg.w	d1
+.sy:
+		add.w	d1,d0
+
+		tst.w	ai_target
+		bmi.s	.toApproach			; nothing to aim at - just fly
+
+		cmp.b	#ST_ARRIVE,ai_state
+		beq.s	.inArrive
+		cmp.b	#ST_ATTACK,ai_state
+		beq.s	.inAttack
+
+.inApproach:
+		tst.b	ai_over				; sailed past the station?
+		bne.s	.settle
+		cmp.w	#ai_arrivedist,ai_sdist
+		bhs.s	.done				; still a way to go
+.settle:
+		cmp.w	#ai_arrivespeed,d0
+		bhi.s	.toArrive			; too quick to stop here - brake first
+		bra.s	.toAttack
+
+.inArrive:
+		cmp.w	#ai_arrivespeed,d0
+		bhi.s	.done				; still shedding speed
+		bra.s	.toAttack
+
+.inAttack:
+		cmp.w	#ai_leavedist,ai_sdist
+		bls.s	.done				; near enough - stay put and shoot
+		moveq	#-1,d1				; drifted off. go round again, from
+		cmp.w	#ast_x_center,obj_xc(a0)	; whichever end we are nearer now
+		blt.s	.sideSet
+		moveq	#1,d1
+.sideSet:
+		move.w	d1,ai_side
+.toApproach:
+		move.b	#ST_APPROACH,ai_state
+		rts
+.toArrive:
+		move.b	#ST_ARRIVE,ai_state
+		rts
+.toAttack:
+		move.b	#ST_ATTACK,ai_state
+.done:
+		rts
+
+;---------------------------------------------
+; project the ship ai_lookahead frames along its current velocity and set
+; ai_recover if that would put it outside the box.
+;---------------------------------------------
+ai_checkBox:
+		sf		ai_recover
+		IFEQ	ai_keepbox
+		rts
+		ENDC
+		move.w	obj_xvelo(a0),d1
+		muls	#ai_lookahead,d1
+		asr.l	#7,d1				; velocity is 1/128 pixel per frame
+		add.w	obj_xc(a0),d1
+		cmp.w	#ai_boxx0,d1
+		blt.s	.out
+		cmp.w	#ai_boxx1,d1
+		bgt.s	.out
+		move.w	obj_yvelo(a0),d1
+		muls	#ai_lookahead,d1
+		asr.l	#7,d1
+		add.w	obj_yc(a0),d1
+		cmp.w	#ai_boxy0,d1
+		blt.s	.out
+		cmp.w	#ai_boxy1,d1
+		ble.s	.in
+.out:
+		st		ai_recover
+.in:
 		rts
 
 ;---------------------------------------------
@@ -1331,8 +2331,9 @@ ai_valid:
 		btst	d7,d6
 		beq.s	.bad
 		bsr.s	ai_ptr
-		tst.w	obj_appear(a1)
-		bne.s	.bad
+		; a letter still zooming in counts as a target for POSITIONING - it
+		; cannot be shot because the read pause is held up the whole time a
+		; word is arriving, and shot_collision ignores it anyway.
 		tst.w	obj_flag(a1)
 		bne.s	.bad
 		moveq	#1,d0
@@ -1391,22 +2392,56 @@ ai_crossdot:
 		rts
 
 ;---------------------------------------------
+; Are we lined up on what we are steering at closely enough to burn?
+; -> d0 non zero if so. Uses d3/d4, leaves d2 alone for obj_thrust.
+;---------------------------------------------
+ai_aligned:
+		moveq	#0,d0
+		tst.b	ai_turning			; still swinging the nose round?
+		bne.s	.no
+		moveq	#1,d0
+.no:
+		rts
+
+;---------------------------------------------
 ; in: d2 = cross, d3 = dot. turn towards it, with a deadzone so the ship
 ; does not jitter once it is lined up.
 ;---------------------------------------------
 ai_turn:
 		move.l	d2,d4
 		bpl.s	.pos
-		neg.l	d4
+		neg.l	d4					; d4 = |cross|
 .pos:
 		tst.l	d3
-		bmi.s	.turn				; behind us - always turn
-		add.l	d4,d4
-		add.l	d4,d4
-		add.l	d4,d4				; |cross|*8 vs dot -> about 7 degrees
-		cmp.l	d3,d4
-		blt.s	.done
+		ble.s	.turn				; behind us - always turn
+
+		tst.b	ai_turning
+		beq.s	.wasStill
+
+		; --- turning: stop once inside the narrow cone (x8, about 7 deg)
+		move.l	d4,d5
+		add.l	d5,d5
+		add.l	d5,d5
+		add.l	d5,d5
+		cmp.l	d3,d5
+		bge.s	.turn				; not there yet
+		sf		ai_turning			; lined up - hold the nose still
+		rts
+
+.wasStill:
+		; --- lined up: only start again once outside the wider cone
+		;     (x6, about 9.5 deg). The gap between the two is the deadband
+		;     that stops the left-right jitter.
+		move.l	d4,d5
+		add.l	d5,d5
+		move.l	d5,d6
+		add.l	d5,d5
+		add.l	d6,d5
+		cmp.l	d3,d5
+		blt.s	.done				; near enough - stay put
+
 .turn:
+		st		ai_turning
 		moveq	#ai_turnrate,d1
 		tst.l	d2
 		bmi.s	.left
@@ -1422,26 +2457,19 @@ ai_turn:
 ; towards), with a random cooldown so it does not machine gun
 ;---------------------------------------------
 ai_fire:
-		; --- if any letter is right on top of us, shoot. no aiming test, no
-		;     waiting for a tidy angle, no read pause - a player mashes fire
-		;     when a rock is in their face rather than gliding over it.
-		bsr		ai_pointblankNear
-		tst.w	d0
-		beq.s	.normal
 		tst.w	ai_fireWait
 		bne.w	.no
-		bra.w	.takeIt
-.normal:
-		tst.w	ai_holdFire			; word not settled yet - keep circling
-		bne.w	.no
-		tst.w	ai_fireWait
-		bne.w	.no
-		move.w	ai_target,d0
-		bmi.w	.no					; nothing to shoot at
-		; a shot inherits our velocity, so firing while backing away from
-		; the target produces one that crawls and never arrives. work out
-		; how fast the shot would actually close: 256 is its own speed, plus
-		; however much of ours is along the nose.
+
+		IFNE	ai_pbholdfire
+		tst.w	ai_holdFire			; the read pause silences everything,
+		bne.w	.no					; point blank included
+		ENDC
+
+		; --- A shot inherits our velocity, so one fired while we are backing
+		;     away crawls and never arrives. 256 of its own speed plus
+		;     however much of ours points along the nose. This guards EVERY
+		;     shot, point blank and mid burst included, because "flying into
+		;     a letter" means closing on it, not drifting away from it.
 		move.w	obj_xvelo(a0),d0
 		move.w	obj_yvelo(a0),d1
 		bsr		ai_crossdot			; d3 = our speed along the nose, Q15
@@ -1451,6 +2479,22 @@ ai_fire:
 		add.w	#256,d3				; the shot's own muzzle speed
 		cmp.w	#ai_minclose,d3
 		blt.w	.no					; would never catch up - hold fire
+
+		; --- a letter right on top of us skips the fussy aiming tests, but
+		;     it had to pass the two above to get here
+		bsr		ai_pointblankNear
+		tst.w	d0
+		bne.w	.takeIt
+
+		IFEQ	ai_pbholdfire
+		tst.w	ai_holdFire			; pause only stops the ordinary shots
+		bne.w	.no
+		ENDC
+
+		move.w	ai_target,d0
+		bmi.w	.no					; nothing to shoot at
+		cmp.b	#ST_ATTACK,ai_state	; only once we have arrived and settled
+		bne.w	.no
 
 		; once a burst is running the rest of it goes off regardless of aim.
 		; the ship is still turning and drifting, so the tail of the burst
@@ -1598,37 +2642,34 @@ ai_shoot:
 ; thrust bursts, coasting and counter-thrust braking
 ;---------------------------------------------
 ai_move:
-		move.w	obj_xvelo(a0),d0	; rough speed, manhattan
-		bpl.s	.px
-		neg.w	d0
-.px:
-		move.w	obj_yvelo(a0),d1
-		bpl.s	.py
-		neg.w	d1
-.py:
-		add.w	d1,d0
-
-		tst.w	ai_brake
-		beq.s	.noBrake
-		subq.w	#1,ai_brake
-		cmp.w	#ai_slowspeed,d0
-		blt.s	.brakeDone
-		moveq	#ai_thrust,d2		; we are pointing backwards, so this slows us
+		tst.b	ai_recover
+		beq.s	.notRecover
+		; getting back on screen beats everything, but still only burn once
+		; the nose has come round - otherwise the thrust sweeps in an arc
+		bsr		ai_aligned
+		tst.w	d0
+		beq.s	.nothing
+		moveq	#ai_thrust,d2
 		bsr		obj_thrust
+.nothing:
 		rts
-.brakeDone:
-		clr.w	ai_brake
-		rts
+
+.notRecover:
+		cmp.b	#ST_ARRIVE,ai_state
+		bne.s	.notArrive
+		; wait for the nose to come round to face backwards, then burn. This
+		; used to thrust unconditionally, which meant ~45 frames of thrust
+		; sweeping through every direction while it turned - a neat circle.
+		bsr		ai_aligned
+		tst.w	d0
+		beq.s	.noBrake
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
 .noBrake:
-		cmp.w	#ai_maxspeed,d0
-		blt.s	.notFast
-		jsr		getRandomNumber		; too quick - turn round and burn it off
-		and.w	#15,d0
-		add.w	#ai_brakebase,d0
-		move.w	d0,ai_brake
 		rts
-.notFast:
-		tst.w	ai_thrustLeft
+
+.notArrive:
+		tst.w	ai_thrustLeft		; part way through a burn?
 		beq.s	.notThrusting
 		subq.w	#1,ai_thrustLeft
 		moveq	#ai_thrust,d2
@@ -1639,20 +2680,37 @@ ai_move:
 		beq.s	.decide
 		subq.w	#1,ai_coastLeft
 		rts
+
 .decide:
-		; thrust in the direction we happen to be aiming, on a coin flip.
-		; the ship's movement is a by-product of aiming, which is exactly
-		; how a person plays this - drift past, turn, come back.
+		cmp.b	#ST_APPROACH,ai_state
+		bne.s	.attackBurn
+
+		; --- flying to the station. Only burn when the nose is actually
+		;     pointing at it; burning part way through the turn just shoves
+		;     us sideways, which is what made the ship circle it. Short
+		;     bursts, because a long one overshoots.
+		bsr		ai_aligned			; lined up on the station yet?
+		tst.w	d0
+		beq.s	.stillTurning		; no - wait, and do NOT book a coast on
+									; top of it. Falling through to .coast here
+									; armed 8..39 idle frames every frame the
+									; nose was still coming round, so the ship
+									; finished its turn and then sat doing
+									; nothing for most of a second.
 		move.w	#ai_travelodds,d2
-		tst.b	ai_travel
-		bne.s	.odds				; repositioning - get on with it
+		moveq	#ai_travelburst,d3
+		moveq	#1,d4
+		bra.s	.odds
+
+.attackBurn:
+		; --- settled in and shooting. With ai_thrustodds at 0 this never
+		;     burns at all, which is the point: hold the spot, let the shots
+		;     do the work, and only move again when the state machine drops
+		;     back to APPROACH.
 		move.w	#ai_thrustodds,d2
-		; the only reason not to burn is that we are pointing straight at
-		; something close. thrusting part way through a turn is exactly what
-		; keeps a real player moving, so that is allowed.
 		move.l	ai_dot,d1
-		bmi.s	.odds				; nose is away from it - safe to burn
-		move.w	ai_dx,d0
+		bmi.s	.attackLen			; nose away from it - safe to burn
+		move.w	ai_dx,d0			; never burn straight at a close letter
 		bpl.s	.kx
 		neg.w	d0
 .kx:
@@ -1662,15 +2720,19 @@ ai_move:
 .ky:
 		add.w	d1,d0
 		cmp.w	#ai_keepaway,d0
-		blt.s	.coast				; would ram it
+		blt.s	.coast
+.attackLen:
+		moveq	#ai_thrustbase,d3
+		moveq	#7,d4
+
 .odds:
 		jsr		getRandomNumber
 		and.w	#255,d0
 		cmp.w	d2,d0
 		bcc.s	.coast
 		jsr		getRandomNumber
-		and.w	#7,d0
-		add.w	#ai_thrustbase,d0
+		and.w	d4,d0
+		add.w	d3,d0
 		move.w	d0,ai_thrustLeft
 		rts
 .coast:
@@ -1678,7 +2740,9 @@ ai_move:
 		and.w	#31,d0
 		add.w	#ai_coastbase,d0
 		move.w	d0,ai_coastLeft
+.stillTurning:
 		rts
+
 ;---------------------------------------------
 ship_set:				;<set ship, keyboard control>
 		lea		ship_struct(pc),a0
@@ -1766,16 +2830,8 @@ scaleOffset:
 		asr.w	#2,d0
 		rts
 
-;---------------------------------------------
-ast_count = 8
-
 ; ast_x_start		= 80			; for big
 ; ast_x_offset 	= 32
-
-ast_x_start		= 100			; for medium
-ast_x_offset 	= 24			; the nominal slot width. letterAdvance below
-								; is written as offsets from it, so changing this
-								; still scales the whole word
 
 ; ast_x_start		= 70+((8*16)/2)			; for small
 ; ast_x_offset 	= 16
@@ -2567,13 +3623,6 @@ sctab:
 ;--------------------------------------------
 linetab:	ds.b	200*16
 
-
-;---------------------------------------------
-; starfield
-;---------------------------------------------
-;stars_count		= 105
-stars_count		= 120
-
 ; a5: pointer to copperlist 
 setupStarfield::
 		lea		slst0,a0
@@ -2780,14 +3829,6 @@ slst3:		ds.b	stars_count*8
 
 ; ---------------
 
-; object names (ids)
-ship	=	0		; own spaceship
-shot	=	1		; own shot
-big		=	2		; big asteroid
-medium	=	3		; medium asteroid
-small	=	4		; small asteroid
-letter	=	5
-
 ;---------------------------------------------
 coord_tabs:
 		dc.l	ship_coords
@@ -2824,6 +3865,7 @@ coord_tabs:
 		dc.l	0
 ;---------------------------------------------
 shot_con:		dc.w	0
+wordGapTimer:	dc.w	wordGap
 shot_times:		ds.w	16
 shot_structs:	ds.b	obj_len*16
 enemy_con:		dc.l	0
