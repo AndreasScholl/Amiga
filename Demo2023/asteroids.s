@@ -1374,6 +1374,7 @@ ai_astate:		dc.b	AS_HOVER
 ai_settleTick:	dc.w	0
 ai_regripTick:	dc.w	0
 ai_attackTick:	dc.w	0
+ai_edgeSide:	dc.w	0		; which end ai_target was picked for
 ai_launched:	dc.b	0		; the launch shove has been spent
 				even
 ai_recover:		dc.b	0		; steering back onto the screen
@@ -1797,40 +1798,78 @@ ai_pilot:
 ;---------------------------------------------
 ; The letter at whichever end of the word we are attacking from. Picking
 ; the end rather than the nearest means they die in order along the row.
+;
+; The answer only changes when a letter dies, when one finishes arriving,
+; or when we swap ends - perhaps a dozen times a word. Walking all 32
+; slots to rediscover it every frame costs about 2000 cycles, four and a
+; half raster lines; checking that the one we already have is still good
+; costs about 210. So keep it and revalidate.
 ;---------------------------------------------
 ai_pickEdge:
+		tst.b	ai_forming			; letters still arriving - the end one can
+		bne.s	.rescan				; change under us
+		move.w	ai_target,d7
+		bmi.s	.rescan
+		move.w	ai_side,d6
+		cmp.w	ai_edgeSide,d6		; swapped ends since we picked?
+		bne.s	.rescan
+		move.l	enemy_con(pc),d6
+		btst	d7,d6
+		beq.s	.rescan				; gone entirely
+		bsr		ai_ptr
+		tst.w	obj_appear(a1)
+		bne.s	.rescan
+		tst.w	obj_flag(a1)
+		bne.s	.rescan
+		rts						; still the right letter
+
+.rescan:
+		move.w	ai_side,d6
+		move.w	d6,ai_edgeSide
 		moveq	#-1,d3
-		move.w	#$7fff,d5			; looking for the smallest x ...
-		tst.w	ai_side
-		bmi.s	.wantMin
-		move.w	#$8000,d5			; ... or the largest
-.wantMin:
 		move.l	enemy_con(pc),d4
-		beq.s	.store
+		beq		.store
 		lea		enemy_structs(pc),a1
 		moveq	#31,d7
-.scan:
+		move.w	#$7fff,d5			; looking for the smallest x ...
+		tst.w	d6
+		bmi.s	.leftLoop
+		move.w	#$8000,d5			; ... or the largest
+
+; --- two loops rather than one, so the side test is not repeated inside
+;     it. That was another 26 cycles per live letter.
+.rightLoop:
 		btst	d7,d4
-		beq.s	.next
+		beq.s	.rnext
 		tst.w	obj_appear(a1)		; not solid yet
-		bne.s	.next
+		bne.s	.rnext
 		tst.w	obj_flag(a1)		; already hit
-		bne.s	.next
+		bne.s	.rnext
 		move.w	obj_xc(a1),d0
-		tst.w	ai_side
-		bmi.s	.leftEnd
 		cmp.w	d5,d0
-		ble.s	.next
-		bra.s	.take
-.leftEnd:
-		cmp.w	d5,d0
-		bge.s	.next
-.take:
+		ble.s	.rnext
 		move.w	d0,d5
 		move.w	d7,d3
-.next:
+.rnext:
 		lea		obj_len(a1),a1
-		dbf		d7,.scan
+		dbf		d7,.rightLoop
+		bra.s	.store
+
+.leftLoop:
+		btst	d7,d4
+		beq.s	.lnext
+		tst.w	obj_appear(a1)
+		bne.s	.lnext
+		tst.w	obj_flag(a1)
+		bne.s	.lnext
+		move.w	obj_xc(a1),d0
+		cmp.w	d5,d0
+		bge.s	.lnext
+		move.w	d0,d5
+		move.w	d7,d3
+.lnext:
+		lea		obj_len(a1),a1
+		dbf		d7,.leftLoop
 .store:
 		move.w	d3,ai_target
 		rts
