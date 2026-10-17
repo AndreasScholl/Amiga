@@ -394,6 +394,18 @@ initGame::				;<initialize game>
 initGameObjects::
 		st		ai_sidemode			; always work the word from one end
 		bsr		buildYOffTab		; needed by drawline/set_point below
+
+		; --- every enemy slot gets its own line cache block, for good
+		lea		enemy_structs(pc),a0
+		lea		enemy_cache,a1
+		moveq	#32-1,d0
+.cachePtrs:
+		move.l	a1,obj_cache(a0)
+		move.l	#-1,obj_cachekey(a0)
+		lea		obj_len(a0),a0
+		lea		cache_len(a1),a1
+		dbf		d0,.cachePtrs
+		clr.w	collCount
 		bsr		scaleLetters
 		bsr		shots_init
 		bsr		ship_init
@@ -613,7 +625,22 @@ obj_appear:		rs.w	1
 obj_wait:		rs.w	1
 obj_flag:		rs.w    1		; flags (hit, ...)
 obj_timer:		rs.w	1
+obj_cache:		rs.l	1		; line cache block, enemy slots only (0 = none)
+obj_cachekey:	rs.l	1		; xc:yc the cache was built for, -1 = stale
 obj_len:		rs.w	0		; end
+
+; --- line cache. a letter that has finished arriving neither rotates nor
+;     scales, so its line list only changes when it moves onto another
+;     pixel - every 8 frames at the very most, usually far less. obj_move
+;     builds the list once, keeps a copy here, and replays it until xc:yc
+;     changes. one block per enemy slot: a word count, then the linetab
+;     entries (at most max_objlines lines of line_entry bytes).
+line_entry		= 7*2			; bytes per line in linetab, see drawline
+cache_len		= 2+(max_objlines*line_entry)
+
+; --- collList entry, built by updateEnemies for shot_collision:
+;     x0, x1, y0, y1 (words), struct pointer (long), enemy_con bit, pad
+coll_len		= 16
 ;---------------------------------------------
 obj_init:				;<initialize object>
 		move.w	d0,obj_xc(a0)
@@ -647,8 +674,9 @@ obj_init:				;<initialize object>
 ;		movem.l	(a7)+,d0-d7/a0-a6
 
 		move.w	#64,obj_scale(a0)
-		
+
 		clr.w	obj_flag(a0)
+		move.l	#-1,obj_cachekey(a0)	; new shape, whatever is cached is stale
 		rts
 ;---------------------------------------------
 obj_slowdown:
@@ -766,10 +794,11 @@ obj_move:				;<calculate new object coords>
 		lsr.w	#7,d0					; convert to integer
 		move.w	d0,obj_yc(a0)			; y integer
 .doneMove:		
-		; --- set up for set_point / set_line / drawline. these two are
-		;     invariant for the whole object, so they are loaded here rather
-		;     than on every single line.
-		move.l	screenloc,a2			; plot base
+		; --- set up for set_point / set_line / drawline. invariant for the
+		;     whole object, so it is loaded here rather than on every line.
+		;     there is no screen base any more: linetab holds offsets into
+		;     the buffer and objects_draw adds screenloc, which is what lets
+		;     a cached line list survive the double buffer swap.
 		lea		yOffTab(pc),a5			; y -> y*game_lineBytes
 
 		lea		obj_coords(a0),a1		; coord table
@@ -876,6 +905,48 @@ obj_move:				;<calculate new object coords>
 		dbf		d7,.lines
 		rts
 .norotobj:
+		; --- static shape: replay the cached line list if the object has
+		;     not moved onto another pixel since it was built (see obj_cache).
+		;     ~105 cycles a line instead of ~400 for clip + octant setup.
+		move.l	obj_cache(a0),d0
+		beq.s	.norotBuild				; not an enemy slot, no cache
+		tst.w	obj_flag(a0)
+		bne.s	.norotBuild				; exploding - lines change every frame
+		move.l	d0,a3
+		move.l	obj_xc(a0),d0			; xc:yc in one go
+		cmp.l	obj_cachekey(a0),d0
+		bne.s	.cacheFill
+		move.w	(a3)+,d7				; words cached
+		lsr.w	#1,d7					; -> longs, an odd word drops into carry
+		bcc.s	.cacheEven
+		move.w	(a3)+,(a6)+
+.cacheEven:
+		subq.w	#1,d7
+		bmi.s	.cacheDone
+.cacheCopy:
+		move.l	(a3)+,(a6)+
+		dbf		d7,.cacheCopy
+.cacheDone:
+		rts
+
+.cacheFill:
+		move.l	d0,obj_cachekey(a0)
+		move.l	a6,-(a7)				; where this object's entries start
+		bsr.s	.norotBuild				; a1 still points at obj_coords
+		move.l	(a7)+,a1
+		move.l	obj_cache(a0),a3
+		move.l	a6,d0
+		sub.l	a1,d0
+		lsr.w	#1,d0					; words written (0 if fully clipped)
+		move.w	d0,(a3)+
+		subq.w	#1,d0
+		bmi.s	.cacheDone
+.cacheStore:
+		move.w	(a1)+,(a3)+
+		dbf		d0,.cacheStore
+		rts
+
+.norotBuild:
 		move.w	obj_xc(a0),a3			; a3 survives set_line/drawline
 		move.w	(a1)+,d7
 		subq.w	#1,d7
@@ -894,6 +965,7 @@ obj_move:				;<calculate new object coords>
 updateEnemies:
 		sf		ai_forming			; set again below by any letter that is
 									; still waiting or still zooming in
+		lea		collList,a4			; shootable enemies, rebuilt every frame
 		move.l	enemy_con(pc),d0
 		lea		enemy_structs(pc),a0
 		moveq	#31,d7
@@ -909,11 +981,9 @@ updateEnemies:
 		st		ai_forming			; hasn't even started yet
 		bra		.nenemy
 .noWait:
-		movem.l	d0/d7,-(a7)
-;		move.w	#$f0f,$dff180
+		movem.l	d0/d7/a4,-(a7)
 		bsr		obj_move			; move and setup draw
-;		move.w	#$fff,$dff180
-		movem.l	(a7)+,d0/d7
+		movem.l	(a7)+,d0/d7/a4
 
 		move.w	obj_appear(a0),d2
 		tst.w	d2
@@ -956,19 +1026,50 @@ updateEnemies:
 .noAppear:
 .appearing:
 		move.w	obj_flag(a0),d6
+		bne.s	.flagged
+
+		; --- solid and fully arrived: shots can hit it this frame. the box
+		;     goes into collList so shot_collision only walks the handful of
+		;     live letters instead of all 32 slots for every shot.
+		tst.w	obj_appear(a0)
+		bne.s	.doneHit
+		move.w	obj_collsize(a0),d1
+		move.w	obj_xc(a0),d2
+		move.w	d2,d3
+		sub.w	d1,d2
+		add.w	d1,d3
+		move.w	d2,(a4)+			; x0
+		move.w	d3,(a4)+			; x1
+		move.w	obj_yc(a0),d2
+		move.w	d2,d3
+		sub.w	d1,d2
+		add.w	d1,d3
+		move.w	d2,(a4)+			; y0
+		move.w	d3,(a4)+			; y1
+		move.l	a0,(a4)+			; struct
+		move.w	d7,(a4)+			; enemy_con bit
+		addq.w	#2,a4				; pad to coll_len
+		bra.s	.doneHit
+
+.flagged:
 		btst	#1,d6				; explode flag set?
 		beq.s	.notExloding
 		bsr		lineExplode
-		bra		.doneHit
+		bra.s	.doneHit
 .notExloding:
 		btst	#0,d6				; hit flag set?
 		beq.s	.doneHit
-		bsr.s	initLineExplode
+		bsr		initLineExplode
 .doneHit:
 
-.nenemy:	
+.nenemy:
 		lea		obj_len(a0),a0
 		dbf		d7,.setenemys
+
+		move.l	a4,d1
+		sub.l	#collList,d1
+		lsr.w	#4,d1				; / coll_len
+		move.w	d1,collCount
 		rts
 ;---------------------------------------------
 ; a0: obj
@@ -990,6 +1091,11 @@ initLineExplode:
 		ext.l	d2
 		move.l	d2,d5
 		move.l	d0,d6
+; every endpoint flies off at (line centre * 4) + a random -16..15 per axis.
+; that used to be four getRandomNumber calls per line, ~170 cycles each, and
+; a burst can hit two or three letters in the same frame. now one call per
+; line supplies all four offsets as 5 bit fields - bits 0-4, 16-20, 21-25
+; and 26-30, which skips the weak low bits of the generator.
 .lines:
 		move.w	(a1)+,d3
 		move.w	(a1)+,d4
@@ -999,34 +1105,28 @@ initLineExplode:
 		asl		#2,d3
 		asr		#1,d4
 		asl		#2,d4
-
-		move.w	d3,d1	
-		jsr		getRandomNumber
-		and 	#$1f,d0
-		sub.w	#16,d0
-		add.w	d0,d3
-		move.w	d3,(a2)+
-		move.w	d1,d3	
-
-		move.w	d4,d1	
-		jsr		getRandomNumber
-		and 	#$1f,d0
-		sub.w	#16,d0
-		add.w	d0,d4
-		move.w	d4,(a2)+
-		move.w	d1,d4
+		sub.w	#16,d3				; the -16 of every random offset, once
+		sub.w	#16,d4
 
 		jsr		getRandomNumber
-		and 	#$1f,d0
-		sub.w	#16,d0
-		add.w	d0,d3
-		move.w	d3,(a2)+
-
-		jsr		getRandomNumber
-		and 	#$1f,d0
-		sub.w	#16,d0
-		add.w	d0,d4
-		move.w	d4,(a2)+
+		moveq	#$1f,d1
+		and.w	d0,d1
+		add.w	d3,d1
+		move.w	d1,(a2)+			; p1 x speed
+		swap	d0
+		moveq	#$1f,d1
+		and.w	d0,d1
+		add.w	d4,d1
+		move.w	d1,(a2)+			; p1 y speed
+		lsr.w	#5,d0
+		moveq	#$1f,d1
+		and.w	d0,d1
+		add.w	d3,d1
+		move.w	d1,(a2)+			; p2 x speed
+		lsr.w	#5,d0
+		and.w	#$1f,d0
+		add.w	d4,d0
+		move.w	d0,(a2)+			; p2 y speed
 
 		dbf		d2,.lines
 		move.l	d6,d0
@@ -1061,29 +1161,37 @@ lineExplode:
 		lsl.w	#2,d2			; * 4 for x1,y1,x2,y2
 		sub.w	#1,d2
 		ext.l	d2
+; each coordinate drifts by its speed, and the speed slows down by one
+; towards zero. one tail per sign instead of a shared one saves the bra and
+; the tst, and a coordinate that has stopped is simply skipped - its fixed
+; point and integer values are already what they would be rewritten to.
 .explode:
-		move.w	(a3),d1
 		move.w	(a2),d3			; speed
-		; --- slow down (adjust speed)
-		tst.w	d3
-		beq.s	.doneSpeed
-		bge.s	.decSpeed
-		; cmp.w	#-1,d3
-		; bge.s	.doneSpeed
-		addq	#1,d3
-		bra.s	.doneSpeed
-.decSpeed
-		; cmp.w	#1,d3
-		; ble.s	.doneSpeed
-		subq	#1,d3
-.doneSpeed:
+		bgt.s	.decSpeed
+		beq.s	.still
+		addq.w	#1,d3
 		move.w	d3,(a2)+	; store speed
-		add.w	d3,d1
-		move.w	d1,(a3)+	; store new coord (fixed point)
-		asr.w	#4,d1		; convert to int
-		move.w	d1,(a1)+	; store new coord (int)
-
+		add.w	(a3),d3
+		move.w	d3,(a3)+	; store new coord (fixed point)
+		asr.w	#4,d3		; convert to int
+		move.w	d3,(a1)+	; store new coord (int)
 		dbf		d2,.explode
+		bra.s	.moved
+.decSpeed:
+		subq.w	#1,d3
+		move.w	d3,(a2)+
+		add.w	(a3),d3
+		move.w	d3,(a3)+
+		asr.w	#4,d3
+		move.w	d3,(a1)+
+		dbf		d2,.explode
+		bra.s	.moved
+.still:
+		addq.w	#2,a2
+		addq.w	#2,a3
+		addq.w	#2,a1
+		dbf		d2,.explode
+.moved:
 
 		sub.w	#1,obj_timer(a0)
 		bne.s	.noRemove
@@ -1178,87 +1286,62 @@ shots_set:
 		move.w	d0,shot_con
 		rts
 ;---------------------------------------------
+; walks collList, which updateEnemies fills with the boxes of every enemy
+; that is solid and fully arrived. that is at most the nine letters of a
+; word, where this used to test all 32 slots for every shot in the air.
+; out: d1 non zero if the shot hit something
 shot_collision:
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d1
-
-		lea		enemy_structs(pc),a3
-		move.l	enemy_con(pc),d7
-		moveq	#32-1,d6
-.shotcoll:	
-		move.l	d7,a5
-		btst	d6,d7
-		beq.w	.nocoll
-
-		move.w	obj_xc(a3),d2
-		move.w	obj_yc(a3),d3
-		move.w	d2,d4
-		move.w	d3,d5
-
-		; --- no coll while appearing
-		tst.w	obj_appear(a3)	
-		bne.s	.nocoll
-
-		move.w	obj_collsize(a3),d7
-
-		sub.w	d7,d2
-		cmp.w	d0,d2
-		bgt.s	.nocoll	
-		add.w	d7,d4
-		cmp.w	d0,d4
+		move.w	collCount,d7
+		subq.w	#1,d7
+		bmi.s	.colldone
+		lea		collList,a3
+.shotcoll:
+		cmp.w	(a3),d0				; x0 > x ?
 		blt.s	.nocoll
-		sub.w	d7,d3
-		cmp.w	d1,d3
+		cmp.w	2(a3),d0			; x1 < x ?
 		bgt.s	.nocoll
-		add.w	d7,d5
-		cmp.w	d1,d5
+		cmp.w	4(a3),d1			; y0 > y ?
 		blt.s	.nocoll
+		cmp.w	6(a3),d1			; y1 < y ?
+		bgt.s	.nocoll
 
 		; collision occured
-		cmp.w	#letter,obj_name(a3)
+		move.l	8(a3),a4
+		cmp.w	#letter,obj_name(a4)
 		bne.s	.noLetter
-		tst.w	obj_flag(a3)
-		bne.s	.nocoll				; already hit
-		move.w	#1,obj_flag(a3)		; set "hit" flag
+		tst.w	obj_flag(a4)
+		bne.s	.nocoll				; already hit by another shot this frame
+		move.w	#1,obj_flag(a4)		; set "hit" flag
 		moveq	#1,d1
 		rts
 .noLetter
-		cmp.w	#small,obj_name(a3)
+		cmp.w	#small,obj_name(a4)
 		bne.s	.nlast
-.removeObj:		
-		move.l	a5,d7
+.removeObj:
+		move.w	10(a3),d6			; enemy_con bit
+		move.l	enemy_con(pc),d7
 		bclr	d6,d7
 		move.l	d7,enemy_con
+		moveq	#1,d1
 		rts
 .nlast:
-		movem.l	d6-d7/a3/a5,-(a7)		
 		; split object into two (reusing self)
-		move.w	#small,obj_name(a3)
-		lea		coord_tabs(pc),a4
-		move.l	small*4(a4),obj_coords(a3)
-		add.w	#32,obj_xvelo(a3)
-		add.w	#32,obj_yvelo(a3)
-		neg.w	obj_yvelo(a3)
-		move.w	#8,obj_collsize(a3)
-
-		; second
-		; move.w	obj_xc(a3),d0
-		; move.w	obj_yc(a3),d1
-		; move.w	obj_xvelo(a3),d3
-		; neg.w	d3
-		; move.w	obj_yvelo(a3),d4
-		; neg.w	d4
-		; move.w	obj_name(a3),d5		; same name (id)
-		; moveq	#0,d2
-		; bsr		enemy_init
-		; move.w	#8,obj_collsize(a0)
-		movem.l	(a7)+,d6-d7/a3/a5
+		move.w	#small,obj_name(a4)
+		lea		coord_tabs(pc),a5
+		move.l	small*4(a5),obj_coords(a4)
+		move.l	#-1,obj_cachekey(a4)	; shape changed
+		add.w	#32,obj_xvelo(a4)
+		add.w	#32,obj_yvelo(a4)
+		neg.w	obj_yvelo(a4)
+		move.w	#8,obj_collsize(a4)
+		moveq	#1,d1
 		rts
-.nocoll:	
-		move.l	a5,d7
-		lea		obj_len(a3),a3
-		dbf		d6,.shotcoll
-.colldone:	
+.nocoll:
+		lea		coll_len(a3),a3
+		dbf		d7,.shotcoll
+.colldone:
 		moveq	#0,d1
 		rts
 ;---------------------------------------------
@@ -1628,12 +1711,11 @@ ai_findTarget:
 ; Appends a few lines to the draw table so the state machine can actually
 ; be watched. Must be called with a6 still pointing at the free end of
 ; linetab, i.e. after shots_set and before the terminating clr.w (a6).
-; set_line needs a2 = screenloc and a5 = yOffTab, the same contract
-; obj_move sets up, so those are reloaded here.
+; set_line needs a5 = yOffTab, the same contract obj_move sets up, so it
+; is reloaded here.
 ;---------------------------------------------
 ai_debugMarks:
 		lea		ship_struct(pc),a0
-		move.l	screenloc,a2
 		lea		yOffTab(pc),a5
 
 		IFEQ	ai_hoveronly
@@ -3256,9 +3338,12 @@ sl_again:
 		bhs.s	sl_cx2
 		; --- falls through
 ;-------------------------------------
-drawline:	
-		; a4 is scratch here - no caller of set_line needs it preserved,
-		; so the push/pop pair is gone.
+drawline:
+		; output, 7 words per line (line_entry):
+		;   BLTSIZE, buffer offset, BLTAPTL, BLTCON0, BLTCON1, BLTBMOD, BLTAMOD
+		; BLTSIZE leads because it is never 0 or negative, so it doubles as
+		; the entry type for objects_draw (0 = end of table, -1 = a point).
+		; the offset is relative to the buffer, objects_draw adds screenloc.
 		moveq	#$f,d4
 		and.w	d2,d4
 		ror.w	#4,d4
@@ -3309,14 +3394,11 @@ drawline:
 		moveq	#$0d,d7
 		exg		d1,d0
 						; BltStart nach d6
-.l4:		
-		move.l	a2,a4					; screenloc, preloaded by obj_move
+.l4:
 		add.w	d3,d3
-		move.w	(a5,d3.w),d3			; y*game_lineBytes
 		and.w	#$fff0,d2
 		lsr.w	#3,d2
-		add.w	d3,a4
-		add.w	d2,a4
+		add.w	(a5,d3.w),d2			; + y*game_lineBytes -> buffer offset
 						; Bltsize nach d5
 		move.w	d0,d5
 		addq	#1,d5
@@ -3335,13 +3417,13 @@ notneg:
 		lsl.w	#2,d0
 		sub.w	d0,d6
 
-		move.l	a4,(a6)+
-		move.w	d3,(a6)+
-		move.w	d4,(a6)+
-		move.w	d7,(a6)+
-		move.w	d1,(a6)+
-		move.w	d6,(a6)+
-		move.w	d5,(a6)+
+		move.w	d5,(a6)+				; BLTSIZE
+		move.w	d2,(a6)+				; offset
+		move.w	d3,(a6)+				; BLTAPTL
+		move.w	d4,(a6)+				; BLTCON0
+		move.w	d7,(a6)+				; BLTCON1
+		move.w	d1,(a6)+				; BLTBMOD
+		move.w	d6,(a6)+				; BLTAMOD
 		rts
 ;-------------------------------------
 ; clipping - off the fast path, all branches explicitly .w
@@ -3430,20 +3512,16 @@ set_point:
 		cmp.w	#game_height-1,d1
 		bhi.s	.npoint
 
-		move.w	#-1,(a6)		;set flag for point (not line)
+		; point entry: -1, buffer offset, bit number (3 words)
+		move.w	#-1,(a6)+		;set flag for point (not line)
 		add.w	d1,d1
-		move.w	(a5,d1.w),d1	; y*game_lineBytes, preloaded by obj_move
 		move.w	d0,d2
-		eor.w	#$07,d2
+		not.w	d2				; bit, msb = leftmost (bset uses the low 3 bits)
 		lsr.w	#3,d0
-		ext.l	d0
-		ext.l	d1
-		add.l	d0,d1
-		add.l	a2,d1			; screenloc, preloaded by obj_move
-		move.l	d1,2(a6)
-		move.w	d2,6(a6)
-		lea		16(a6),a6
-.npoint:	
+		add.w	(a5,d1.w),d0	; + y*game_lineBytes, yOffTab preloaded by obj_move
+		move.w	d0,(a6)+
+		move.w	d2,(a6)+
+.npoint:
 		rts
 ;-------------------------------------------------------
 point_rotate:
@@ -3549,6 +3627,7 @@ shipcoll:
 ;-------------------------------------------------------
 objects_draw:
 		lea		linetab(pc),a0
+		move.l	screenloc,d6			; the entries hold buffer offsets
 
 		lea		$dff000,a6
 		; blitter nasty stays set for the whole batch and the wait is inlined.
@@ -3563,33 +3642,29 @@ objects_draw:
 		move.l  #$ffff0000,$44(a6)
 		move.w	#$8000,$74(a6)
 		move.w	#-1,$72(a6)
-.objects:	
-		tst.w	(a0)
+.objects:
+		move.w	(a0)+,d5		; BLTSIZE, -1 for a point, 0 = end of table
 		beq.s	.end
 		bpl.s	.line			;point or line?
 					;<draw point>
-		move.l	2(a0),a4
-		move.w	6(a0),d3
+		move.w	(a0)+,a4
+		add.l	d6,a4
+		move.w	(a0)+,d3
 		bset	d3,(a4)
-		lea		16(a0),a0
 		bra.s	.objects
 .line:
 					;<draw line>
-		move.l	(a0)+,a4
-		move.w	(a0)+,d3
-		move.w	(a0)+,d4
-		move.w	(a0)+,d7
-		move.w	(a0)+,d1
-		move.w	(a0)+,a5
-		move.w	(a0)+,d5
+		move.w	(a0)+,a4		; offset (sign extended, always < $8000)
+		add.l	d6,a4
+		movem.w	(a0)+,d1-d4/a5	; BLTAPTL, BLTCON0, BLTCON1, BLTBMOD, BLTAMOD
 
 .wait1:	btst	#6,2(a6)
 		bne.s	.wait1
 		move.l	a4,$48(a6)
 		move.l	a4,$54(a6)
-		move.w	d3,$52(a6)
-		movem.w	d4/d7,$40(a6)
-		movem.w	d1/a5,$62(a6)
+		move.w	d1,$52(a6)
+		movem.w	d2/d3,$40(a6)
+		movem.w	d4/a5,$62(a6)
 		move.w	d5,$58(a6)		;zeinchen der linie
 		bra.s	.objects
 .end:		
@@ -3908,6 +3983,7 @@ wordGapTimer:	dc.w	wordGap
 shot_times:		ds.w	16
 shot_structs:	ds.b	obj_len*16
 enemy_con:		dc.l	0
+collCount:		dc.w	0		; entries in collList this frame
 enemy_structs:	ds.b	obj_len*32
 ship_struct:	ds.b	obj_len
 ship_estruct:	ds.b	obj_len*$15
@@ -4222,3 +4298,10 @@ z_coords:
 		dc.w -12,17,-3,-3
 		dc.w -3,-3,-12,3
 		dc.w -12,3,-16,-8
+
+;---------------------------------------------
+; only the CPU touches these, so they need not be in chip memory, and as
+; bss they cost nothing in the executable
+		section	"gamebss",bss
+enemy_cache:	ds.b	cache_len*32	; one line cache per enemy slot
+collList:		ds.b	coll_len*32		; shootable boxes, see updateEnemies

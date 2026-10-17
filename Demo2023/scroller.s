@@ -9,6 +9,21 @@ src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
 screenHeight	= 128
+
+; --- raster time meter. 1 paints the background in a colour per stage of
+;     updateScroller, so the CPU time each part takes shows up as a band:
+;       red    logo, stars, intro       yellow  scroll text + twist
+;       green  dots (add + draw)        blue    asteroids
+;     where the blue ends is where the frame's work is done. if a band ever
+;     wraps round past the bottom of the screen the frame overran. the
+;     copper sets colour 0 itself in the bar, so bands are hidden there.
+rasterDebug		= 0
+
+RASTER	macro
+		IFNE	rasterDebug
+		move.w	#\1,$dff180
+		ENDC
+		endm
 ; see postEffect - 1 uses the generated unrolled twist
 TWIST_UNROLLED	= 1
 ; first buffer line that needs clearing every frame. the asteroids game
@@ -57,15 +72,31 @@ dissolveByte	= 14
 dissolveX		= dissolveByte*8	; = 64 pixels
 
 ; --- dissolve point system -------------------------------------------
-; a point stays alive until it leaves the play area, or until it is
-; among the oldest when the pool overflows. numPoints therefore sets
-; the length of the trail (there is no explicit lifetime counter any
-; more - it cost ~30 cycles per point per frame and the pool was
-; permanently saturated anyway, so it never actually expired).
+; a point stays alive until it falls out of the play area. gravity does
+; most of the work, so every point lives about the same pointLife frames
+; (there is no explicit lifetime counter - it cost ~30 cycles per point
+; per frame).
+;
+; pool size = spawn rate * lifetime. if dense text spawns faster than
+; that, the pool overflows and the oldest points (the far end of the
+; trail) get dropped in mid air, so the trail length jumps around with
+; the letters. to stop that, addPoints only spawns while it has credit:
+; spawnRate credits come in per frame, each point costs one. the pool
+; then never overflows and every dot flies its full course.
+;   pointLife: frames from spawn to falling out of the bottom. follows
+;              accelY / startAddY / noiseY - recompute if they change.
+;   spawnCap:  credit saved up in gaps (spaces) - limits the burst at
+;              the start of the next letter.
+; a slower fall = longer trail but sparser crumbs, a faster fall =
+; shorter trail but denser. numPoints raises both, at ~150 cycles each.
 ; numPoints		= 160		; max points kept alive after an update pass
 numPoints		= 128		; max points kept alive after an update pass
 maxSpawn		= 8			; max points that can be spawned in one frame
 pointsMax		= numPoints+maxSpawn
+pointLife		= 132		; slowest start vy: ~132 frames to fall 79 lines
+spawnRate		= (numPoints<<8)/pointLife	; credits per frame, 8.8
+spawnCap		= 4<<8		; must stay <= maxSpawn<<8
+dissolveLines	= 6			; scroller lines that dissolve
 
 ; --- point area definition
 ; game_height MUST stay <= screenHeight, otherwise y*li+x/8 runs past
@@ -153,6 +184,7 @@ updateLogoPointers:
 ;-------
 updateScroller::
 		lea		$dff000,a6
+		RASTER	$0f00
         bsr     clearScroller		; starts the screen clear blit
 
 		bsr		introUpdate			; build up sequencer
@@ -217,15 +249,14 @@ updateScroller::
 		;     on its own the moment it starts.
 		cmp.w	#introScrollStart,introTime
 		blo.s	.noScroller
+		RASTER	$0ff0
 		bsr		scroll
-		; move.w	#$424,$180(a6)
 		bsr		postEffect
 
 		lea		$dff000,a6
-		; move.w	#$266,$180(a6)
+		RASTER	$00f0
 		bsr		addPoints
 		bsr		drawPoints
-		; move.w	#$000,$180(a6)
 .noScroller:
 
 ; --- asteroids last: objects_draw leaves BLTAFWM/BLTALWM at $ffff0000 and
@@ -239,12 +270,13 @@ updateScroller::
 		;     keeps the ship parked off screen until that word is complete.
 		cmp.w	#introGameStart,introTime
 		blo.s	.noGame
+		RASTER	$000f
 		jsr		updateGameObjects
-		; move.w	#$000,$dff180
 
 		lea		$dff000,a6
 .noGame:
 .scrollerEnded:
+		RASTER	$0000
 		clr.b	kcode
         rts
 ;-------
@@ -367,7 +399,9 @@ drawPoints:
 		move.w	(a1,d1.w),d3		; y * li
 		move.w	d0,d2
 		lsr.w	#3,d0				; x / 8
-		eor.w	#7,d2				; bit number, msb = leftmost pixel
+		not.w	d2					; bit number, msb = leftmost pixel. bset
+									; only looks at the low 3 bits and ~x&7 is
+									; 7-(x&7), so this is eor #7 for 4 cycles less
 		add.w	d0,d3
 		bset	d2,(a0,d3.w)
 .kill:
@@ -408,25 +442,60 @@ accelTable:
 		even
 
 ;-------
+; spawns are rationed by spawnCredit (see the point system notes at the
+; top). the scan starts on a different line every frame and wraps round,
+; otherwise when credit is short the top lit line would always win and
+; the crumbs would only ever come off the tops of the letters.
+;   d4 scratch  d5 credit (8.8)  d6 counter  d7 screen line  a1 pixel
+;   (addPoint/getRandomNumber only touch d0/d1/a5)
 addPoints:
+		move.w	spawnCredit,d5
+		add.w	#spawnRate,d5
+		cmp.w	#spawnCap,d5
+		bls.s	.capOk
+		move.w	#spawnCap,d5
+.capOk:
+		move.w	spawnLine,d4		; this frame's start line
+		addq.w	#1,spawnLine
+		cmp.w	#dissolveLines,spawnLine
+		blo.s	.lineOk
+		clr.w	spawnLine
+.lineOk:
+		cmp.w	#$100,d5			; not even one credit -> no scan
+		blo.s	.out
+
 		move.l	screenlocScroller,a1
 		add.l	#sc_top+dissolveByte,a1	; the column the text stops at
-		moveq	#yTop,d7			; first scroller line
-		moveq	#6-1,d6				; how many lines dissolve
-.addloop:		
-		move.b	(a1),d0
-		btst	#7,d0
-		beq		.nopixel
+		moveq	#yTop,d7
+		add.w	d4,d7				; start line
+		add.w	d4,d4
+		lea		yTable,a0
+		add.w	(a0,d4.w),a1
+		moveq	#dissolveLines-1,d6
+.addloop:
+		tst.b	(a1)				; leftmost pixel is bit 7, the sign bit
+		bpl.s	.nopixel
 		bsr		addPoint
+		sub.w	#$100,d5
+		cmp.w	#$100,d5
+		blo.s	.out				; budget spent for this frame
 .nopixel
-		lea		li(a1),a1	; next line
-
-		addq	#1,d7
-
-		; cmp.w	#7,d7		
-		; bne		.addloop
+		lea		li(a1),a1			; next line
+		addq.w	#1,d7
+		cmp.w	#yTop+dissolveLines,d7
+		bne.s	.noWrap
+		moveq	#yTop,d7			; wrap back to the first line
+		lea		-dissolveLines*li(a1),a1
+.noWrap:
 		dbf		d6,.addloop
+.out:
+		move.w	d5,spawnCredit
 		rts
+
+spawnCredit:
+		dc.w	0
+spawnLine:
+		dc.w	0
 ;-------
 addPoint:				; add single point at screen line d7
 		move.w	activeCount,d0
@@ -446,18 +515,20 @@ addPoint:				; add single point at screen line d7
 		swap	d0
 		move.l	d0,point_y(a5)
 
-		moveq	#0,d0				; x speed
+		; x speed. one random number feeds both speeds: x takes the low word, y the
+		; high one. getRandomNumber is ~170 cycles, and up to 6 points spawn
+		; per frame.
 		jsr		getRandomNumber
-		and.w	noiseX,d0
-		add.w	startAddX,d0
-		neg.w	d0
-		ext.l	d0
-		lsl.l	#8,d0				; 9.7 -> 16.16 (<<9)
-		add.l	d0,d0
-		move.l	d0,point_xvelo(a5)
+		move.w	d0,d1
+		and.w	noiseX,d1
+		add.w	startAddX,d1
+		neg.w	d1
+		ext.l	d1
+		lsl.l	#8,d1				; 9.7 -> 16.16 (<<9)
+		add.l	d1,d1
+		move.l	d1,point_xvelo(a5)
 
-		moveq	#0,d0				; y speed
-		jsr		getRandomNumber
+		swap	d0					; y speed
 		and.w	noiseY,d0
 		add.w	startAddY,d0
 		ext.l	d0
@@ -2356,6 +2427,23 @@ logoBlendTime	= $1b6				; blend countdown, -5 per frame (~88 frames)
 logoFadeLit		= $746				; logoFade: colour -> row offset table first,
 logoFadeLevels	= logoFadeLit+$1e0	; then the faded greens, then 16 faded palettes
 
+; one gradient line. was a bsr/rts subroutine - inlined that is 34 cycles
+; less per line, 73 lines per frame.
+; a3 = line data, a4 = palette half, a0 = gradient line in the copperlist
+LOGO_LINE	macro
+			move.w	(a3)+,2(a0)				; colour 1
+			move.w	(a3)+,6(a0)				; colour 2
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),10(a0)		; colour 3
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),14(a0)		; colour 4
+			move.w	(a3)+,18(a0)			; colour 5
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),22(a0)		; colour 6
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),26(a0)		; colour 7
+			endm
+
 logoColorEngine:
 			movem.l	d0-d7/a0-a6,-(a7)
 			move.b	d0,logoStartWait
@@ -2416,18 +2504,34 @@ logoColorEngine:
 			move.w	logoPalCur,d2
 			mulu.w	#logoPalSteps,d2
 			add.w	logoPalStep,d2
+
+			; --- same bob position and same blend step as the last rewrite?
+			;     then the copperlist already holds exactly these waits and
+			;     colours. the bob only crosses a raster line on about two
+			;     frames in three, so this skips ~17000 cycles on the rest
+			;     (not while a palette blend is running - every step differs)
+			cmp.w	logoDrawnPal,d2
+			bne.s	.redraw
+			cmp.w	logoDrawnPos,d0
+			beq		.done
+.redraw:
+			move.w	d2,logoDrawnPal
+			move.w	d0,logoDrawnPos
+
 			mulu.w	#logoPalSize,d2
 			lea		logoPalettes,a4
 			add.l	d2,a4
 			lea		logoPalSize/2(a4),a2	; bottom half
+			move.w	#$0100,d6				; wait step, add.w d6 is 4 cycles faster
+											; than add.w #$0100
 
-			bsr.s	.line					; first line has no wait
+			LOGO_LINE						; first line has no wait
 			moveq	#logoTopLines-2,d7
 .top:
 			lea		(2*2)+(logo_color_count*2*2)(a0),a0
 			move.w	d3,-4(a0)
-			add.w	#$0100,d3
-			bsr.s	.line
+			add.w	d6,d3
+			LOGO_LINE
 			dbf		d7,.top
 
 			move.l	a2,a4
@@ -2435,28 +2539,15 @@ logoColorEngine:
 .bottom:
 			lea		(2*2)+(logo_color_count*2*2)(a0),a0
 			move.w	d3,-4(a0)
-			add.w	#$0100,d3
-			bsr.s	.line
+			add.w	d6,d3
+			LOGO_LINE
 			dbf		d7,.bottom
 			bra		.done
 
-; a3 = line data, a4 = palette half, a0 = gradient line in the copperlist
-.line:
-			move.w	(a3)+,2(a0)				; colour 1
-			move.w	(a3)+,6(a0)				; colour 2
-			move.w	(a3)+,d1
-			move.w	(a4,d1.w),10(a0)		; colour 3
-			move.w	(a3)+,d1
-			move.w	(a4,d1.w),14(a0)		; colour 4
-			move.w	(a3)+,18(a0)			; colour 5
-			move.w	(a3)+,d1
-			move.w	(a4,d1.w),22(a0)		; colour 6
-			move.w	(a3)+,d1
-			move.w	(a4,d1.w),26(a0)		; colour 7
-			rts
-
 			; --- fade in. lines above introLogoLine are one level ahead
 .fadeIn:
+			move.w	#-1,logoDrawnPal		; the fade writes other colours, so
+											; force a full rewrite once it is over
 			lea		logoFade,a6
 			lea		logoFadeLit(a6),a1
 			lea		logoFadeLevels(a6),a2
@@ -2560,6 +2651,7 @@ logoPaletteInit:
 			clr.w	logoPalBlend
 			move.w	logoPalTarget,logoPalSeen
 			clr.w	logoKickState
+			move.w	#-1,logoDrawnPal
 			rts
 
 logoPalCur:		dc.w	0		; palette on screen
@@ -2569,6 +2661,8 @@ logoPalSeen:	dc.w	0		; last logoPalTarget the engine acted on
 logoPalBlend:	dc.w	0		; blend countdown, 0 = not blending
 logoKickState:	dc.w	0		; 0 = logo not up, 1 = armed, 2 = done
 logoKickSlot:	dc.w	0
+logoDrawnPal:	dc.w	-1		; palette*steps+step of the last full rewrite
+logoDrawnPos:	dc.w	-1		; ... and the logo top raster line it was for
 
 logoMoveDir:
 			dc.w	1
@@ -2624,13 +2718,14 @@ spoint:
 		dc.w	$130,0,$132,0,$134,0,$136,0
 		dc.w	$138,0,$13a,0,$13c,0,$13e,0
 
-		; star colours, toned to match the new logo. old values in brackets
-		dc.w	$01a2,$09ab		; 1	($0842)
-		dc.w	$01a4,$0678		; 2	($0371)
+		; star colours - the original coloured set again (same as clistGame).
+		; the grey toned set was $09ab, $0678, $0223, $0345
+		dc.w	$01a2,$0842		; 1
+		dc.w	$01a4,$0371		; 2
 		dc.w	$01a6,$0fff
-		dc.w	$01aa,$0223		; 4	($0125)
+		dc.w	$01aa,$0125		; 4
 		dc.w	$01ac,$0fff
-		dc.w	$01ae,$0345		; 3	($0631)
+		dc.w	$01ae,$0631		; 3
 		dc.w	$00e4
 logobp1h:	
 		dc.w	0	
