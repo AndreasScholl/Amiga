@@ -78,8 +78,9 @@ initScroller::
         moveq   #0,d1
         bsr.s   updateLogoPointers
 
-		bsr		buildLogoColors
-		bsr		introInit		; stash the finished colours, start from black
+		bsr		buildLogoColors	; lays out the waits and colour registers
+		bsr		introInit		; start from black
+		bsr		logoPaletteInit
 
 		lea		spoint(pc),a5
 		jsr		setupStarfield	; starfield
@@ -117,9 +118,11 @@ stateEnd     = 1
 scrollerState:  dc.w    stateStarted
 ;-------
 logoY			= $30       ; logo start y
-logo_height      = 96       ; logo gfx height
+logo_height      = 96       ; logo gfx height (3 bitplanes)
 logo_area_height = 73       ; logo visible (copperlist) height
-logo_color_count = 10   ;14
+logo_color_count = 10   ;14 ; colour MOVEs per gradient line. only 1..7 are
+                            ; used by the 3 plane logo, logoColorEngine
+                            ; relies on the 44 byte line stride
 ; the bottom of the gradient never fades below this level (0..256), so the
 ; logo stays a faint silhouette rather than a hole that swallows the sprite
 ; stars behind it. this is a floor on the FADE LEVEL, not a colour added to
@@ -146,15 +149,6 @@ updateLogoPointers:
 		move.w	d0,logobp2l
 		swap	d0
 		move.w	d0,logobp2h
-		swap	d0
-		add.l	d1,d0
-		move.w	d0,logobp3l
-		swap	d0
-		move.w	d0,logobp3h
-		; add.l	d1,d0
-		; move.w	d0,logobp4l
-		; swap	d0
-		; move.w	d0,logobp4h
         rts
 ;-------
 updateScroller::
@@ -171,6 +165,7 @@ updateScroller::
 ;     if it does, move the "jsr updateStars" down below postEffect.
 		; bsr		updateLogoColors		; super slow :(
 		bsr		updateLogoPos
+		bsr		logoPaletteKick
 		jsr		updateStars
 		; move.w	#$882,$180(a6)
 
@@ -1979,7 +1974,7 @@ updateLogoPos:
             moveq   #0,d0
 .noNegativePos
 			add.w	#logoY-16,d0
-			move.b	d0,logoStartWait
+			bsr		logoColorEngine			; sets logoStartWait, d0 = end - height
 			add.w	#logo_area_height,d0
 			move.b	d0,logoEndWait
 			rts
@@ -2008,7 +2003,7 @@ fadeOutLogo:
 
             ; tst.w   d5
             ; beq.s   .noNextLine
-            cmp.w   #logo_area_height-5,logoFadeLine
+            cmp.w   #logo_area_height-1,logoFadeLine
             bne.s   .noRestart
             clr.w   logoFadeLine
             add.w   #1,logoFadeRepeat
@@ -2035,11 +2030,11 @@ fadeOutLogo:
 ;---------------------------------------------
 ; INTRO BUILD UP
 ;---------------------------------------------
-; buildLogoColors has already produced the finished gradient by the time
-; introInit runs, so the cheapest way to fade the logo up is to keep that
-; result as the target, blank the live copperlist copy, and walk it back
-; up one nibble at a time. Same trick for the bar. Nothing here does a
-; multiply, and only a slice of the gradient is touched each frame.
+; The logo fades up through logoColorEngine, which reads introLogoLine and
+; introLogoPass and looks the colours up in a pre-computed fade table, so
+; all fadeInLogo has to do is advance those two counters. The bar keeps
+; the old trick: stash the finished colours as the target, blank the live
+; copperlist copy, and walk it back up one nibble at a time.
 ;---------------------------------------------
 introInit:
 			; snapshot once only. initScroller runs again if the part is
@@ -2056,23 +2051,7 @@ introInit:
 			sf		introLogoDone
 			sf		introBarDone
 
-			; --- stash the finished gradient. only the colour VALUES are
-			;     read; the copper waits and the register numbers in between
-			;     stay exactly where they are.
-			lea		logoColors+2,a0			; first colour value
-			lea		logoColorsTarget,a1
-			move.w	#logo_area_height-1,d1
-.line:
-			move.l	a0,a2
-			moveq	#logo_color_count-1,d0
-.col:
-			move.w	(a2),(a1)+
-			lea		4(a2),a2
-			dbf		d0,.col
-			lea		(2*2)+(logo_color_count*2*2)(a0),a0
-			dbf		d1,.line
-
-			; --- and the bar. rather than a hand written offset list this
+			; --- the bar. rather than a hand written offset list this
 			;     walks the copperlist between the two markers and picks up
 			;     every colour write in it - $0180 for the flat background
 			;     Only $0180. Colour 1 is what the ship, the letters and the
@@ -2127,17 +2106,17 @@ introRestart:
 ; -40 so it repeats.
 ;---------------------------------------------
 introHideLogo:
-			move.w	#$1200,logoPlanes		; one plane instead of five
+			move.w	#$1200,logoPlanes		; one plane instead of three
 			move.w	#$ffd8,logoPlaneMod
 			move.w	#$0006,logobp0h			; ... aimed at the empty line
 			move.w	#$e000-li,logobp0l
 			rts
 
 introShowLogo:
-			move.w	#$4200,logoPlanes
+			move.w	#$3200,logoPlanes
 			move.w	#$0000,logoPlaneMod
 			moveq	#0,d1
-			bsr		updateLogoPointers		; bp0..bp3 back onto the logo
+			bsr		updateLogoPointers		; bp0..bp2 back onto the logo
 			rts
 
 ;---------------------------------------------
@@ -2270,32 +2249,13 @@ colorFadeIn:
 			rts
 
 ;---------------------------------------------
+; lines above introLogoLine are one fade level ahead of the rest, so the
+; brightness steps sweep down the logo. logoColorEngine does the colours.
 fadeInLogo:
 			tst.b	introLogoDone
 			bne.s	.done
 			moveq	#introLogoLines-1,d4
 .lineFader:
-			move.w	introLogoLine,d0
-
-			lea		logoColors+2,a0		; live line, 44 bytes per line
-			move.w	d0,d1
-			mulu.w	#(2*2)+(logo_color_count*2*2),d1
-			add.l	d1,a0
-
-			lea		logoColorsTarget,a1	; target line, packed
-			move.w	d0,d1
-			mulu.w	#logo_color_count*2,d1
-			add.l	d1,a1
-
-			moveq	#logo_color_count-1,d7
-.fadeColor:
-			move.w	(a0),d0
-			move.w	(a1)+,d1
-			bsr		colorFadeIn
-			move.w	d6,(a0)
-			lea		4(a0),a0
-			dbf		d7,.fadeColor
-
 			addq.w	#1,introLogoLine
 			cmp.w	#logo_area_height,introLogoLine
 			blo.s	.noWrap
@@ -2347,8 +2307,6 @@ introLogoShown:	dc.b	0		; logo bitplanes switched on yet?
 introGameOn:	dc.b	0		; game area bitplane switched on yet?
 introTaken:		dc.b	0		; colour snapshot already taken?
 				even
-logoColorsTarget:
-				blk.w	logo_color_count*logo_area_height,0
 barColorCount:	dc.w	0		; how many colour writes the scan found
 				even
 barColorAddr:	blk.l	96,0	; address of each copper MOVE in the bar
@@ -2369,6 +2327,249 @@ fadeOutBar:
             dbf     d7,.barfade
             rts
 
+;---------------------------------------------
+; LOGO COLOUR ENGINE
+;---------------------------------------------
+; Rewrites colours 1..7 and the copper wait of every logo gradient line,
+; every frame. Colours 1, 2 and 5 (the greens) come straight out of
+; logoLineTab, colours 3, 4, 6 and 7 (the chrome) are byte offsets into
+; a 46 colour palette - one for the top 35 lines, one for the bottom 38.
+; logoLineTab holds a set of 73 lines for every bob position, so the
+; chrome reflection stays put on screen while the logo moves under it.
+;
+; While the logo fades up (introLogoDone clear) the same line data is
+; looked up in logoFade at each line's fade level instead. The last fade
+; level is palette 0, which is where the animation below starts off.
+;
+; Once the logo is up, the chrome cross fades to the next of 12 palettes
+; every time the music bumps logoPalTarget (see musicPalTick in music.s).
+;
+; in:  d0 = raster line of the logo top
+; out: d0 = raster line the logo window closes at, minus logo_area_height
+;---------------------------------------------
+logoLineSize	= 7*2				; bytes per line in logoLineTab
+logoPalSize		= 2*46*2			; bytes per palette, top + bottom half
+logoPalSteps	= 25				; blend steps stored per palette
+logoPalCount	= 12
+logoTopLines	= 35				; lines that use the top half palette
+logoBlendTime	= $1b6				; blend countdown, -5 per frame (~88 frames)
+logoFadeLit		= $746				; logoFade: colour -> row offset table first,
+logoFadeLevels	= logoFadeLit+$1e0	; then the faded greens, then 16 faded palettes
+
+logoColorEngine:
+			movem.l	d0-d7/a0-a6,-(a7)
+			move.b	d0,logoStartWait
+			move.w	d0,d3
+			lsl.w	#8,d3
+			add.w	#$0101,d3				; wait of the second gradient line
+
+			; --- line data for this bob position
+			move.w	d0,d1
+			sub.w	#logoY-16,d1
+			bpl.s	.posLow
+			moveq	#0,d1
+.posLow:
+			cmp.w	#logoBobMax,d1
+			bls.s	.posHigh
+			move.w	#logoBobMax,d1
+.posHigh:
+			mulu.w	#logo_area_height*logoLineSize,d1
+			lea		logoLineTab,a3
+			add.l	d1,a3
+			lea		logoColors,a0
+
+			tst.b	introLogoDone
+			beq		.fadeIn
+
+			; --- new music cue? then start blending into the next palette
+			move.w	logoPalBlend,d4
+			bne.s	.blend
+			move.w	logoPalTarget,d1
+			cmp.w	logoPalSeen,d1
+			beq.s	.render
+			move.w	d1,logoPalSeen
+			move.w	logoPalCur,d5
+			move.w	logoPalNext,d2
+			move.w	d2,logoPalCur
+			addq.w	#1,d2
+			cmp.w	#logoPalCount,d2
+			blo.s	.noWrap
+			moveq	#0,d2
+.noWrap:
+			move.w	d2,logoPalNext
+			cmp.w	logoPalCur,d5
+			beq.s	.render					; same palette, nothing to blend
+			move.w	#logoBlendTime,d4
+.blend:
+			moveq	#0,d2
+			move.w	#logoBlendTime,d2
+			sub.w	d4,d2
+			mulu.w	#logoPalSteps-1,d2
+			divu.w	#logoBlendTime-3,d2		; -3: the last frame (d4 = 3) lands on step 24
+			move.w	d2,logoPalStep
+			subq.w	#5,d4
+			bpl.s	.blendOk
+			moveq	#0,d4
+.blendOk:
+			move.w	d4,logoPalBlend
+.render:
+			move.w	logoPalCur,d2
+			mulu.w	#logoPalSteps,d2
+			add.w	logoPalStep,d2
+			mulu.w	#logoPalSize,d2
+			lea		logoPalettes,a4
+			add.l	d2,a4
+			lea		logoPalSize/2(a4),a2	; bottom half
+
+			bsr.s	.line					; first line has no wait
+			moveq	#logoTopLines-2,d7
+.top:
+			lea		(2*2)+(logo_color_count*2*2)(a0),a0
+			move.w	d3,-4(a0)
+			add.w	#$0100,d3
+			bsr.s	.line
+			dbf		d7,.top
+
+			move.l	a2,a4
+			moveq	#logo_area_height-logoTopLines-1,d7
+.bottom:
+			lea		(2*2)+(logo_color_count*2*2)(a0),a0
+			move.w	d3,-4(a0)
+			add.w	#$0100,d3
+			bsr.s	.line
+			dbf		d7,.bottom
+			bra		.done
+
+; a3 = line data, a4 = palette half, a0 = gradient line in the copperlist
+.line:
+			move.w	(a3)+,2(a0)				; colour 1
+			move.w	(a3)+,6(a0)				; colour 2
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),10(a0)		; colour 3
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),14(a0)		; colour 4
+			move.w	(a3)+,18(a0)			; colour 5
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),22(a0)		; colour 6
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),26(a0)		; colour 7
+			rts
+
+			; --- fade in. lines above introLogoLine are one level ahead
+.fadeIn:
+			lea		logoFade,a6
+			lea		logoFadeLit(a6),a1
+			lea		logoFadeLevels(a6),a2
+			moveq	#0,d5					; line
+.fadeLine:
+			move.w	introLogoPass,d0
+			cmp.w	introLogoLine,d5
+			bhs.s	.levelOk
+			addq.w	#1,d0
+.levelOk:
+			move.w	d0,d6
+			add.w	d6,d6					; level -> column in the faded greens
+			mulu.w	#logoPalSize,d0
+			lea		(a2,d0.l),a4			; faded palette
+			cmp.w	#logoTopLines,d5
+			blo.s	.fadeTop
+			lea		logoPalSize/2(a4),a4
+.fadeTop:
+			move.w	(a3)+,d1				; colour 1
+			add.w	d1,d1
+			move.w	(a6,d1.w),d1
+			add.w	d6,d1
+			move.w	(a1,d1.w),2(a0)
+			move.w	(a3)+,d1				; colour 2
+			add.w	d1,d1
+			move.w	(a6,d1.w),d1
+			add.w	d6,d1
+			move.w	(a1,d1.w),6(a0)
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),10(a0)		; colour 3
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),14(a0)		; colour 4
+			move.w	(a3)+,d1				; colour 5
+			add.w	d1,d1
+			move.w	(a6,d1.w),d1
+			add.w	d6,d1
+			move.w	(a1,d1.w),18(a0)
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),22(a0)		; colour 6
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),26(a0)		; colour 7
+
+			addq.w	#1,d5
+			cmp.w	#logo_area_height,d5
+			bhs.s	.done
+			lea		(2*2)+(logo_color_count*2*2)(a0),a0
+			move.w	d3,-4(a0)
+			add.w	#$0100,d3
+			bra		.fadeLine
+
+.done:
+			movem.l	(a7)+,d0-d7/a0-a6
+			; the new logo's art reaches 5 rows past the gradient, so the
+			; window stays open 5 lines longer (on the last line's colours),
+			; capped at logoBottom so it never runs into the game area
+			addq.w	#5,d0
+			cmp.w	#logoBobMax+logoY-16,d0
+			bls.s	.endOk
+			move.w	#logoBobMax+logoY-16,d0
+.endOk:
+			rts
+
+;---------------------------------------------
+; Palette 0 is already on screen when the fade in ends, so the first cue
+; the engine sees only steps logoPalNext on to 1. Rather than burning a
+; real music cue on that (the colours would then sit still for ~30
+; seconds), fake one on the next 24 tick boundary of the music count.
+;---------------------------------------------
+logoPaletteKick:
+			tst.b	introLogoDone
+			bne.s	.up
+			clr.w	logoKickState
+			rts
+.up:
+			move.w	logoKickState,d1
+			cmp.w	#2,d1
+			beq.s	.done					; already kicked
+			moveq	#0,d0
+			move.w	musicPalCountdown,d0
+			add.w	#23,d0
+			divu.w	#24,d0
+			tst.w	d1
+			bne.s	.armed
+			move.w	d0,logoKickSlot			; first frame up: remember the slot
+			move.w	#1,logoKickState
+			rts
+.armed:
+			cmp.w	logoKickSlot,d0
+			beq.s	.done
+			move.w	#2,logoKickState
+			move.w	logoPalTarget,d0
+			subq.w	#1,d0
+			move.w	d0,logoPalSeen			; looks like a new cue to the engine
+.done:
+			rts
+
+logoPaletteInit:
+			clr.w	logoPalCur
+			move.w	#logoPalSteps-1,logoPalStep	; = where the fade in ends
+			clr.w	logoPalNext
+			clr.w	logoPalBlend
+			move.w	logoPalTarget,logoPalSeen
+			clr.w	logoKickState
+			rts
+
+logoPalCur:		dc.w	0		; palette on screen
+logoPalStep:	dc.w	logoPalSteps-1	; blend step into it, 24 = fully there
+logoPalNext:	dc.w	0		; palette the next cue blends to
+logoPalSeen:	dc.w	0		; last logoPalTarget the engine acted on
+logoPalBlend:	dc.w	0		; blend countdown, 0 = not blending
+logoKickState:	dc.w	0		; 0 = logo not up, 1 = armed, 2 = done
+logoKickSlot:	dc.w	0
+
 logoMoveDir:
 			dc.w	1
 logoMoveDirCount:
@@ -2383,30 +2584,21 @@ text:
 		even
 
 logo:
-        INCBIN	"thrust-quadlite_16.bin"
+        INCBIN	"thrust-quadlite_3pl.bin"	; 320x96, 3 bitplanes
 
+; base palette of the new logo. logoColorEngine overwrites colours 1..7 on
+; every line every frame, these only seed the copperlist layout.
 logoColorsOrig:
-	; dc.w	$0182,$0463
-	; dc.w	$0184,$0777
-	; dc.w	$0186,$0999
-	; dc.w	$0188,$0bbb
-	; dc.w	$018a,$02a4
-	; dc.w	$018c,$0050
-	; dc.w	$018e,$0130
-	; dc.w	$0190,$0ddd
-	; dc.w	$0192,$06e6
-	; dc.w	$0194,$0fff
-
-	dc.w	$0182,$0463
-	dc.w	$0184,$0777
-	dc.w	$0186,$0999
-	dc.w	$0188,$0130
-	dc.w	$018a,$0050
-	dc.w	$018c,$0bbb
-	dc.w	$018e,$02a4
-	dc.w	$0190,$0ddd
-	dc.w	$0192,$06e6
-	dc.w	$0194,$0fff
+	dc.w	$0182,$0121		; green, dark
+	dc.w	$0184,$0151		; green
+	dc.w	$0186,$0555		; chrome
+	dc.w	$0188,$0777		; chrome
+	dc.w	$018a,$03a2		; green, light
+	dc.w	$018c,$0abb		; chrome
+	dc.w	$018e,$0eee		; chrome
+	dc.w	$0190,$0000
+	dc.w	$0192,$0000
+	dc.w	$0194,$0000
 
 
 
@@ -2432,12 +2624,13 @@ spoint:
 		dc.w	$130,0,$132,0,$134,0,$136,0
 		dc.w	$138,0,$13a,0,$13c,0,$13e,0
 
-		dc.w	$01a2,$0842		; 1
-		dc.w	$01a4,$0371		; 2
+		; star colours, toned to match the new logo. old values in brackets
+		dc.w	$01a2,$09ab		; 1	($0842)
+		dc.w	$01a4,$0678		; 2	($0371)
 		dc.w	$01a6,$0fff
-		dc.w	$01aa,$0125		; 4
+		dc.w	$01aa,$0223		; 4	($0125)
 		dc.w	$01ac,$0fff
-		dc.w	$01ae,$0631		; 3
+		dc.w	$01ae,$0345		; 3	($0631)
 		dc.w	$00e4
 logobp1h:	
 		dc.w	0	
@@ -2448,21 +2641,8 @@ logobp1l:
 logobp2h:	
 		dc.w	0	
 		dc.w	$00ea
-logobp2l:	
-		dc.w	0	
-		dc.w	$00ec
-logobp3h:	
-		dc.w	0	
-		dc.w	$00ee
-logobp3l:	
-		dc.w	0	
-
-; 		dc.w	$00f0
-; logobp4h:	
-; 		dc.w	0	
-; 		dc.w	$00f2
-; logobp4l:	
-; 		dc.w	0	
+logobp2l:
+		dc.w	0
 
 		dc.w	$2001,$fffe			; stars start
 		dc.w	$0182,$0000	   ; black plane
@@ -2475,7 +2655,7 @@ logoStartWait:
  		dc.w	$4001,$fffe
 		dc.w	BPLCON0
 logoPlanes:
-		dc.w	$4200				; 5 bitplanes. patched to $1200 while the logo
+		dc.w	$3200				; 3 bitplanes. patched to $1200 while the logo
 								; is still hidden, so the region behaves exactly
 								; like the empty single plane above it and the
 								; sprites keep showing through
@@ -2747,5 +2927,14 @@ barcolorOffsets:
 
 ;--------------------------------------------------------------
 ; lookup table for scroller chars
-rchartab:	
+rchartab:
 		blk.w	256,0
+
+;--------------------------------------------------------------
+; logo colour tables for logoColorEngine, taken from the "New Logo" build.
+; only the CPU reads them, so they stay out of chip memory.
+		section "logodata",data
+logoLineTab:	incbin	"logo_lines.bin"	; 37 bob positions x 73 lines x 7 words
+logoPalettes:	incbin	"logo_palettes.bin"	; 12 palettes x 25 blend steps x 92 colours
+logoFade:		incbin	"logo_fade.bin"		; see logoFadeLit / logoFadeLevels
+		even
