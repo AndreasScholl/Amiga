@@ -1582,12 +1582,12 @@ putchar:
 		jsr		bbusy
 
 		move.b	(a2),(a1)
-		move.b	050(a2),1*src_line(a1)
-		move.b	100(a2),2*src_line(a1)
-		move.b	150(a2),3*src_line(a1)
-		move.b	200(a2),4*src_line(a1)
-		move.b	250(a2),5*src_line(a1)
-		rts	
+		move.b	charStride*1(a2),1*src_line(a1)
+		move.b	charStride*2(a2),2*src_line(a1)
+		move.b	charStride*3(a2),3*src_line(a1)
+		move.b	charStride*4(a2),4*src_line(a1)
+		move.b	charStride*5(a2),5*src_line(a1)
+		rts
 
 				rsreset
 point_x:		rs.l	1		; x position, 16.16 fixed point
@@ -1607,25 +1607,50 @@ yTable:		ds.w	screenHeight	; y -> y*li, built once by buildYTable
 ; setPointScroller was inlined into drawPoints - the bsr/rts pair alone
 ; was 34 cycles per point, and the mulu #li another ~50.
 
+; one glyph per char, in font order. the font only has capitals, so the
+; letters are matched in upper case and a lower case "o" is free to be
+; the small ring. chars not in here come out as glyph 0 ("A").
+; the -1 end marker takes the last (empty) glyph slot.
 chartab:
-		dc.b	"abcdefghijklmnopqrstuvwxyz0123456789.,!()/$ ?-+='",-1
+		dc.b	"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!()/: ?-+='<>*@[]#\\o",-1
 ctend:
 		even
+charStride		= ctend-chartab		; glyphs per font row (incl. the empty one)
 
+; 6 rows of charStride bytes, one byte (8 pixels) per glyph per row.
+; row 5 is only used by the comma.
 char:
-		dc.l $78f87cf8,$fcfc7ccc,$fc3cccc0,$c6cc78f8,$78f87cfc,$ccccc6cc
-		dc.l $ccfc7830,$f8f8c0fc,$7cfc7878,$00006030,$600c0000,$78000000
-		dc.l $0c00cccc,$c0ccc0c0,$c0cc3018,$d8c0feec,$cccccccc,$c030cccc
-		dc.l $c678cc18,$ccf00c0c,$d8c0c00c,$cccc0000,$60603018,$6000cc00
-		dc.l $10780c00,$fcf8c0cc,$f8f8dcfc,$3018f0c0,$d6fccccc,$cccc7830
-		dc.l $cc78d630,$7830cc30,$7838fcf8,$f818787c,$00006060,$30300000
-		dc.l $18383800,$1800cccc,$c0ccc0c0,$cccc30d8,$d8c0c6dc,$ccf8d8f8
-		dc.l $0c30cc78,$fe783060,$cc30c00c,$180ccc30,$cc0c6060,$00603060
-		dc.l $00000000,$10780000,$ccf87cf8,$fcc07ccc,$fc70ccfc,$c6cc78c0
-		dc.l $7cccf830,$7830c6cc,$30fc78fc,$fcf818f8,$786078f8,$60606030
-		dc.l $60c06000,$30000000,$00000000,$00000000,$00000000,$00000000
-		dc.l $00000000,$00000000,$00000000,$00000000,$00000000,$000000c0
-		dc.l $00000000,$00000000,$00000000,$00000000,$00000000,$00000000
+; row 0
+		dc.b	$78,$f8,$7c,$f8,$fc,$fc,$7c,$cc,$fc,$3c,$cc,$c0,$c6,$cc,$78,$f8
+		dc.b	$78,$f8,$7c,$fc,$cc,$cc,$c6,$cc,$cc,$fc,$78,$30,$f8,$f8,$c0,$fc
+		dc.b	$7c,$fc,$78,$78,$00,$00,$60,$30,$60,$0c,$00,$00,$78,$00,$00,$00
+		dc.b	$0c,$18,$60,$a8,$78,$70,$70,$48,$c0,$00,$00
+; row 1
+		dc.b	$cc,$cc,$c0,$cc,$c0,$c0,$c0,$cc,$30,$18,$d8,$c0,$fe,$ec,$cc,$cc
+		dc.b	$cc,$cc,$c0,$30,$cc,$cc,$c6,$78,$cc,$18,$cc,$f0,$0c,$0c,$d8,$c0
+		dc.b	$c0,$0c,$cc,$cc,$00,$00,$60,$60,$30,$18,$60,$00,$cc,$00,$10,$78
+		dc.b	$0c,$30,$30,$70,$cc,$60,$30,$fc,$60,$78,$00
+; row 2
+		dc.b	$fc,$f8,$c0,$cc,$f8,$f8,$dc,$fc,$30,$18,$f0,$c0,$d6,$fc,$cc,$cc
+		dc.b	$cc,$cc,$78,$30,$cc,$78,$d6,$30,$78,$30,$cc,$30,$78,$38,$fc,$f8
+		dc.b	$f8,$18,$78,$7c,$00,$00,$60,$60,$30,$30,$00,$00,$18,$38,$38,$00
+		dc.b	$18,$60,$18,$f8,$dc,$60,$30,$48,$30,$cc,$00
+; row 3
+		dc.b	$cc,$cc,$c0,$cc,$c0,$c0,$cc,$cc,$30,$d8,$d8,$c0,$c6,$dc,$cc,$f8
+		dc.b	$d8,$f8,$0c,$30,$cc,$78,$fe,$78,$30,$60,$cc,$30,$c0,$0c,$18,$0c
+		dc.b	$cc,$30,$cc,$0c,$60,$60,$00,$60,$30,$60,$00,$00,$00,$00,$10,$78
+		dc.b	$00,$30,$30,$70,$c0,$60,$30,$fc,$18,$78,$00
+; row 4
+		dc.b	$cc,$f8,$7c,$f8,$fc,$c0,$7c,$cc,$fc,$70,$cc,$fc,$c6,$cc,$78,$c0
+		dc.b	$7c,$cc,$f8,$30,$78,$30,$c6,$cc,$30,$fc,$78,$fc,$fc,$f8,$18,$f8
+		dc.b	$78,$60,$78,$f8,$60,$60,$60,$30,$60,$c0,$60,$00,$30,$00,$00,$00
+		dc.b	$00,$18,$60,$a8,$7c,$70,$70,$48,$0c,$00,$00
+; row 5
+		dc.b	$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+		dc.b	$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+		dc.b	$00,$00,$00,$00,$00,$c0,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+		dc.b	$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+		even
 
 ; colortest:
 ; 		lea		clistcolors+6,a0
@@ -2674,11 +2699,21 @@ logoPos:
 			dc.w	0
 
 text:
-		dc.b	"zeronine and exciter are the best climbers ........ ",0
+		dc.b	"<<< THRUST + QUADLITE >>> THE DISK BOOTS. NOBODY TOUCH ANYTHING! "
+		dc.b	"* + * + * SUPREME WANTS MORE COLOURS.....................*******OOOOOOOOO "
+		dc.b	"TRAITORS WANTS MORE SPEED. THREAT WANTS TO KNOW WHO MOVED THE ASTEROIDS. "
+		dc.b	"o O @ O o THERE GO THE STARS: **** *** ** * . . * ** *** **** "
+		dc.b	"ALL PRESENT? GOOD. SEND THEM BACK! <<< <<< >>> >>> "
+		dc.b	"LORD PERFORMER SAYS THE COPPER IS INNOCENT. THE BLITTER REFUSES TO COMMENT. "
+		dc.b	"/ / / \\ \\ \\ THIS IS A SCROLLTEST, SO HERE IS A SERIOUS TECHNICAL QUESTION: "
+		dc.b	"WHO ATE THE LAST BISCUIT? [ ?! ] "
+		dc.b	"GREETZ TO THE OLD CREW AND EVERYONE STILL FEEDING DISKS TO AN AMIGA. "
+		dc.b	"ONE MORE PIXEL... NO, WAIT... TWO! # + * . * + # "
+		dc.b	"THRUST / QUADLITE -- STILL NOT FINISHED!          ",0
 		even
 
 logo:
-        INCBIN	"thrust-quadlite_3pl.bin"	; 320x96, 3 bitplanes
+        INCBIN	"thrust-quadlite_3pl_update_final.bin"	; 320x96, 3 bitplanes
 
 ; base palette of the new logo. logoColorEngine overwrites colours 1..7 on
 ; every line every frame, these only seed the copperlist layout.
