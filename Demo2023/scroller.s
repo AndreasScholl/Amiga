@@ -2379,8 +2379,7 @@ logoPos:
 			dc.w	0
 
 text:
-		dc.b	"zeronine says hi to --- major rom --- mark ii ---- equalizer --- exciter --- "
-		dc.b	"dandee -- lord performer --- exolon --- phil --- doctor soft --- kongoman and all the others ........ ",0
+		dc.b	"zeronine and exciter are the best climbers ........ ",0
 		even
 
 logo:
