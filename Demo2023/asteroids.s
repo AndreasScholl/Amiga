@@ -142,7 +142,7 @@ stars_count		= 120
 ;----------------------------------------------------------------------
 ; autopilot - flying
 ;----------------------------------------------------------------------
-ai_turnrate		= 5			; degrees per frame (the keyboard player gets 4)
+ai_turnrate		= 6			; degrees per frame (the keyboard player gets 4)
 ; The engine fires only when the ship is NOT turning - rotate first, then
 ; burn in a straight line. Burning part way through a turn sweeps the
 ; thrust round in an arc and the ship just circles.
@@ -390,16 +390,19 @@ ai_firebase		= 9			; unused now - superseded by the burst timings
 ; across the whole screen, and from then on each letter dies to one hit.
 ; The course is away from where the shot struck - the further away a
 ; letter is the faster it goes - plus a random part. Half the speed of the
-; first version (which reached 80 across and 64 up or down), and mostly
-; down or sideways: few go up, and only slowly.
+; first version (which reached 80 across and 64 up or down), plus 1/4.
+; up and down alike, but a sum of two random numbers, so most go sideways
+; or at an angle rather than straight up or down.
 ; velocities are 1/128 pixel per frame
 sc_awayshift	= 3			; x speed = distance from the impact >> this ...
 sc_awaymax		= 24		; ... clamped to this
 sc_randx		= 31		; + random 0..31, centred (mask, 2^n-1): |vx| <= 40
-sc_randy1		= 31		; y = random 0..31 + random 0..15 - sc_upmax,
-sc_randy2		= 15		; so -12 (up) .. +34 (down), most of them down
-sc_upmax		= 12
-sc_minspeed		= 12		; |vx|+|vy| below this gets pushed down
+sc_randy1		= 31		; y = random 0..31 + random 0..31 - sc_upmax,
+sc_randy2		= 31		; so -31 (up) .. +31 (down)
+sc_upmax		= 31
+sc_minspeed		= 12		; |vx|+|vy| below this gets a push up or down
+							; then everything + 1/4: |vx| <= 50, |vy| <= 39.
+							; on average ~10% faster than the down-only set
 
 ;----------------------------------------------------------------------
 ; autopilot - the hunt (the whole word, and its pieces once it broke up)
@@ -436,36 +439,62 @@ ai_dangerdist	= 44		; a letter coming this close is a threat (a letter
 ai_shootthreat	= 70		; a shootable threat further away than this is
 							; shot, a nearer one dodged
 ai_evadespeed	= 128		; the velocity a dodge wants
-ai_cruise		= 112		; the fastest we fly to a station
-ai_stdead		= 8			; this close to the station is close enough
-ai_stdiag		= 44		; station offsets, see ai_offsets
-ai_stvert		= 64
-ai_sthorz		= 64
-ai_stclear		= 40		; a station this close to another letter is blocked
-ai_offrepick	= 50		; frames before the station is chosen again
-ai_corrstart	= 40		; velocity off by more than this: correct it
+ai_cruise		= 128		; the fastest we fly to a station
+ai_stdead		= 14		; this close to the station is close enough
+ai_engage		= 120		; a target nearer than this (and not a threat)
+							; is shot from where we are - no station
+ai_engagehyst	= 32		; ... and it is left again only past this much more
+ai_drift		= 96		; ... drifting no faster than this meanwhile
+ai_stdiag		= 36		; station offsets, see ai_offsets
+ai_stvert		= 50
+ai_sthorz		= 50
+ai_stclear		= 40
+ai_stkeep		= 24		; the station side we are on wins unless another
+							; is this much nearer		; a station this close to another letter is blocked
+ai_offrepick	= 60		; frames before the station is chosen again
+ai_corrstart	= 48		; velocity off by more than this: correct it
 ai_corrstop		= 12		; ... until it is off by less than this
+ai_nudge		= 16		; while aiming, thrust if off by this much and
+							; the nose points that way anyway
 ai_corrmax		= 60		; give up correcting after this many frames ...
-ai_aimhold		= 25		; ... and only aim and shoot for this many
-ai_idledy		= 80		; no word: wait this far below its row ...
-							; (ai_homey = ship_start_y, which is that: below
-							; the logo, above the bottom)
-ai_homex0		= 72		; ... with x kept inside these
-ai_homex1		= 312
-ai_homedist		= 20		; that close and
-ai_homespeed	= 40		; that slow is home: the next word may come
+ai_aimhold		= 30		; ... and only aim and shoot for this many
+ai_idledy		= 80		; ship_start_y is this far below the word row
+; --- no word: patrol between random waypoints (see ai_wantVelo .idle)
+ai_homex0		= 48		; waypoints x 48..334, the visible part
+ai_homex1		= 336
+ai_waytop		= 24		; now and then a waypoint over the logo, y 24..55
+ai_waytoprange	= 31		; (mask)
+ai_waybottom	= 212		; mostly the black below the scroller, y 212..243
+ai_waybotrange	= 31		; (mask)
+; --- where the ship is hard to see: in front of the logo (raster $20 up to
+;     about $84) and of the scroller and its bar (raster $bc..$ee)
+ai_logoy		= 100		; y < this
+ai_scrolly0		= 156		; y in this..
+ai_scrolly1		= 206		; ..this
+ai_busymax		= 100		; frames there before it moves somewhere else
+ai_busypen		= 48		; a station there counts this much further away
+ai_waytime		= 250		; frames before giving up on a waypoint
+ai_homedist		= 20		; that close is "reached"
+ai_rowclear		= 48		; the next word may come once the ship is on
+							; screen and this far from the word row
 ai_homewait		= 300		; but it never waits longer than this for it
 ai_huntrange	= 128		; px - no point firing at anything further
 shot_frames		= 64		; a shot's life (was 80): ~130 px, and fewer shots
 							; in the air means fewer collision tests
-ai_hitslack		= 10		; px - allowed miss at the lead point (a letter's
+ai_hitslack		= 12		; px - allowed miss at the lead point (a letter's
 							; hit box is +-12)
-ai_huntgap		= 5			; frames between shots, + 0..3
-ai_snapevery	= 4			; frames between checks for a chance shot at a
+ai_huntgap		= 3			; frames between shots, + 0..3
+ai_maxshots		= 6			; shots in the air at once, at most
+ai_wrapslack	= 96		; px - the direct way is taken unless the way
+							; round the screen edge is this much shorter
+ai_wrappen		= 200		; px - a letter only reachable round the edge
+							; counts this much further away as a target
+ai_snapevery	= 2			; frames between checks for a chance shot at a
 							; letter that is not the target
-ai_snaprange	= 110		; px - how far away such a letter may be
-ai_huntsticky	= 24		; px - a new nearest letter must be this much
+ai_snaprange	= 130		; px - how far away such a letter may be
+ai_huntsticky	= 40		; px - a new nearest letter must be this much
 							; nearer before the aim swaps over to it
+ai_spinmax		= 210		; a turn held on past this is let go (ai_turnBy)
 ai_leadmax		= 63		; frames of lead at most
 
 ;======================================================================
@@ -581,6 +610,14 @@ drawGameObjects::
 gameDeferDraw:	dc.b	0
 				even
 homeWait:		dc.w	0		; frames the next word has waited for the ship
+; number of set bits in a byte, for counting the shots in shot_con
+bitCount:
+BCN		set		0
+		rept	256
+		dc.b	(BCN&1)+((BCN>>1)&1)+((BCN>>2)&1)+((BCN>>3)&1)+((BCN>>4)&1)+((BCN>>5)&1)+((BCN>>6)&1)+((BCN>>7)&1)
+BCN		set		BCN+1
+		endr
+		even
 rndCount		= 256		; power of two
 rndPos:			dc.w	0
 rndTab:			ds.l	rndCount
@@ -763,9 +800,11 @@ updateGame:
 		beq.s	.homeOk
 		tst.b	ai_home
 		bne.s	.homeOk
-		addq.w	#1,homeWait
-		cmp.w	#ai_homewait,homeWait
-		blo		.noLetterInit
+		addq.w	#1,homeWait			; after a while out of the band will do,
+		cmp.w	#ai_homewait,homeWait	; even if flying towards it - but
+		blo		.noLetterInit		; never with the ship IN the band
+		tst.b	ai_clear
+		beq		.noLetterInit
 .homeOk:
 		clr.w	homeWait
 		move.w	#wordGap,wordGapTimer
@@ -1704,8 +1743,17 @@ word_scatter:
 		add.w	d1,d0
 		cmp.w	#sc_minspeed,d0
 		bhs.s	.fastEnough
-		add.w	#sc_minspeed,d3		; too slow: a push downwards
+		add.w	#sc_minspeed,d3		; too slow: a push up or down, the way
+		tst.w	d3					; it was going anyway
+		bpl.s	.fastEnough
+		sub.w	#2*sc_minspeed,d3
 .fastEnough:
+		move.w	d2,d0				; + 1/4: a little quicker all round
+		asr.w	#2,d0
+		add.w	d0,d2
+		move.w	d3,d0
+		asr.w	#2,d0
+		add.w	d0,d3
 		move.w	d2,obj_xvelo(a1)
 		move.w	d3,obj_yvelo(a1)
 .next:
@@ -1722,7 +1770,7 @@ ship_explode:
 		tst.b	ship_exploding
 		bne.s	.noinit
 
-		lea		ship_struct(pc),a0
+		lea		ship_struct,a0
 		move.w	obj_xc(a0),d5
 		move.w	obj_yc(a0),d6
 		move.w	obj_xvelo(a0),d3
@@ -1731,7 +1779,7 @@ ship_explode:
 		moveq	#0,d4
 		move.w	obj_angle(a0),a4
 
-		lea		ship_estruct(pc),a0
+		lea		ship_estruct,a0
 		lea		ship_ptab(pc),a1
 		lea		sctab(pc),a3
 
@@ -1772,7 +1820,7 @@ ship_explode:
 		tst.b	ship_exploding
 		beq.s	.noexplosion
 
-		lea		ship_estruct(pc),a0		
+		lea		ship_estruct,a0		
 		move.w	ship_ptab(pc),d7
 		subq.w	#1,d7
 .setpoints:	
@@ -1843,7 +1891,7 @@ ai_sidemode:	dc.b	0		; along-the-row attack for this word?
 
 ;---------------------------------------------
 ship_auto:
-		lea		ship_struct(pc),a0
+		lea		ship_struct,a0
 
 		; --- wait off screen until the first word is actually up, then come
 		;     in from the left under power
@@ -2086,7 +2134,7 @@ ai_findTarget:
 ; is reloaded here.
 ;---------------------------------------------
 ai_debugMarks:
-		lea		ship_struct(pc),a0
+		lea		ship_struct,a0
 		lea		yOffTab(pc),a5
 
 		IFEQ	ai_hoveronly
@@ -2223,6 +2271,20 @@ ai_pilot:
 		beq.s	.noScan
 		bsr		ai_huntScan			; -> ai_target, ai_threat...
 .noScan:
+		; --- how long have we been in front of the logo or the scroller?
+		;     a while is fine, but not for ever (see ai_busymax)
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		move.w	d4,d6
+		bsr		ai_busyY
+		beq.s	.notBusy
+		cmp.w	#1000,ai_busyTime
+		bhs.s	.busyDone
+		addq.w	#1,ai_busyTime
+		bra.s	.busyDone
+.notBusy:
+		clr.w	ai_busyTime
+.busyDone:
 
 		; --- a threat that can be shot and is still a fair way off is the
 		;     one to aim at. ai_wantVelo dodges every other one.
@@ -2263,8 +2325,11 @@ ai_pilot:
 		addq.w	#1,ai_modeTick
 		cmp.w	#ai_corrmax,ai_modeTick
 		blo.s	.steer
-		move.w	#ai_aimhold,ai_aimHold
 .toAim:
+		; after EVERY manoeuvre the nose stays on the target for a while.
+		; going straight back into the next correction is what swung the
+		; nose to and fro like a drunk pilot
+		move.w	#ai_aimhold,ai_aimHold
 		sf		ai_mode
 		st		ai_turning
 		bra.s	.aim
@@ -2316,6 +2381,29 @@ ai_pilot:
 		bra.s	.fire
 
 .aim:
+		; --- while aiming: if the nose happens to point the way we want to
+		;     go anyway, give it a little thrust. that wears the velocity
+		;     error down without a turn, so fewer big corrections are needed
+		;     - each of those is a swing away from the target and back
+		cmp.w	#ai_nudge,d5
+		blo.s	.noNudge
+		asr.w	#2,d0
+		asr.w	#2,d1
+		bsr		ai_crossdot
+		tst.l	d3
+		ble.s	.noNudge
+		move.l	d2,d4
+		bpl.s	.nPos
+		neg.l	d4
+.nPos:
+		add.l	d4,d4				; |cross| * 2 < dot: inside ~26 degrees
+		cmp.l	d3,d4
+		bhs.s	.noNudge
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+.noNudge:
+		tst.w	ai_holdFire			; patrolling (see ai_wantVelo): the nose
+		bne.s	.fire				; stays the way we fly, no aiming about
 		tst.w	ai_target
 		bmi.s	.fire
 		move.l	ai_aimcross,d2
@@ -2363,9 +2451,45 @@ ai_wantVelo:
 		cmp.w	#ai_shootthreat,ai_threatNow
 		blo.s	.evade
 .calm:
+		; a word still forming (and being read): keep patrolling. chasing
+		; stations then meant a new nearest letter, a new station on the
+		; other side and a half turn every time another letter popped up
+		tst.w	ai_holdFire
+		bne		.idle
 		bsr		ai_pickStation		; d0 = 0 if there is no target
 		tst.w	d0
-		beq.s	.idle
+		beq		.idle
+		; --- in range already? then stay put relative to it and shoot from
+		;     here. flying to a station after every kill meant a turn to
+		;     burn and a turn back to aim each time - the drunk look
+		move.w	ai_tdx,d0
+		move.w	ai_tdy,d1
+		AI_MANH
+		move.w	#ai_engage,d6		; (hysteresis: once engaged it takes a
+		tst.b	ai_engaged			; good bit more to start flying again)
+		beq.s	.engTest
+		add.w	#ai_engagehyst,d6
+.engTest:
+		sf		ai_engaged
+		cmp.w	d6,d5
+		bhs.s	.approach
+		cmp.w	#ai_busymax,ai_busyTime	; parked in front of the logo or the
+		bhs.s	.approach			; scroller for a while: move somewhere
+		st		ai_engaged			; better (stations there count extra)
+		; keep the drift we have (nothing to correct, so no turn), only
+		; slow down if it is more than ai_drift
+		move.w	obj_xvelo(a0),d0
+		move.w	obj_yvelo(a0),d1
+		AI_MANH
+		cmp.w	#ai_drift,d5
+		bls.s	.driftOk
+		move.w	#ai_drift,d2
+		bsr		ai_scaleTo
+.driftOk:
+		move.w	d0,ai_vdx
+		move.w	d1,ai_vdy
+		rts
+.approach:
 		move.w	ai_stx,d0
 		move.w	ai_sty,d1
 		move.w	ai_tvx,d2			; the station moves with the target
@@ -2396,45 +2520,152 @@ ai_wantVelo:
 		move.w	d1,ai_vdy
 		rts
 
-; --- no word: come home - into the visible part of the screen below the
-;     logo, clear of the row the next word appears on. straight there, not
-;     round the edges, so the viewer sees it fly back. ai_home tells
-;     updateGame it may start the next word.
+; --- no word (or one still forming): patrol from one waypoint to the
+;     next - mostly where the ship can be seen well, sometimes over the
+;     top, the short way round the screen edges. ai_home tells updateGame
+;     the ship is out of the band the next word appears in and on screen,
+;     so the word may come.
 .idle:
-		move.w	obj_xc(a0),d0		; x: stay where we are, but on screen
-		cmp.w	#ai_homex0,d0
-		bge.s	.hx0
-		move.w	#ai_homex0,d0
-.hx0:
-		cmp.w	#ai_homex1,d0
-		ble.s	.hx1
-		move.w	#ai_homex1,d0
-.hx1:
-		sub.w	obj_xc(a0),d0
+		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d4
 		bsr		ai_signedCoord
-		move.w	#ai_homey,d1
-		sub.w	d4,d1
 		sf		ai_home
-		AI_MANH
-		cmp.w	#ai_homedist,d5
-		bhs.s	.notHome
-		movem.w	d0/d1,-(a7)
-		bsr		ai_speed			; and slow
-		cmp.w	#ai_homespeed,d0
-		movem.w	(a7)+,d0/d1			; (leaves the flags alone)
-		bhs.s	.notHome
+		sf		ai_clear
+		cmp.w	#ai_homex0,d0		; on screen ...
+		blt.s	.notHome
+		cmp.w	#ai_homex1,d0
+		bgt.s	.notHome
+		tst.w	d4
+		bmi.s	.notHome
+		cmp.w	#game_height-16,d4
+		bge.s	.notHome
+		move.w	d4,d5				; ... and clear of the word row
+		sub.w	#ast_y_start,d5
+		bpl.s	.hAbs
+		neg.w	d5
+.hAbs:
+		cmp.w	#ai_rowclear,d5
+		blo.s	.notHome
+		move.w	obj_yvelo(a0),d5	; ... and not heading for it
+		cmp.w	#ast_y_start,d4
+		bge.s	.below
+		neg.w	d5
+.below:
+		st		ai_clear			; (out of the row band, see updateGame)
+		cmp.w	#-16,d5				; (velocity away from the row, 1/128 px)
+		blt.s	.notHome
 		st		ai_home
 .notHome:
+		; --- pick a new waypoint when: a word was just cleared, the old one
+		;     was reached or is taking too long, or we have hung about in
+		;     front of the logo or the scroller long enough
+		tst.w	ai_holdFire			; (a word is forming while this is set)
+		beq.s	.noWord
+		st		ai_hadWord
+		bra.s	.wayCheck
+.noWord:
+		tst.b	ai_hadWord			; word just cleared
+		beq.s	.wayCheck
+		sf		ai_hadWord
+		bra.s	.newWay
+.wayCheck:
+		subq.w	#1,ai_wayTick
+		bmi.s	.newWay
+		cmp.w	#ai_busymax,ai_busyTime
+		bhs.s	.leaveBusy
+		bsr		.wayDelta
+		AI_MANH
+		cmp.w	#ai_homedist,d5
+		bhs.s	.toWay
+		bra.s	.newWay				; reached
+.leaveBusy:
+		tst.b	ai_wayTop			; on the way to the logo anyway? then
+		bne.s	.newWay				; somewhere else; else this one is fine
+		bsr		.wayDelta			; (it is in the clear zone)
+		bra.s	.toWay
+
+; --- mostly the clear black area under the scroller, now and then a pass
+;     over the top, anywhere across - and the way there may well be round
+;     the edge of the screen
+.newWay:
+		move.w	#ai_waytime,ai_wayTick
+		clr.w	ai_busyTime
+		jsr		getRandomNumber
+		move.w	d0,d1
+		and.w	#255,d0				; x 40..326
+		add.w	#ai_homex0,d0
+		lsr.w	#8,d1
+		move.w	d1,d2
+		and.w	#31,d2
+		add.w	d2,d0
+		move.w	d0,ai_wayx
+		sf		ai_wayTop
+		tst.w	ai_holdFire			; never the top while a word is forming
+		bne.s	.wayBottom
+		move.w	d1,d2
+		and.w	#$e0,d2				; 1 in 8 goes over the top
+		bne.s	.wayBottom
+		st		ai_wayTop
+		lsr.w	#3,d1
+		and.w	#ai_waytoprange,d1
+		add.w	#ai_waytop,d1
+		bra.s	.waySet
+.wayBottom:
+		lsr.w	#3,d1
+		and.w	#ai_waybotrange,d1
+		add.w	#ai_waybottom,d1
+.waySet:
+		move.w	d1,ai_wayy
+		bsr		.wayDelta
+.toWay:
 		moveq	#0,d2
 		moveq	#0,d3
 		bra		.toPoint
+
+; d4 = ship y -> d0/d1 = vector to the waypoint, the short way round the
+; screen. while a word is forming the way never crosses its row: if the
+; waypoint is on the other side of it, we go round the top or bottom edge
+.wayDelta:
+		move.w	ai_wayx,d0
+		sub.w	obj_xc(a0),d0
+		move.w	ai_wayy,d1
+		sub.w	d4,d1
+		AI_WRAP
+		tst.w	ai_holdFire
+		beq.s	.wdDone
+		cmp.w	#ast_y_start,d4		; above the row?
+		bge.s	.wdBelow
+		tst.w	d1					; then never down through it
+		ble.s	.wdDone
+		move.w	ai_wayy,d5
+		cmp.w	#ast_y_start,d5
+		blt.s	.wdDone				; (the waypoint is above it as well)
+		sub.w	#ai_wrapy,d1		; up, round the top edge
+		rts
+.wdBelow:
+		tst.w	d1					; below: never up through it
+		bge.s	.wdDone
+		move.w	ai_wayy,d5
+		cmp.w	#ast_y_start,d5
+		bge.s	.wdDone
+		add.w	#ai_wrapy,d1		; down, round the bottom edge
+.wdDone:
+		rts
 
 ; --- dodge: off the threat's path, on the side we are already on - at
 ;     right angles to the way it is coming (relative to us) - plus away
 ;     from where it is going to be
 .evade:
 		st		ai_evading
+		; a letter still appearing does not move - its "path" is just our
+		; own, so stepping off it sideways only slides along the row into
+		; the next one. straight away from it then
+		tst.b	ai_threatSolid
+		bne.s	.moving
+		moveq	#0,d0
+		moveq	#0,d1
+		bra.s	.pDone
+.moving:
 		move.w	ai_threatRy,d0		; p = (-ry, rx)
 		neg.w	d0
 		move.w	ai_threatRx,d1
@@ -2544,9 +2775,21 @@ ai_pickStation:
 		move.w	d0,(a4)+
 		move.w	d1,(a4)+
 		AI_MANH
+		move.w	ai_shy(pc),d6		; a spot in front of the logo or the
+		add.w	d1,d6				; scroller - where the ship is hard to
+		bsr		ai_busyY			; see - counts as further away
+		beq.s	.candFree
+		add.w	#ai_busypen,d5
+.candFree:
 		move.w	d5,(a4)+
 		addq.l	#2,a4
 		dbf		d3,.cand
+		; the side we are on already wins unless another is clearly nearer -
+		; swapping sides for a few pixels is a needless trip and a turn
+		lea		ai_cand,a4
+		move.w	ai_offIdx(pc),d6
+		add.w	d6,d6
+		sub.w	#ai_stkeep,4(a4,d6.w)
 
 		; --- then the nearest first, until one is free. usually the first
 		;     or second is, so few get the letter check
@@ -2608,6 +2851,24 @@ ai_pickStation:
 		rts
 
 ;---------------------------------------------
+; d6 = y on the screen -> Z clear if that is in front of the logo or the
+; scroller, where the ship is hard to make out. keeps d0-d5.
+;---------------------------------------------
+ai_busyY:
+		cmp.w	#ai_logoy,d6
+		blt.s	.busy
+		cmp.w	#ai_scrolly0,d6
+		blt.s	.free
+		cmp.w	#ai_scrolly1,d6
+		bge.s	.free
+.busy:
+		moveq	#1,d6
+		rts
+.free:
+		moveq	#0,d6
+		rts
+
+;---------------------------------------------
 ; turn onto the lead point until a shot would actually hit. ai_turn's
 ; cones are angles - it stops anywhere inside about 7 degrees, which at
 ; 100 pixels is a 12 pixel miss, so the ship sat there lined up "enough"
@@ -2624,6 +2885,11 @@ ai_huntTurn:
 		bpl.s	.pos
 		neg.l	d4
 .pos:
+		tst.b	ai_turning			; holding still: only start turning again
+		bne.s	.wasTurning			; once a shot would miss - the lead point
+		cmp.l	#ai_hitslack<<15,d4	; wanders a little all the time
+		blo.s	.onTarget
+.wasTurning:
 		cmp.l	#(ai_hitslack/2)<<15,d4
 		blo.s	.onTarget
 		cmp.l	#(ai_hitslack*3)<<15,d4
@@ -2634,13 +2900,51 @@ ai_huntTurn:
 .fine:
 		moveq	#1,d1
 .turn:
-		st		ai_turning
-		tst.l	d2
-		bmi		obj_subangle
-		bra		obj_addangle
+		bra		ai_turnBy
 .onTarget:
 		sf		ai_turning
 		rts
+
+;---------------------------------------------
+; turn d1 degrees towards cross d2 / dot d3. while the point is still
+; behind us the direction we were already turning in is kept: deciding by
+; the sign of cross every frame made the ship flip its turn - or spin on
+; past a full circle - whenever the point wobbled across dead astern.
+;---------------------------------------------
+ai_turnBy:
+		tst.b	ai_turning			; a new turn: count from 0
+		bne.s	.going
+		clr.w	ai_turnAcc
+.going:
+		tst.l	d3
+		bgt.s	.free
+		tst.b	ai_turning
+		beq.s	.free
+		cmp.w	#ai_spinmax,ai_turnAcc	; but never on past a half turn and a
+		bhs.s	.free					; bit - that is a spin, not a turn
+		tst.b	ai_turnDir
+		bne.s	.sub
+		bra.s	.add
+.free:
+		tst.l	d2
+		bmi.s	.subSet
+		tst.b	ai_turnDir			; same way as before?
+		beq.s	.add
+		clr.w	ai_turnAcc
+		sf		ai_turnDir
+.add:
+		add.w	d1,ai_turnAcc
+		st		ai_turning
+		bra		obj_addangle
+.subSet:
+		tst.b	ai_turnDir
+		bne.s	.sub
+		clr.w	ai_turnAcc
+		st		ai_turnDir
+.sub:
+		add.w	d1,ai_turnAcc
+		st		ai_turning
+		bra		obj_subangle
 
 ;---------------------------------------------
 ; nearest letter and the most dangerous one. letters still waiting or
@@ -2696,6 +3000,8 @@ ai_huntScan:
 		sub.w	#512,d1
 .lyOk:
 		sub.w	ai_shy(pc),d1
+		move.w	d0,ai_rawx			; the direct way, before the wrap
+		move.w	d1,ai_rawy
 		AI_WRAP
 		; relative velocity * 16 frames, in pixels (velocity is 1/128 px)
 		move.w	obj_xvelo(a1),d4
@@ -2715,6 +3021,31 @@ ai_huntScan:
 		move.w	d6,(a5)+
 		AI_MANH						; d5
 		move.w	d5,a3				; kept for ai_threatNow
+		; --- only reachable round the screen edge (the direct way is a lot
+		;     longer)? then it counts as much further away as a target, and
+		;     gets no chance shots: a direct attack on the visible screen
+		;     comes first. the threat check below still uses the real
+		;     distance, of course
+		cmp.w	ai_rawx(pc),d0
+		bne.s	.wrX
+		cmp.w	ai_rawy(pc),d1
+		beq.s	.direct
+.wrX:
+		movem.w	d0/d1,-(a7)
+		move.w	ai_rawx(pc),d0
+		move.w	ai_rawy(pc),d1
+		AI_MANH
+		sub.w	#ai_wrapslack,d5
+		cmp.w	a3,d5
+		movem.w	(a7)+,d0/d1			; (leaves the flags alone)
+		ble.s	.direct				; hardly longer - fine, go direct
+		or.w	#$100,-2(a5)		; no chance shots at it
+		move.w	a3,d5
+		add.w	#ai_wrappen,d5
+		bra.s	.choose
+.direct:
+		move.w	a3,d5
+.choose:
 		cmp.w	ai_target(pc),d7
 		bne.s	.notCur
 		move.w	d5,ai_curDist
@@ -2724,6 +3055,7 @@ ai_huntScan:
 		move.w	d5,a2
 		move.w	d7,d3
 .notNearest:
+		move.w	a3,d5				; the real distance again
 		cmp.w	ai_threatDist(pc),d5	; too close right now?
 		bhs.s	.in16
 		bsr		.threat
@@ -2789,7 +3121,29 @@ ai_deltaTo:
 		move.w	obj_yc(a0),d4
 		bsr		ai_signedCoord
 		sub.w	d4,d1
-		bra		ai_wrap
+		; the way round the screen edge only if the direct one is a lot
+		; longer: aiming (and the station next to the target) stay on the
+		; visible screen whenever that is reasonable. uses d4-d6 too
+		movem.w	d0/d1,-(a7)			; direct
+		bsr		ai_wrap
+		cmp.w	(a7),d0
+		bne.s	.wrapped
+		cmp.w	2(a7),d1
+		beq.s	.direct
+.wrapped:
+		bsr		ai_manhattan		; round the edge
+		move.w	d5,d4
+		movem.w	(a7),d0/d1			; (still on the stack)
+		bsr		ai_manhattan		; direct
+		sub.w	#ai_wrapslack,d5
+		cmp.w	d4,d5
+		ble.s	.direct
+		bsr		ai_wrap				; round the edge it is
+		addq.l	#4,a7
+		rts
+.direct:
+		movem.w	(a7)+,d0/d1
+		rts
 
 ;---------------------------------------------
 ; d0/d1 -> d5 = |d0|+|d1|. uses d6.
@@ -2855,6 +3209,18 @@ ai_leadAim:
 ai_huntFire:
 		tst.w	ai_fireWait
 		bne.s	.no
+		; no more than ai_maxshots in the air - like the arcade game, and
+		; every shot is a collision test per letter per frame
+		move.w	shot_con,d0
+		move.w	d0,d2
+		and.w	#$ff,d0
+		moveq	#0,d1
+		lea		bitCount,a1
+		move.b	(a1,d0.w),d1		; low byte ...
+		lsr.w	#8,d2
+		add.b	(a1,d2.w),d1		; ... + high byte
+		cmp.w	#ai_maxshots,d1
+		bhs.s	.no
 		tst.w	ai_holdFire			; the read pause
 		bne.s	.no
 		tst.b	ai_targetSolid		; still appearing - a shot would go through
@@ -2970,6 +3336,8 @@ ai_shx:			dc.w	0		; the ship for ai_huntScan, y signed
 ai_shy:			dc.w	0
 ai_shvx:		dc.w	0
 ai_shvy:		dc.w	0
+ai_rawx:		dc.w	0		; ai_huntScan: vector before the wrap
+ai_rawy:		dc.w	0
 ai_listEnd:		dc.l	ai_list
 ai_cand:		ds.w	4*8		; ai_pickStation: x, y, distance, spare
 ; every live letter, rebuilt by ai_huntScan each frame: vector from the
@@ -3007,7 +3375,19 @@ ai_targetSolid:	dc.b	0
 ai_evading:		dc.b	0
 ai_mode:		dc.b	0		; 0 aim and shoot, else correcting the velocity
 ai_phase:		dc.b	0		; flips every frame, see ai_pilot
-ai_home:		dc.b	0		; no word, and the ship is back home
+ai_home:		dc.b	0		; no word, and the ship is out of its way
+ai_clear:		dc.b	0		; ... at least out of the row band
+ai_wayTop:		dc.b	0		; next waypoint in the top half?
+ai_hadWord:		dc.b	0		; a word was up last time we patrolled
+ai_engaged:		dc.b	0		; target in range, shooting from where we are
+ai_turnDir:		dc.b	0		; 0 = turning by adding to the angle
+				even
+ai_turnAcc:		dc.w	0		; degrees turned the same way, this turn
+ai_busyTime:	dc.w	0		; frames in front of the logo or the scroller
+				even
+ai_wayx:		dc.w	192		; patrol waypoint
+ai_wayy:		dc.w	200
+ai_wayTick:		dc.w	0
 				even
 
 ;---------------------------------------------
@@ -3695,14 +4075,8 @@ ai_turn:
 		blt.s	.done				; near enough - stay put
 
 .turn:
-		st		ai_turning
 		moveq	#ai_turnrate,d1
-		tst.l	d2
-		bmi.s	.left
-		bsr		obj_addangle
-		rts
-.left:
-		bsr		obj_subangle
+		bra		ai_turnBy
 .done:
 		rts
 
@@ -3999,7 +4373,7 @@ ai_move:
 
 ;---------------------------------------------
 ship_set:				;<set ship, keyboard control>
-		lea		ship_struct(pc),a0
+		lea		ship_struct,a0
 
 		move.b	jkcode,d0
 		btst	#3,d0
@@ -4171,6 +4545,7 @@ asteroids_init:
 		move.w	#-1,ai_offTarget
 		sf		ai_mode
 		sf		ai_home
+		sf		ai_clear
 		clr.w	ai_aimHold
 
 		lea		names,a3
@@ -4303,7 +4678,7 @@ clearShipScratch:			;<wipe the 32x32 scan corner of the buffer>
 		rts
 ;---------------------------------------------
 ship_pcoords:				;<get point coords from ship lines>
-		lea		ship_struct(pc),a0
+		lea		ship_struct,a0
 		move.w	#16,d0			;x
 		move.w	#16,d1			;y
 		move.w	#0,d2			;angle
@@ -4378,7 +4753,7 @@ ship_init:				;<initialize ship pos,angle>
 		bsr	ship_pcoords
 		bsr	clearShipScratch
 
-		lea	ship_struct(pc),a0
+		lea	ship_struct,a0
 		move.w	#ship_start_x,d0	;x
 		move.w	#ship_start_y,d1	;y
 		move.w	#0,d2			;angle
@@ -4727,7 +5102,7 @@ shipcoll:
 		lea		$dff000,a6
 		jsr		bbusy
 		move.l	screenloc(pc),a0
-		lea		ship_struct(pc),a1
+		lea		ship_struct,a1
 		movem.w	obj_xc(a1),d0/d1
 		subq.w	#2,d0
 		cmp.w	#game_width-1,d0
