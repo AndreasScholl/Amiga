@@ -439,12 +439,24 @@ ai_dangerdist	= 44		; a letter coming this close is a threat (a letter
 ai_shootthreat	= 70		; a shootable threat further away than this is
 							; shot, a nearer one dodged
 ai_evadespeed	= 128		; the velocity a dodge wants
-ai_cruise		= 128		; the fastest we fly to a station
+ai_cruise		= 144		; the fastest we fly to a station
 ai_stdead		= 14		; this close to the station is close enough
-ai_engage		= 120		; a target nearer than this (and not a threat)
+ai_engage		= 100		; a target nearer than this (and not a threat)
 							; is shot from where we are - no station
 ai_engagehyst	= 32		; ... and it is left again only past this much more
 ai_drift		= 96		; ... drifting no faster than this meanwhile
+; --- the start of the attack on a new word is a rush (ai_pilot)
+ai_rushtime		= 350		; frames, or until the first hit breaks it up
+ai_rushcruise	= 160		; faster than ai_cruise ...
+ai_rushengage	= 72		; ... and closer in before it settles to shoot
+ai_rushdx		= 80		; the way in along the row: this far out to the side
+ai_rushdg		= 56		; the way in from above: this far out and up
+ai_stagedx		= 90		; waiting for a word to come in along its row:
+							; this far out beyond the end letter ...
+ai_stagedx2		= 40		; ... or for one from above: this far out ...
+ai_stagedy		= 70		; ... and this far above the row
+ai_stagex0		= 40		; never further out than the visible screen
+ai_stagex1		= 344
 ai_stdiag		= 36		; station offsets, see ai_offsets
 ai_stvert		= 50
 ai_sthorz		= 50
@@ -454,6 +466,8 @@ ai_stkeep		= 24		; the station side we are on wins unless another
 ai_offrepick	= 60		; frames before the station is chosen again
 ai_corrstart	= 48		; velocity off by more than this: correct it
 ai_corrstop		= 12		; ... until it is off by less than this
+ai_burncone		= 3			; burn once |cross| * 2^(this-1) < dot: 1 is 45
+							; degrees, 2 about 26, 3 about 14
 ai_nudge		= 16		; while aiming, thrust if off by this much and
 							; the nose points that way anyway
 ai_corrmax		= 60		; give up correcting after this many frames ...
@@ -478,13 +492,21 @@ ai_homedist		= 20		; that close is "reached"
 ai_rowclear		= 48		; the next word may come once the ship is on
 							; screen and this far from the word row
 ai_homewait		= 300		; but it never waits longer than this for it
-ai_huntrange	= 128		; px - no point firing at anything further
-shot_frames		= 64		; a shot's life (was 80): ~130 px, and fewer shots
+ai_huntrange	= 116		; px - no point firing at anything further
+shot_frames		= 56		; a shot's life (was 80): ~130 px, and fewer shots
 							; in the air means fewer collision tests
-ai_hitslack		= 12		; px - allowed miss at the lead point (a letter's
+ai_hitslack		= 8		; px - allowed miss at the lead point (a letter's
 							; hit box is +-12)
-ai_huntgap		= 3			; frames between shots, + 0..3
-ai_maxshots		= 6			; shots in the air at once, at most
+ai_huntgap		= 9			; frames between shots, + 0..3 - about the pace
+							; of a player on the fire button
+; --- the hunt after the break up, as a gunner (ai_pilot)
+ai_gunnerfar	= 110		; px - a target further than this is flown at
+ai_gunnerspeed	= 112		; ... until we close at this speed
+ai_gunnertop	= 200		; faster than this: slow down first
+ai_farpen		= 150		; target choice: a letter out of range counts as
+							; this much further away (see ai_huntScan)
+ai_maxshots		= 4			; shots in the air at once, at most - as in the
+							; arcade game
 ai_wrapslack	= 96		; px - the direct way is taken unless the way
 							; round the screen edge is this much shorter
 ai_wrappen		= 200		; px - a letter only reachable round the edge
@@ -2258,12 +2280,28 @@ ai_pilot:
 		tst.b	ai_forming
 		beq.s	.formed
 		move.w	#ai_holdframes,ai_holdFire
+		tst.b	ai_styleSet			; a new word: how will we go in? decided
+		bne.s	.holdDone			; now, so the ship can get into position
+		st		ai_styleSet			; while the word forms (see .idle)
+		bsr		ai_rushStart
 		bra.s	.holdDone
 .formed:
 		tst.w	ai_holdFire
 		beq.s	.holdDone
 		subq.w	#1,ai_holdFire
+		bne.s	.holdDone
+		move.w	#ai_rushtime,ai_rush	; the word may be shot now: go for it
 .holdDone:
+		; --- the attack on a new word starts as a rush - faster, and
+		;     closer in before it settles to shoot - until the first hit
+		;     breaks the word up or ai_rushtime runs out
+		tst.w	ai_rush
+		beq.s	.noRush
+		subq.w	#1,ai_rush
+		tst.b	word_scattered
+		beq.s	.noRush
+		clr.w	ai_rush
+.noRush:
 		; --- the expensive looks round run on alternate frames: the scan of
 		;     every letter on one, a new station or a chance shot on the
 		;     other (ai_phase). a 25 Hz look is still quicker than any player
@@ -2285,6 +2323,13 @@ ai_pilot:
 .notBusy:
 		clr.w	ai_busyTime
 .busyDone:
+		; --- a rush with a set way in goes for the letter at that end
+		tst.w	ai_rush
+		beq.s	.noRushTgt
+		tst.w	ai_rushIdx
+		bmi.s	.noRushTgt
+		bsr		ai_rushTarget
+.noRushTgt:
 
 		; --- a threat that can be shot and is still a fair way off is the
 		;     one to aim at. ai_wantVelo dodges every other one.
@@ -2298,6 +2343,42 @@ ai_pilot:
 .noThreat:
 		bsr		ai_aimTarget		; -> ai_aimcross/dot, ai_targetSolid
 		bsr		ai_wantVelo			; -> ai_vdx/vdy, ai_evading
+
+		; --- the word is broken up: hunt like a gunner. the nose goes from
+		;     target to target and nowhere else - no turning away to steer.
+		;     if the target is out of range the ship burns straight at it,
+		;     along the way the nose points anyway. only dodging, and
+		;     slowing down when far too fast, still use the steering below
+		tst.b	word_scattered
+		beq.s	.steerMode
+		tst.b	ai_evading
+		bne.s	.steerMode
+		bsr		ai_speed
+		cmp.w	#ai_gunnertop,d0
+		bhs.s	.steerMode
+		cmp.w	#ai_busymax,ai_busyTime	; too long in front of the logo or
+		bhs.s	.steerMode			; the scroller: that moves it away
+		sf		ai_mode
+		tst.w	ai_target
+		bmi		.fire
+		move.l	ai_aimcross,d2
+		move.l	ai_aimdot,d3
+		bsr		ai_huntTurn
+		tst.b	ai_turning			; on it, and it is out of range?
+		bne		.fire
+		cmp.w	#ai_gunnerfar,ai_aimDist
+		blo		.fire
+		move.w	obj_xvelo(a0),d0	; and not already closing fast enough
+		move.w	obj_yvelo(a0),d1
+		bsr		ai_crossdot			; d3 = our speed along the nose, Q15
+		swap	d3
+		add.w	d3,d3
+		cmp.w	#ai_gunnerspeed,d3
+		bge		.fire
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+		bra		.fire
+.steerMode:
 
 		; --- how far is our velocity off the one we want?
 		move.w	ai_vdx,d0
@@ -2334,27 +2415,31 @@ ai_pilot:
 		st		ai_turning
 		bra.s	.aim
 
-; --- rotate, then burn: the nose into the velocity difference, thrust
-;     once it is within about 18 degrees of it (and still swinging the
-;     last bit round - waiting for a dead straight nose wasted frames)
+; --- rotate, then burn: the nose into the velocity difference. once it
+;     is within ai_burncone the ship just burns, it does not swing the
+;     rest of the way round - the part of the thrust that goes sideways is
+;     cheaper than the turn away from the target and back again
 .steer:
 		asr.w	#2,d0				; keep the muls well inside a long
 		asr.w	#2,d1
 		bsr		ai_crossdot
-		bsr		ai_turn				; leaves d2/d3 alone
 		tst.l	d3
-		ble.s	.fire
+		ble.s	.sTurn
 		move.l	d2,d4
 		bpl.s	.sPos
 		neg.l	d4
 .sPos:
-		move.l	d4,d5
-		add.l	d4,d4
-		add.l	d5,d4				; |cross| * 3 < dot
+		IFNE	ai_burncone-1
+		lsl.l	#ai_burncone-1,d4	; |cross| * 2^(cone-1) < dot
+		ENDC
 		cmp.l	d3,d4
-		bhs.s	.fire
+		bhs.s	.sTurn
+		sf		ai_turning
 		moveq	#ai_thrust,d2
 		bsr		obj_thrust
+		bra.s	.fire
+.sTurn:
+		bsr		ai_turn
 		bra.s	.fire
 
 ; --- dodging can not wait for a tidy turn: burn as soon as the nose is
@@ -2440,6 +2525,156 @@ ai_aimTarget:
 		rts
 
 ;---------------------------------------------
+; the rush on a new word: how does it go in? one of four, at random, so
+; it never looks the same twice in a row for long:
+;   along the row from the end nearer the ship
+;   along the row from either end (maybe round the screen edge to get there)
+;   diagonally down onto the end nearer the ship
+;   no set way - the nearest letter, as in the hunt
+; -> ai_rushIdx = the ai_offsets entry (byte offset), -1 for the last
+;---------------------------------------------
+ai_rushStart:
+		jsr		getRandomNumber
+		move.w	d0,d1
+		and.w	#3,d1
+		cmp.w	#3,d1
+		bne.s	.set
+		move.w	#-1,ai_rushIdx
+		rts
+.set:
+		moveq	#0,d2				; 0 = the left end, 4 = the right one
+		cmp.w	#1,d1
+		bne.s	.near
+		btst	#8,d0				; either end
+		beq.s	.sideSet
+		moveq	#4,d2
+		bra.s	.sideSet
+.near:
+		cmp.w	#ast_x_center,obj_xc(a0)
+		blt.s	.sideSet
+		moveq	#4,d2
+.sideSet:
+		moveq	#32,d3				; along the row ...
+		cmp.w	#2,d1
+		bne.s	.way
+		moveq	#40,d3				; ... or down onto the end
+.way:
+		add.w	d2,d3
+		move.w	d3,ai_rushIdx
+		rts
+
+;---------------------------------------------
+; where to wait while the word forms, for the way in ai_rushStart picked
+; -> ai_wayx/ai_wayy. along the row: level with it, out beyond the end
+; letter. from above: above that end. keeps d4.
+;---------------------------------------------
+ai_stagePoint:
+		move.w	d4,-(a7)
+		bsr		ai_endX				; d0 = x of the end letter
+		move.w	(a7)+,d4
+		move.w	ai_rushIdx,d2
+		move.w	#ast_y_start,d1
+		move.w	#ai_stagedx,d3
+		cmp.w	#40,d2
+		blo.s	.row
+		sub.w	#ai_stagedy,d1		; from above
+		move.w	#ai_stagedx2,d3
+.row:
+		btst	#2,d2				; the right end?
+		bne.s	.right
+		neg.w	d3
+.right:
+		add.w	d3,d0
+		cmp.w	#ai_stagex0,d0		; on screen
+		bge.s	.x0
+		move.w	#ai_stagex0,d0
+.x0:
+		cmp.w	#ai_stagex1,d0
+		ble.s	.x1
+		move.w	#ai_stagex1,d0
+.x1:
+		move.w	d0,ai_wayx
+		move.w	d1,ai_wayy
+		rts
+
+;---------------------------------------------
+; -> d0 = x of the letter at the rush's end of the word (ai_rushIdx bit 2:
+; the right end), letters still waiting included. uses d0-d7/a1
+;---------------------------------------------
+ai_endX:
+		move.l	enemy_con(pc),d2
+		lea		enemy_structs,a1
+		moveq	#31,d7
+		move.w	ai_rushIdx,d4
+		and.w	#4,d4
+		move.w	#ast_x_center,d3	; (no letters: the middle)
+		move.w	#$7fff,d5
+		tst.w	d4
+		beq.s	.loop
+		moveq	#-1,d5
+.loop:
+		btst	d7,d2
+		beq.s	.next
+		move.w	obj_xc(a1),d0
+		tst.w	d4
+		bne.s	.right
+		cmp.w	d5,d0
+		bge.s	.next
+		bra.s	.take
+.right:
+		cmp.w	d5,d0
+		ble.s	.next
+.take:
+		move.w	d0,d5
+		move.w	d0,d3
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.loop
+		move.w	d3,d0
+		rts
+
+;---------------------------------------------
+; the rush goes for the letter at its end of the word -> ai_target
+;---------------------------------------------
+ai_rushTarget:
+		move.l	enemy_con(pc),d2
+		beq.s	.none
+		lea		enemy_structs,a1
+		moveq	#31,d7
+		moveq	#-1,d3
+		move.w	ai_rushIdx,d4
+		and.w	#4,d4				; 0: smallest x wanted, else largest
+		move.w	#$7fff,d5
+		tst.w	d4
+		beq.s	.loop
+		moveq	#-1,d5
+.loop:
+		btst	d7,d2
+		beq.s	.next
+		tst.w	obj_flag(a1)
+		bne.s	.next
+		move.w	obj_xc(a1),d0
+		tst.w	d4
+		bne.s	.right
+		cmp.w	d5,d0
+		bge.s	.next
+		bra.s	.take
+.right:
+		cmp.w	d5,d0
+		ble.s	.next
+.take:
+		move.w	d0,d5
+		move.w	d7,d3
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.loop
+		tst.w	d3
+		bmi.s	.none
+		move.w	d3,ai_target
+.none:
+		rts
+
+;---------------------------------------------
 ; the velocity we want -> ai_vdx/ai_vdy, ai_evading
 ;---------------------------------------------
 ai_wantVelo:
@@ -2466,7 +2701,11 @@ ai_wantVelo:
 		move.w	ai_tdy,d1
 		AI_MANH
 		move.w	#ai_engage,d6		; (hysteresis: once engaged it takes a
-		tst.b	ai_engaged			; good bit more to start flying again)
+		tst.w	ai_rush				; good bit more to start flying again.
+		beq.s	.engNorm			; in a rush, it closes in further first)
+		move.w	#ai_rushengage,d6
+.engNorm:
+		tst.b	ai_engaged
 		beq.s	.engTest
 		add.w	#ai_engagehyst,d6
 .engTest:
@@ -2508,9 +2747,13 @@ ai_wantVelo:
 		add.w	d0,d0				; px -> 1/128 px a frame: get there in
 		add.w	d1,d1				; about 64 frames ...
 		add.w	d5,d5
-		cmp.w	#ai_cruise,d5		; ... but never faster than cruise
+		move.w	#ai_cruise,d2		; ... but never faster than cruise
+		tst.w	ai_rush
+		beq.s	.cruise
+		move.w	#ai_rushcruise,d2
+.cruise:
+		cmp.w	d2,d5
 		bls.s	.ff
-		move.w	#ai_cruise,d2
 		bsr		ai_scaleTo
 .ff:
 		movem.w	(a7)+,d2/d3
@@ -2590,6 +2833,14 @@ ai_wantVelo:
 .newWay:
 		move.w	#ai_waytime,ai_wayTick
 		clr.w	ai_busyTime
+		tst.w	ai_holdFire			; a word forming, and a set way in for
+		beq.s	.wayRandom			; the attack? then wait where that starts
+		tst.w	ai_rushIdx
+		bmi.s	.wayRandom
+		bsr		ai_stagePoint
+		bsr		.wayDelta
+		bra		.toWay
+.wayRandom:
 		jsr		getRandomNumber
 		move.w	d0,d1
 		and.w	#255,d0				; x 40..326
@@ -2669,12 +2920,11 @@ ai_wantVelo:
 		move.w	ai_threatRy,d0		; p = (-ry, rx)
 		neg.w	d0
 		move.w	ai_threatRx,d1
-		move.w	d0,d2				; p pointing at the letter? then the
-		muls	ai_threatPx,d2		; other way round
-		move.w	d1,d3
-		muls	ai_threatPy,d3
-		add.l	d3,d2
-		bmi.s	.sideOk
+		movem.w	d0/d1,-(a7)			; the side the nose already points to:
+		bsr		ai_crossdot			; a dodge that needs no half turn first
+		movem.w	(a7)+,d0/d1			; gets going in time (the "away" part
+		tst.l	d3					; added below keeps it off the letter)
+		bpl.s	.sideOk
 		neg.w	d0
 		neg.w	d1
 .sideOk:
@@ -2740,6 +2990,11 @@ ai_offsets:
 		dc.w	-ai_sthorz,0
 		dc.w	 ai_sthorz,0
 ai_offcount		= 8
+; only for the rush on a new word (see ai_rushStart), never picked otherwise
+		dc.w	-ai_rushdx,0				; 32: in from the left, along the row
+		dc.w	 ai_rushdx,0				; 36: in from the right
+		dc.w	-ai_rushdg,-ai_rushdg		; 40: down onto the left end
+		dc.w	 ai_rushdg,-ai_rushdg		; 44: down onto the right end
 
 ai_pickStation:
 		move.w	ai_target,d7
@@ -2753,6 +3008,13 @@ ai_pickStation:
 		bsr		ai_deltaTo			; d0/d1 = target - ship
 		move.w	d0,ai_tdx
 		move.w	d1,ai_tdy
+		tst.w	ai_rush				; a rush with a set way in?
+		beq.s	.noRushWay
+		move.w	ai_rushIdx,d3
+		bmi.s	.noRushWay
+		move.w	d3,ai_offIdx
+		bra		.use
+.noRushWay:
 		tst.b	ai_phase			; not on a scan frame, see ai_pilot
 		bne		.use
 		cmp.w	ai_offTarget,d7
@@ -2984,6 +3246,15 @@ ai_huntScan:
 		move.w	d0,ai_shy
 		move.w	obj_xvelo(a0),ai_shvx
 		move.w	obj_yvelo(a0),ai_shvy
+		move.w	obj_angle(a0),d6	; the nose, for picking the target
+		sub.w	#90,d6
+		bpl.s	.aOk
+		add.w	#360,d6
+.aOk:
+		lsl.w	#2,d6
+		lea		sctab(pc),a3
+		move.w	2(a3,d6.w),ai_fx
+		move.w	(a3,d6.w),ai_fy
 		lea		enemy_structs(pc),a1
 		moveq	#31,d7				; bit 31 is struct 0
 .loop:
@@ -3046,6 +3317,61 @@ ai_huntScan:
 .direct:
 		move.w	a3,d5
 .choose:
+		; --- the target is the letter that can be shot SOONEST: turning
+		;     the nose round takes time (6 degrees a frame), the shot takes
+		;     time to get there (2 px a frame). score = degrees to turn +
+		;     2 * distance - so the ship sweeps from one letter to the next
+		;     one along, instead of swinging round to whatever is nearest
+		tst.w	-2(a5)				; can it be shot? (0 = yes)
+		beq.s	.solidT
+		add.w	#1000,d5			; appearing, or only round the edge:
+		bra.s	.scored				; only if there is nothing else
+.solidT:
+		add.w	d5,d5
+		cmp.w	#ai_huntrange,a3
+		blo.s	.inRange
+		add.w	#ai_farpen*2+90,d5	; out of range: we would have to fly first
+		bra.s	.scored				; (and the turn hardly matters then)
+.inRange:
+		movem.w	d0/d1/d4,-(a7)
+		move.w	ai_fy(pc),d6
+		muls	d0,d6				; fy*dx
+		move.w	ai_fx(pc),d4
+		muls	d1,d4				; fx*dy
+		sub.l	d6,d4				; cross
+		bpl.s	.cPos
+		neg.l	d4
+.cPos:
+		move.w	ai_fx(pc),d6
+		muls	d0,d6				; fx*dx
+		muls	ai_fy(pc),d1		; fy*dy
+		add.l	d1,d6				; dot
+		moveq	#15,d0				; both in pixels
+		asr.l	d0,d4
+		asr.l	d0,d6
+		move.w	d6,d1
+		bpl.s	.dPos
+		neg.w	d1
+.dPos:
+		add.w	d4,d1				; |cross| + |dot|
+		beq.s	.angSet				; (d0 is 15 - near enough to "none")
+		tst.w	d6
+		bpl.s	.front
+		move.w	d6,d0				; behind: 90 .. 180
+		neg.w	d0
+		mulu	#90,d0
+		divu	d1,d0
+		add.w	#90,d0
+		bra.s	.angSet
+.front:
+		move.w	d4,d0				; in front: 0 .. 90
+		mulu	#90,d0
+		divu	d1,d0
+.angSet:
+		add.w	d0,d5
+		add.w	d0,d5
+		movem.w	(a7)+,d0/d1/d4
+.scored:
 		cmp.w	ai_target(pc),d7
 		bne.s	.notCur
 		move.w	d5,ai_curDist
@@ -3384,6 +3710,10 @@ ai_turnDir:		dc.b	0		; 0 = turning by adding to the angle
 				even
 ai_turnAcc:		dc.w	0		; degrees turned the same way, this turn
 ai_busyTime:	dc.w	0		; frames in front of the logo or the scroller
+ai_rush:		dc.w	0		; frames of attack rush left, see ai_pilot
+ai_rushIdx:		dc.w	-1		; its way in (ai_rushStart)
+ai_styleSet:	dc.b	0		; ai_rushStart done for the word now up
+				even
 				even
 ai_wayx:		dc.w	192		; patrol waypoint
 ai_wayy:		dc.w	200
@@ -4546,6 +4876,8 @@ asteroids_init:
 		sf		ai_mode
 		sf		ai_home
 		sf		ai_clear
+		clr.w	ai_rush
+		sf		ai_styleSet
 		clr.w	ai_aimHold
 
 		lea		names,a3
