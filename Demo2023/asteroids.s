@@ -43,11 +43,24 @@
 ; obj_move are derived from it, and anything above it would draw past the
 ; end of the 5888 byte buffer.
 game_width		= 352
-; the display window only shows buffer lines 0..101, but obj_move wraps
-; over game_height+32 lines. At 128 that left 26 lines that objects were
-; drawn on and never seen, which is where the ship kept vanishing to.
-game_height		= 102
+; the game now covers the whole screen: buffer line 0 is raster $20 (the
+; top of the display window scroller.s sets), line 267 the last visible
+; one. scroller.s: gameLines, and screenloc is the top of that full screen
+; buffer (the scroller part's own buffer starts game_top lines further down).
+game_height		= 268
+game_top		= 110			; scroller.s topLines: where the old, lower
+								; game area started. the word row and the ship
+								; start are kept at the same spot on screen
 game_lineBytes	= $2e			; screen line size in bytes
+
+; --- wrapping. everything that leaves one side comes back in on the other.
+; the band an object is moved across is hidden: x 0..31 is behind the left
+; border and 352.. behind the right one, and y < 0 or >= game_height is
+; clipped. the bands are wider than half a letter, so a letter has fully
+; gone before it reappears on the other side.
+wrap_x0			= 16			; x wraps over wrap_x0..wrap_x1-1
+wrap_x1			= game_width+16
+wrap_my			= 20			; y wraps over -wrap_my..game_height+wrap_my-1
 
 ;----------------------------------------------------------------------
 ; object types and limits
@@ -72,7 +85,7 @@ ast_x_offset 	= 24			; the nominal slot width. letterAdvance below
 ; visible centre of the play area - DDFSTRT $28 puts bitplane pixel 0
 ; at hpos 97 while DIWSTRT is 129, so x 0..31 is behind the border
 ast_x_center	= 192
-ast_y_start		= 16
+ast_y_start		= game_top+16
 wordGap			= 40		; frames after the last shot dies before the
 							; next word is allowed to appear
 
@@ -93,7 +106,8 @@ appear_stagger	= 15		; frames between letters -> 3 spinning at once
 ; scroll text sits at 50..77.
 ship_start_x	= 16		; off the left edge - the visible window is x 32..351,
 							; so the ship waits here until the first word is up
-ship_start_y	= 28
+ship_start_y	= game_top+96	; 80 below the word row (ast_y_start, ai_idledy),
+							; so flying in never goes through the letters
 ; AUTOPILOT
 ; Drives ship_struct through exactly the same four calls the keyboard
 ; path uses - obj_addangle, obj_subangle, obj_thrust, shot_init - so it
@@ -128,7 +142,7 @@ stars_count		= 120
 ;----------------------------------------------------------------------
 ; autopilot - flying
 ;----------------------------------------------------------------------
-ai_turnrate		= 4			; degrees per frame, same as the player gets
+ai_turnrate		= 5			; degrees per frame (the keyboard player gets 4)
 ; The engine fires only when the ship is NOT turning - rotate first, then
 ; burn in a straight line. Burning part way through a turn sweeps the
 ; thrust round in an arc and the ship just circles.
@@ -171,8 +185,8 @@ ai_keepbox		= 1			; 0 to go back to free flight
 ai_lookahead	= 40		; frames of prediction
 ai_boxx0		= 72
 ai_boxx1		= 280
-ai_boxy0		= 10
-ai_boxy1		= 68
+ai_boxy0		= game_top+10
+ai_boxy1		= game_top+68
 ai_boxcx		= (ai_boxx0+ai_boxx1)/2
 ai_boxcy		= (ai_boxy0+ai_boxy1)/2
 
@@ -344,13 +358,13 @@ ai_leavedist	= ai_arrivedist*2
 ai_arrivespeed	= 40		; brake to below this before settling in to shoot
 ai_homex		= ast_x_center	; where it loiters while a word zooms in
 ai_homey		= ship_start_y
-ai_wrapx		= game_width+32		; obj_move's wrap periods
-ai_wrapy		= game_height+32
+ai_wrapx		= wrap_x1-wrap_x0			; obj_move's wrap periods
+ai_wrapy		= game_height+2*wrap_my
 
 ;----------------------------------------------------------------------
 ; autopilot - shooting
 ;----------------------------------------------------------------------
-ai_holdframes	= 60		; frames to admire a finished word before shooting
+ai_holdframes	= 40		; frames to admire a finished word before shooting
 							; (50 == 1 second, 100 == 2 seconds)
 ai_pbholdfire	= 1
 ai_minclose		= 128		; a shot must close at least this fast (128 == 1 px
@@ -368,9 +382,130 @@ ai_gapvar		= 3			; ditto, an AND mask
 ai_burstpause	= 10		; + 0..31 frames before the next burst
 ai_firebase		= 9			; unused now - superseded by the burst timings
 
+;----------------------------------------------------------------------
+; the break up
+;----------------------------------------------------------------------
+; The first shot that hits a word does not destroy a letter. It breaks
+; the word up, Asteroids style: every letter flies off on its own course
+; across the whole screen, and from then on each letter dies to one hit.
+; The course is away from where the shot struck - the further away a
+; letter is the faster it goes - plus a random part. Half the speed of the
+; first version (which reached 80 across and 64 up or down), and mostly
+; down or sideways: few go up, and only slowly.
+; velocities are 1/128 pixel per frame
+sc_awayshift	= 3			; x speed = distance from the impact >> this ...
+sc_awaymax		= 24		; ... clamped to this
+sc_randx		= 31		; + random 0..31, centred (mask, 2^n-1): |vx| <= 40
+sc_randy1		= 31		; y = random 0..31 + random 0..15 - sc_upmax,
+sc_randy2		= 15		; so -12 (up) .. +34 (down), most of them down
+sc_upmax		= 12
+sc_minspeed		= 12		; |vx|+|vy| below this gets pushed down
+
+;----------------------------------------------------------------------
+; autopilot - the hunt (the whole word, and its pieces once it broke up)
+;----------------------------------------------------------------------
+; One behaviour for everything, the way a player flies Asteroids. Every
+; frame:
+;   - every letter, the ones still waiting to appear included, is checked
+;     for a collision course: where will it be, relative to us, now and in
+;     16 and 32 frames (just shifts of the relative velocity, no
+;     multiplies)? The closest of those is its threat. Further ahead the
+;     straight line guess is wrong anyway - the ship brakes on arrival.
+;   - a threat that can be shot and is still a fair way off becomes the
+;     target - shooting it removes it. Any other threat is dodged: off its
+;     path, sideways to the way it is coming, and away from it.
+;   - otherwise the nearest letter is the target, and the ship wants to sit
+;     at a STATION near it: one of the spots in ai_offsets, diagonally
+;     above or below it, straight above or below, or beside it. The one
+;     nearest the ship wins, unless another letter is too close to it. A
+;     whole word blocks the spots beside it, so the ship works a word from
+;     above and below - that is where the vertical moves come from.
+;   - flying is "rotate, burn, coast": the station gives a wanted velocity
+;     (faster the further away, plus the target's own drift). Only once
+;     ours is more than ai_corrstart off it does the ship turn the nose
+;     into the difference and burn until it is under ai_corrstop. The rest
+;     of the time the nose is on the target.
+;   - fire when a shot would pass within ai_hitslack pixels of the lead
+;     point. cross = |nose| * |d| * sin(error) and |nose| is 32767, so
+;     cross >> 15 IS that lateral miss in pixels - no division needed.
+;     Nothing is fired until the word has been complete for ai_holdframes.
+;   - no word at all: stay clear of the row the next one appears on.
+; velocities are 1/128 pixel per frame, distances manhattan pixels.
+ai_dangerdist	= 44		; a letter coming this close is a threat (a letter
+							; is +-12, the ship about +-6)
+ai_shootthreat	= 70		; a shootable threat further away than this is
+							; shot, a nearer one dodged
+ai_evadespeed	= 128		; the velocity a dodge wants
+ai_cruise		= 112		; the fastest we fly to a station
+ai_stdead		= 8			; this close to the station is close enough
+ai_stdiag		= 44		; station offsets, see ai_offsets
+ai_stvert		= 64
+ai_sthorz		= 64
+ai_stclear		= 40		; a station this close to another letter is blocked
+ai_offrepick	= 50		; frames before the station is chosen again
+ai_corrstart	= 40		; velocity off by more than this: correct it
+ai_corrstop		= 12		; ... until it is off by less than this
+ai_corrmax		= 60		; give up correcting after this many frames ...
+ai_aimhold		= 25		; ... and only aim and shoot for this many
+ai_idledy		= 80		; no word: wait this far below its row ...
+							; (ai_homey = ship_start_y, which is that: below
+							; the logo, above the bottom)
+ai_homex0		= 72		; ... with x kept inside these
+ai_homex1		= 312
+ai_homedist		= 20		; that close and
+ai_homespeed	= 40		; that slow is home: the next word may come
+ai_homewait		= 300		; but it never waits longer than this for it
+ai_huntrange	= 128		; px - no point firing at anything further
+shot_frames		= 64		; a shot's life (was 80): ~130 px, and fewer shots
+							; in the air means fewer collision tests
+ai_hitslack		= 10		; px - allowed miss at the lead point (a letter's
+							; hit box is +-12)
+ai_huntgap		= 5			; frames between shots, + 0..3
+ai_snapevery	= 4			; frames between checks for a chance shot at a
+							; letter that is not the target
+ai_snaprange	= 110		; px - how far away such a letter may be
+ai_huntsticky	= 24		; px - a new nearest letter must be this much
+							; nearer before the aim swaps over to it
+ai_leadmax		= 63		; frames of lead at most
+
 ;======================================================================
 
 		section "code",data,chip
+
+; --- inlined helpers for the autopilot's per letter loops
+; d0/d1 -> the shortest way round the wrapped play area (ai_wrap)
+AI_WRAP	macro
+		cmp.w	#ai_wrapx/2,d0
+		ble.s	.wa\@
+		sub.w	#ai_wrapx,d0
+		bra.s	.wb\@
+.wa\@:
+		cmp.w	#-ai_wrapx/2,d0
+		bge.s	.wb\@
+		add.w	#ai_wrapx,d0
+.wb\@:
+		cmp.w	#ai_wrapy/2,d1
+		ble.s	.wc\@
+		sub.w	#ai_wrapy,d1
+		bra.s	.wd\@
+.wc\@:
+		cmp.w	#-ai_wrapy/2,d1
+		bge.s	.wd\@
+		add.w	#ai_wrapy,d1
+.wd\@:
+		endm
+; d0/d1 -> d5 = |d0|+|d1|, uses d6 (ai_manhattan)
+AI_MANH	macro
+		move.w	d0,d5
+		bpl.s	.ma\@
+		neg.w	d5
+.ma\@:
+		move.w	d1,d6
+		bpl.s	.mb\@
+		neg.w	d6
+.mb\@:
+		add.w	d6,d5
+		endm
 
 ; standalone entry point - owns the copperlist, the buffer swap and the
 ; sprite pointers. still reachable through demoParts for the hidden mode.
@@ -406,6 +541,11 @@ initGameObjects::
 		lea		cache_len(a1),a1
 		dbf		d0,.cachePtrs
 		clr.w	collCount
+		lea		rndTab,a0			; for initLineExplode
+		move.w	#rndCount-1,d7
+.rnd:	jsr		getRandomNumber
+		move.l	d0,(a0)+
+		dbf		d7,.rnd
 		bsr		scaleLetters
 		bsr		shots_init
 		bsr		ship_init
@@ -418,9 +558,32 @@ initGameObjects::
 ; finished with the blitter (objects_draw leaves BLTAFWM/BLTALWM at
 ; $ffff0000, which the scroll blit would otherwise inherit).
 updateGameObjects::
+		sf		gameDeferDraw
 		bsr		updateGame
 		lea		$dff000,a6
 		rts
+
+; --- the same, split in two so the scroller can run all of the game's
+;     thinking while its screen clear blit is still going (it used to sit
+;     in bbusy for up to 20000 cycles there): updateGameLogic moves
+;     everything and builds ONE draw table, drawGameObjects draws it once
+;     the buffer is cleared and the scroller is done with the blitter.
+updateGameLogic::
+		st		gameDeferDraw
+		bsr		updateGame
+		lea		$dff000,a6
+		rts
+
+drawGameObjects::
+		bsr		objects_draw		; leaves a6 = $dff000
+		rts
+
+gameDeferDraw:	dc.b	0
+				even
+homeWait:		dc.w	0		; frames the next word has waited for the ship
+rndCount		= 256		; power of two
+rndPos:			dc.w	0
+rndTab:			ds.l	rndCount
 ;------
 gameStandalone:
 		dc.b	0
@@ -435,6 +598,7 @@ updateGamePart::				;<update game>
 
 		jsr		clear			;clear screen
 		jsr		updateStars
+		sf		gameDeferDraw
  		bsr		updateGame
 
 ; 		tst.l	enemy_con		; all enemies gone?
@@ -527,12 +691,15 @@ updateGame:
 ;		move.w	#$fff,$dff180
 		bsr		updateEnemies
 ;		move.w	#$f00,$dff180
+		tst.b	gameDeferDraw	; one table for everything, drawn later
+		bne.s	.oneTable
 		clr.w	(a6)			; end of draw table
 		bsr		objects_draw
-;		move.w	#$0f0,$dff180		
+;		move.w	#$0f0,$dff180
 
 		; player and shots
 		lea		linetab(pc),a6
+.oneTable:
 		tst.b	ship_next
 		bne.s	.nsdraw
 		move.l	a6,-(a7)
@@ -553,7 +720,10 @@ updateGame:
 		ENDC
 		clr.w	(a6)			; and of draw table
 ;		move.w	#$0ff,$dff180
+		tst.b	gameDeferDraw
+		bne.s	.drawLater
 		bsr		objects_draw
+.drawLater:
 ;		move.w	#$000,$dff180
 
 		cmp.b	#$45,kcode		; escape key?
@@ -585,6 +755,19 @@ updateGame:
 		subq.w	#1,wordGapTimer
 		bra.s	.noLetterInit
 .gapOver:
+		; --- and the autopilot has to have flown back home (ai_wantVelo),
+		;     into the visible part of the screen. not for ever, though
+		tst.b	ai_enabled
+		beq.s	.homeOk
+		tst.b	ai_entered
+		beq.s	.homeOk
+		tst.b	ai_home
+		bne.s	.homeOk
+		addq.w	#1,homeWait
+		cmp.w	#ai_homewait,homeWait
+		blo		.noLetterInit
+.homeOk:
+		clr.w	homeWait
 		move.w	#wordGap,wordGapTimer
 
 		; letter counter and initialization
@@ -637,6 +820,8 @@ obj_len:		rs.w	0		; end
 ;     entries (at most max_objlines lines of line_entry bytes).
 line_entry		= 7*2			; bytes per line in linetab, see drawline
 cache_len		= 2+(max_objlines*line_entry)
+cache_m			= 16			; a letter this far inside every edge has no
+								; clipped lines (they reach about +-12)
 
 ; --- collList entry, built by updateEnemies for shot_collision:
 ;     x0, x1, y0, y1 (words), struct pointer (long), enemy_con bit, pad
@@ -666,9 +851,13 @@ obj_init:				;<initialize object>
 		clr.w	(a3)				; no lines
 		bra.s	.copydone
 .copylinedata
-		moveq	#((max_objlines*4)+1)-1,d1
+		move.w	(a2)+,d1			; only the lines there are, not all
+		move.w	d1,(a3)+			; max_objlines - a word spawns nine of
+		subq.w	#1,d1				; these in one frame
+		bmi.s	.copydone
 .copy:
-		move.w	(a2)+,(a3)+
+		move.l	(a2)+,(a3)+			; x1, y1
+		move.l	(a2)+,(a3)+			; x2, y2
 		dbf		d1,.copy
 .copydone:
 ;		movem.l	(a7)+,d0-d7/a0-a6
@@ -759,17 +948,15 @@ obj_move:				;<calculate new object coords>
 		move.w	obj_xfloat(a0),d0		; x floating
 		add.w	obj_xvelo(a0),d0		; + x velocity
 
-		cmp.w	#(game_width+16)*128,d0	; x coord too high?
-		bls.s	.nhx
-		cmp.w	#(game_width+16+16)*128,d0
-		bhi.s	.nhx
-		sub.w	#(game_width+16+16)*128,d0
-.nhx:		
-		cmp.w	#-16*128,d0				; x coord too low?
-		bhi.s	.nlx
-		cmp.w	#(game_width+16+16)*128,d0
-		bls.s	.nlx
-		add.w	#(game_width+16+16)*128,d0
+		; x never gets anywhere near 0 (wrap_x0 is far more than one
+		; frame's movement), so plain unsigned compares will do
+		cmp.w	#wrap_x1*128,d0			; off the right?
+		blo.s	.nhx
+		sub.w	#(wrap_x1-wrap_x0)*128,d0
+.nhx:
+		cmp.w	#wrap_x0*128,d0			; off the left?
+		bhs.s	.nlx
+		add.w	#(wrap_x1-wrap_x0)*128,d0
 .nlx:
 		move.w	d0,obj_xfloat(a0)		; store x floating
 		lsr.w	#7,d0					; convert to integer
@@ -778,17 +965,18 @@ obj_move:				;<calculate new object coords>
 		move.w	obj_yfloat(a0),d0		; y floating
 		add.w	obj_yvelo(a0),d0		; + y velocity
 
-		cmp.w	#(game_height+16)*128,d0	;y coord too high?
+		; y does go negative, as a word: -wrap_my..-1 is $f600..$ffff
+		cmp.w	#(game_height+wrap_my)*128,d0	;y coord too high?
 		bls.s	.nhy
-		cmp.w	#(game_height+16+16)*128,d0
+		cmp.w	#(game_height+2*wrap_my)*128,d0
 		bhi.s	.nhy
-		sub.w	#(game_height+16+16)*128,d0
-.nhy:		
-		cmp.w	#-16*128,d0				; y coord too low?
+		sub.w	#(game_height+2*wrap_my)*128,d0
+.nhy:
+		cmp.w	#-wrap_my*128,d0			; y coord too low?
 		bhi.s	.nly
-		cmp.w	#(game_height+16+16)*128,d0
+		cmp.w	#(game_height+2*wrap_my)*128,d0
 		bls.s	.nly
-		add.w	#(game_height+16+16)*128,d0
+		add.w	#(game_height+2*wrap_my)*128,d0
 .nly:
 		move.w	d0,obj_yfloat(a0)		; store y floating
 		lsr.w	#7,d0					; convert to integer
@@ -914,37 +1102,145 @@ obj_move:				;<calculate new object coords>
 		bne.s	.norotBuild				; exploding - lines change every frame
 		move.l	d0,a3
 		move.l	obj_xc(a0),d0			; xc:yc in one go
-		cmp.l	obj_cachekey(a0),d0
-		bne.s	.cacheFill
+		move.l	obj_cachekey(a0),d1
+		cmp.l	d1,d0
+		bne.s	.cacheMoved
+; --- a3 = the cache. the draw table only gets a pointer to its entries
+;     (a -2 entry, see objects_draw), they are not copied any more
+.cacheEmit:
 		move.w	(a3)+,d7				; words cached
-		lsr.w	#1,d7					; -> longs, an odd word drops into carry
-		bcc.s	.cacheEven
-		move.w	(a3)+,(a6)+
-.cacheEven:
-		subq.w	#1,d7
-		bmi.s	.cacheDone
-.cacheCopy:
-		move.l	(a3)+,(a6)+
-		dbf		d7,.cacheCopy
+		beq.s	.cacheDone
+		move.w	#-2,(a6)+
+		move.l	a3,(a6)+				; first entry
+		add.w	d7,d7
+		add.w	d7,a3
+		move.l	a3,(a6)+				; end
 .cacheDone:
 		rts
 
+; --- moved onto another pixel. if the letter was well inside the screen
+;     before and still is now, none of its lines were or are clipped, and
+;     moving a line only changes where it starts: the buffer offset (whole
+;     words across, lines down) and the start pixel in BLTCON0's top 4
+;     bits. everything else in the entry stays. so shift the cached lines
+;     instead of building them again - ~4 times cheaper, and it matters: a
+;     whole word drifts as one, so every letter crosses a pixel on the
+;     SAME frame, and broken up they move every frame.
+.cacheMoved:
+		move.w	d0,d2					; new y
+		sub.w	#cache_m,d2
+		cmp.w	#game_height-2*cache_m,d2
+		bhs.s	.cacheFill
+		move.w	d1,d2					; old y (-1 = never built: fails)
+		sub.w	#cache_m,d2
+		cmp.w	#game_height-2*cache_m,d2
+		bhs.s	.cacheFill
+		move.w	d0,d2
+		add.w	d2,d2
+		move.w	(a5,d2.w),d2			; new y * li
+		move.w	d1,d3
+		add.w	d3,d3
+		sub.w	(a5,d3.w),d2			; d2 = dy * li
+		move.l	d0,obj_cachekey(a0)		; (before the swaps)
+		swap	d0
+		swap	d1
+		move.w	d0,d3					; new x
+		sub.w	#cache_m,d3
+		cmp.w	#game_width-2*cache_m,d3
+		bhs.s	.cacheRefill
+		move.w	d1,d3					; old x
+		sub.w	#cache_m,d3
+		cmp.w	#game_width-2*cache_m,d3
+		bhs.s	.cacheRefill
+		sub.w	d1,d0					; d0 = dx
+		move.l	a3,a4					; (updateEnemies saves a4)
+		move.w	(a3)+,d7				; words cached
+		beq.s	.cacheDone
+		add.w	d7,d7
+		lea		(a3,d7.w),a1			; end of the entries
+		tst.w	d0
+		beq.s	.shiftY
+		cmp.w	#1,d0					; one pixel sideways - by far the most
+		beq.s	.shiftR					; common, and BLTCON0's top nibble is the
+		cmp.w	#-1,d0					; start pixel, so an add of $1000 moves
+		beq.s	.shiftL					; it and the carry says "next word"
+		bra.s	.shiftX
+.shiftR:
+		tst.w	d2
+		bne.s	.shiftRY
+.sR:	add.w	#$1000,6(a3)
+		bcc.s	.sR1
+		addq.w	#2,2(a3)
+.sR1:	lea		line_entry(a3),a3
+		cmp.l	a1,a3
+		blo.s	.sR
+		move.l	a4,a3
+		bra		.cacheEmit
+.shiftRY:
+		add.w	d2,2(a3)
+		add.w	#$1000,6(a3)
+		bcc.s	.sRY1
+		addq.w	#2,2(a3)
+.sRY1:	lea		line_entry(a3),a3
+		cmp.l	a1,a3
+		blo.s	.shiftRY
+		move.l	a4,a3
+		bra		.cacheEmit
+.shiftL:
+		add.w	d2,2(a3)
+		sub.w	#$1000,6(a3)
+		bcc.s	.sL1
+		subq.w	#2,2(a3)
+.sL1:	lea		line_entry(a3),a3
+		cmp.l	a1,a3
+		blo.s	.shiftL
+		move.l	a4,a3
+		bra		.cacheEmit
+.shiftY:								; straight up or down: offsets only
+		add.w	d2,2(a3)
+		lea		line_entry(a3),a3
+		cmp.l	a1,a3
+		blo.s	.shiftY
+		move.l	a4,a3
+		bra.s	.cacheEmit
+.shiftX:
+		move.w	6(a3),d4				; BLTCON0
+		move.w	d4,d5
+		rol.w	#4,d5
+		and.w	#$f,d5					; start pixel
+		add.w	d0,d5					; + dx
+		move.w	d5,d6
+		asr.w	#4,d6					; words crossed ...
+		add.w	d6,d6					; ... in bytes
+		add.w	d2,d6
+		add.w	d6,2(a3)				; offset
+		and.w	#$f,d5
+		ror.w	#4,d5
+		and.w	#$0fff,d4
+		or.w	d5,d4
+		move.w	d4,6(a3)
+		lea		line_entry(a3),a3
+		cmp.l	a1,a3
+		blo.s	.shiftX
+		move.l	a4,a3
+		bra.s	.cacheEmit
+
+.cacheRefill:
+		swap	d0						; back to xc:yc
 .cacheFill:
 		move.l	d0,obj_cachekey(a0)
-		move.l	a6,-(a7)				; where this object's entries start
+		move.l	a6,-(a7)				; the draw table
+		move.l	obj_cache(a0),a6		; build straight into the cache
+		addq.l	#2,a6
 		bsr.s	.norotBuild				; a1 still points at obj_coords
-		move.l	(a7)+,a1
 		move.l	obj_cache(a0),a3
 		move.l	a6,d0
-		sub.l	a1,d0
+		sub.l	a3,d0
+		subq.l	#2,d0
 		lsr.w	#1,d0					; words written (0 if fully clipped)
-		move.w	d0,(a3)+
-		subq.w	#1,d0
-		bmi.s	.cacheDone
-.cacheStore:
-		move.w	(a1)+,(a3)+
-		dbf		d0,.cacheStore
-		rts
+		move.w	d0,(a3)
+		move.l	(a7)+,a6
+		bra.s	.cacheEmit
 
 .norotBuild:
 		move.w	obj_xc(a0),a3			; a3 survives set_line/drawline
@@ -1108,7 +1404,12 @@ initLineExplode:
 		sub.w	#16,d3				; the -16 of every random offset, once
 		sub.w	#16,d4
 
-		jsr		getRandomNumber
+		move.w	rndPos(pc),d1		; a table of random longs instead of
+		addq.w	#4,d1				; getRandomNumber - ~40 cycles, not ~170
+		and.w	#(rndCount-1)*4,d1
+		move.w	d1,rndPos
+		lea		rndTab,a3
+		move.l	(a3,d1.w),d0
 		moveq	#$1f,d1
 		and.w	d0,d1
 		add.w	d3,d1
@@ -1216,7 +1517,7 @@ shot_init:				;<initialize a shot>
 		dbf		d7,.findshot
 		bra.s	.nofreeshot
 .freeshot:
-		move.w	#80,(a1)		;shot duration
+		move.w	#shot_frames,(a1)	;shot duration
 		moveq	#shot,d5
 		bsr		obj_init
 		bset	d7,d6
@@ -1313,6 +1614,11 @@ shot_collision:
 		bne.s	.noLetter
 		tst.w	obj_flag(a4)
 		bne.s	.nocoll				; already hit by another shot this frame
+		tst.b	word_scattered		; first hit on this word? then the rest
+		bne.s	.letterHit			; of it breaks up, and the letter that
+		bsr		word_scatter		; was hit goes as well - otherwise the
+									; break up seems to come from nowhere
+.letterHit:
 		move.w	#1,obj_flag(a4)		; set "hit" flag
 		moveq	#1,d1
 		rts
@@ -1344,6 +1650,71 @@ shot_collision:
 .colldone:
 		moveq	#0,d1
 		rts
+;---------------------------------------------
+; the first hit on a word: every letter of it flies off on its own course.
+; see "the break up" in the constants.
+; in:  a0 = the shot, a4 = the letter it hit
+; keeps a0 and a6 (the draw table), uses d0-d7/a1
+;---------------------------------------------
+word_scatter:
+		st		word_scattered
+		move.l	enemy_con(pc),d4
+		lea		enemy_structs(pc),a1
+		moveq	#31,d7
+.letter:
+		btst	d7,d4
+		beq.s	.next
+		tst.w	obj_flag(a1)		; already blowing up
+		bne.s	.next
+
+		move.w	obj_xc(a1),d2		; away from the impact ...
+		sub.w	obj_xc(a0),d2
+		asr.w	#sc_awayshift,d2
+		cmp.w	#sc_awaymax,d2
+		ble.s	.notFast
+		move.w	#sc_awaymax,d2
+.notFast:
+		cmp.w	#-sc_awaymax,d2
+		bge.s	.notFastL
+		move.w	#-sc_awaymax,d2
+.notFastL:
+		jsr		getRandomNumber		; ... plus a random part
+		moveq	#sc_randx,d3
+		and.w	d0,d3
+		sub.w	#sc_randx/2,d3
+		add.w	d3,d2
+		; y: the sum of two random numbers, shifted so that most go down
+		; or sideways and the few that go up go up slowly
+		swap	d0
+		moveq	#sc_randy1,d3
+		and.w	d0,d3
+		lsr.w	#8,d0
+		and.w	#sc_randy2,d0
+		add.w	d0,d3
+		sub.w	#sc_upmax,d3		; -sc_upmax .. randy1+randy2-sc_upmax
+
+		move.w	d2,d0				; never leave one sitting still
+		bpl.s	.ax
+		neg.w	d0
+.ax:
+		move.w	d3,d1
+		bpl.s	.ay
+		neg.w	d1
+.ay:
+		add.w	d1,d0
+		cmp.w	#sc_minspeed,d0
+		bhs.s	.fastEnough
+		add.w	#sc_minspeed,d3		; too slow: a push downwards
+.fastEnough:
+		move.w	d2,obj_xvelo(a1)
+		move.w	d3,obj_yvelo(a1)
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.letter
+		rts
+
+word_scattered:	dc.b	0		; the word on screen has been broken up
+				even
 ;---------------------------------------------
 ship_explode:
 		tst.b	ship_next
@@ -1825,57 +2196,819 @@ dbgy:			dc.w	0
 
 		IFNE	ai_hoveronly
 ;---------------------------------------------
-; Top level: hover until the word has settled, then make one pass at it.
+; Top level, see "autopilot - the hunt". The old hover beside the word and
+; the pass along the row (ai_hover, ai_attack) are no longer called.
+; a0 = ship. a6 is the draw table and must survive.
 ;---------------------------------------------
 ai_pilot:
 		tst.w	ai_fireWait
 		beq.s	.nofw
 		subq.w	#1,ai_fireWait
 .nofw:
-		bsr		ai_pickEdge			; -> ai_target, nearest letter on our side
-		cmp.b	#AS_ATTACK,ai_astate
-		beq		ai_attack
-
-		bsr		ai_hover
-
-		; --- time to go? the word must be complete, and have been complete
-		;     for ai_attackdelay frames running.
+		; --- the read pause: nothing is fired until the whole word has
+		;     been up for ai_holdframes
 		tst.b	ai_forming
-		bne.s	.notSettled
-		move.l	enemy_con(pc),d0
-		beq.s	.notSettled			; no word at all yet
-		tst.w	ai_target
-		bmi.s	.notSettled			; nothing shootable in it
+		beq.s	.formed
+		move.w	#ai_holdframes,ai_holdFire
+		bra.s	.holdDone
+.formed:
+		tst.w	ai_holdFire
+		beq.s	.holdDone
+		subq.w	#1,ai_holdFire
+.holdDone:
+		; --- the expensive looks round run on alternate frames: the scan of
+		;     every letter on one, a new station or a chance shot on the
+		;     other (ai_phase). a 25 Hz look is still quicker than any player
+		not.b	ai_phase
+		beq.s	.noScan
+		bsr		ai_huntScan			; -> ai_target, ai_threat...
+.noScan:
 
-		; --- are WE ready? on station and slow enough to steer.
-		cmp.w	#ai_attackready,ai_hdist
-		bhs.s	.notSettled
-		move.w	obj_xvelo(a0),d0
-		bpl.s	.rsx
-		neg.w	d0
-.rsx:
-		move.w	obj_yvelo(a0),d1
-		bpl.s	.rsy
-		neg.w	d1
-.rsy:
-		add.w	d1,d0
-		cmp.w	#ai_attackreadyspd,d0
-		bhs.s	.notSettled
+		; --- a threat that can be shot and is still a fair way off is the
+		;     one to aim at. ai_wantVelo dodges every other one.
+		move.w	ai_threat,d7
+		bmi.s	.noThreat
+		tst.b	ai_threatSolid
+		beq.s	.noThreat
+		cmp.w	#ai_shootthreat,ai_threatNow
+		blo.s	.noThreat
+		move.w	d7,ai_target
+.noThreat:
+		bsr		ai_aimTarget		; -> ai_aimcross/dot, ai_targetSolid
+		bsr		ai_wantVelo			; -> ai_vdx/vdy, ai_evading
 
-		addq.w	#1,ai_settleTick
-		cmp.w	#ai_attackdelay,ai_settleTick
-		blo.s	.pdone
-		move.b	#AS_ATTACK,ai_astate
-		move.b	#HS_ROTATE,ai_hstate
+		; --- how far is our velocity off the one we want?
+		move.w	ai_vdx,d0
+		sub.w	obj_xvelo(a0),d0
+		move.w	ai_vdy,d1
+		sub.w	obj_yvelo(a0),d1
+		bsr		ai_manhattan		; d5
+		tst.b	ai_evading
+		bne.s	.evade
+		tst.w	ai_aimHold			; gave up on a correction a moment ago
+		beq.s	.noHold
+		subq.w	#1,ai_aimHold
+		bra.s	.aim
+.noHold:
+		tst.b	ai_mode
+		bne.s	.correcting
+		cmp.w	#ai_corrstart,d5
+		blo.s	.aim
+		st		ai_mode
 		st		ai_turning
-		clr.w	ai_burst
-		clr.w	ai_attackTick
-		sf		ai_launched
+		clr.w	ai_modeTick
+.correcting:
+		cmp.w	#ai_corrstop,d5
+		blo.s	.toAim
+		addq.w	#1,ai_modeTick
+		cmp.w	#ai_corrmax,ai_modeTick
+		blo.s	.steer
+		move.w	#ai_aimhold,ai_aimHold
+.toAim:
+		sf		ai_mode
+		st		ai_turning
+		bra.s	.aim
+
+; --- rotate, then burn: the nose into the velocity difference, thrust
+;     once it is within about 18 degrees of it (and still swinging the
+;     last bit round - waiting for a dead straight nose wasted frames)
+.steer:
+		asr.w	#2,d0				; keep the muls well inside a long
+		asr.w	#2,d1
+		bsr		ai_crossdot
+		bsr		ai_turn				; leaves d2/d3 alone
+		tst.l	d3
+		ble.s	.fire
+		move.l	d2,d4
+		bpl.s	.sPos
+		neg.l	d4
+.sPos:
+		move.l	d4,d5
+		add.l	d4,d4
+		add.l	d5,d4				; |cross| * 3 < dot
+		cmp.l	d3,d4
+		bhs.s	.fire
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+		bra.s	.fire
+
+; --- dodging can not wait for a tidy turn: burn as soon as the nose is
+;     within 45 degrees of where it has to go
+.evade:
+		cmp.w	#ai_corrstop,d5
+		blo.s	.aim
+		st		ai_mode				; and once it is over carry on from here
+		clr.w	ai_modeTick
+		asr.w	#2,d0
+		asr.w	#2,d1
+		bsr		ai_crossdot
+		bsr		ai_turn				; leaves d2/d3 alone
+		tst.l	d3
+		ble.s	.fire
+		move.l	d2,d4
+		bpl.s	.ePos
+		neg.l	d4
+.ePos:
+		cmp.l	d3,d4				; |cross| < dot: inside 45 degrees
+		bhs.s	.fire
+		moveq	#ai_thrust,d2
+		bsr		obj_thrust
+		bra.s	.fire
+
+.aim:
+		tst.w	ai_target
+		bmi.s	.fire
+		move.l	ai_aimcross,d2
+		move.l	ai_aimdot,d3
+		bsr		ai_huntTurn
+.fire:
+		bra		ai_huntFire
+
+;---------------------------------------------
+; the lead point of the target -> ai_aimcross/ai_aimdot, ai_aimDist, and
+; ai_targetSolid if it can be shot (it has finished appearing)
+;---------------------------------------------
+ai_aimTarget:
+		sf		ai_targetSolid
+		move.w	ai_target,d7
+		bmi.s	.none
+		bsr		ai_ptr
+		tst.w	obj_wait(a1)
+		bne.s	.notSolid
+		tst.w	obj_appear(a1)
+		bne.s	.notSolid
+		tst.w	obj_flag(a1)		; hit since the last scan
+		bne.s	.notSolid
+		st		ai_targetSolid
+.notSolid:
+		bsr		ai_leadAim			; d0/d1 = where to aim
+		bsr		ai_crossdot
+		move.l	d2,ai_aimcross
+		move.l	d3,ai_aimdot
 		rts
-.notSettled:
-		clr.w	ai_settleTick
-.pdone:
+.none:
+		clr.l	ai_aimcross
+		clr.l	ai_aimdot			; dot 0 counts as behind us, never fires
 		rts
+
+;---------------------------------------------
+; the velocity we want -> ai_vdx/ai_vdy, ai_evading
+;---------------------------------------------
+ai_wantVelo:
+		sf		ai_evading
+		move.w	ai_threat,d7
+		bmi.s	.calm
+		tst.b	ai_threatSolid
+		beq.s	.evade
+		cmp.w	#ai_shootthreat,ai_threatNow
+		blo.s	.evade
+.calm:
+		bsr		ai_pickStation		; d0 = 0 if there is no target
+		tst.w	d0
+		beq.s	.idle
+		move.w	ai_stx,d0
+		move.w	ai_sty,d1
+		move.w	ai_tvx,d2			; the station moves with the target
+		move.w	ai_tvy,d3
+
+; d0/d1 = vector to the point, d2/d3 = the point's own velocity
+.toPoint:
+		movem.w	d2/d3,-(a7)
+		bsr		ai_manhattan
+		cmp.w	#ai_stdead,d5
+		bhs.s	.go
+		moveq	#0,d0				; there - just move with it
+		moveq	#0,d1
+		bra.s	.ff
+.go:
+		add.w	d0,d0				; px -> 1/128 px a frame: get there in
+		add.w	d1,d1				; about 64 frames ...
+		add.w	d5,d5
+		cmp.w	#ai_cruise,d5		; ... but never faster than cruise
+		bls.s	.ff
+		move.w	#ai_cruise,d2
+		bsr		ai_scaleTo
+.ff:
+		movem.w	(a7)+,d2/d3
+		add.w	d2,d0
+		add.w	d3,d1
+		move.w	d0,ai_vdx
+		move.w	d1,ai_vdy
+		rts
+
+; --- no word: come home - into the visible part of the screen below the
+;     logo, clear of the row the next word appears on. straight there, not
+;     round the edges, so the viewer sees it fly back. ai_home tells
+;     updateGame it may start the next word.
+.idle:
+		move.w	obj_xc(a0),d0		; x: stay where we are, but on screen
+		cmp.w	#ai_homex0,d0
+		bge.s	.hx0
+		move.w	#ai_homex0,d0
+.hx0:
+		cmp.w	#ai_homex1,d0
+		ble.s	.hx1
+		move.w	#ai_homex1,d0
+.hx1:
+		sub.w	obj_xc(a0),d0
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		move.w	#ai_homey,d1
+		sub.w	d4,d1
+		sf		ai_home
+		AI_MANH
+		cmp.w	#ai_homedist,d5
+		bhs.s	.notHome
+		movem.w	d0/d1,-(a7)
+		bsr		ai_speed			; and slow
+		cmp.w	#ai_homespeed,d0
+		movem.w	(a7)+,d0/d1			; (leaves the flags alone)
+		bhs.s	.notHome
+		st		ai_home
+.notHome:
+		moveq	#0,d2
+		moveq	#0,d3
+		bra		.toPoint
+
+; --- dodge: off the threat's path, on the side we are already on - at
+;     right angles to the way it is coming (relative to us) - plus away
+;     from where it is going to be
+.evade:
+		st		ai_evading
+		move.w	ai_threatRy,d0		; p = (-ry, rx)
+		neg.w	d0
+		move.w	ai_threatRx,d1
+		move.w	d0,d2				; p pointing at the letter? then the
+		muls	ai_threatPx,d2		; other way round
+		move.w	d1,d3
+		muls	ai_threatPy,d3
+		add.l	d3,d2
+		bmi.s	.sideOk
+		neg.w	d0
+		neg.w	d1
+.sideOk:
+		bsr		ai_manhattan
+		cmp.w	#4,d5
+		bhs.s	.pOk
+		moveq	#0,d0				; hardly moving relative to us, no path
+		moveq	#0,d1				; to step off - just away from it
+		bra.s	.pDone
+.pOk:
+		moveq	#64,d2
+		bsr		ai_scaleTo
+.pDone:
+		movem.w	d0/d1,-(a7)
+		move.w	ai_threatPx,d0		; away from it
+		move.w	ai_threatPy,d1
+		neg.w	d0
+		neg.w	d1
+		moveq	#64,d2
+		bsr		ai_scaleTo
+		movem.w	(a7)+,d2/d3
+		add.w	d2,d0
+		add.w	d3,d1
+		move.w	#ai_evadespeed,d2
+		bsr		ai_scaleTo
+		move.w	d0,ai_vdx
+		move.w	d1,ai_vdy
+		rts
+
+;---------------------------------------------
+; d0/d1 -> the same direction, |d0|+|d1| = d2 (about). a zero vector
+; comes back as straight down. uses d5/d6.
+;---------------------------------------------
+ai_scaleTo:
+		bsr		ai_manhattan
+		tst.w	d5
+		bne.s	.ok
+		moveq	#0,d0
+		move.w	d2,d1
+		rts
+.ok:
+		muls	d2,d0
+		divs	d5,d0
+		muls	d2,d1
+		divs	d5,d1
+		rts
+
+;---------------------------------------------
+; the station for ai_target -> ai_stx/ai_sty (vector from the ship),
+; ai_tvx/ai_tvy (the target's velocity), d0 = 0 if there is no target.
+; The offset is chosen again when the target changes and every
+; ai_offrepick frames: the one nearest the ship, unless another letter is
+; within ai_stclear of it.
+; uses d0-d7/a1/a2/a4
+;---------------------------------------------
+ai_offsets:
+		dc.w	-ai_stdiag,-ai_stdiag
+		dc.w	 ai_stdiag,-ai_stdiag
+		dc.w	-ai_stdiag, ai_stdiag
+		dc.w	 ai_stdiag, ai_stdiag
+		dc.w	0,-ai_stvert
+		dc.w	0, ai_stvert
+		dc.w	-ai_sthorz,0
+		dc.w	 ai_sthorz,0
+ai_offcount		= 8
+
+ai_pickStation:
+		move.w	ai_target,d7
+		bpl.s	.have
+		moveq	#0,d0
+		rts
+.have:
+		bsr		ai_ptr
+		move.w	obj_xvelo(a1),ai_tvx
+		move.w	obj_yvelo(a1),ai_tvy
+		bsr		ai_deltaTo			; d0/d1 = target - ship
+		move.w	d0,ai_tdx
+		move.w	d1,ai_tdy
+		tst.b	ai_phase			; not on a scan frame, see ai_pilot
+		bne		.use
+		cmp.w	ai_offTarget,d7
+		bne.s	.repick
+		subq.w	#2,ai_offTick		; (counts every other frame)
+		bpl		.use
+.repick:
+		move.w	d7,ai_offTarget
+		move.w	#ai_offrepick,ai_offTick
+		; --- every candidate's vector from the ship and how far that is
+		lea		ai_offsets(pc),a2
+		lea		ai_cand,a4
+		moveq	#ai_offcount-1,d3
+.cand:
+		move.w	ai_tdx(pc),d0
+		add.w	(a2)+,d0
+		move.w	ai_tdy(pc),d1
+		add.w	(a2)+,d1
+		AI_WRAP
+		move.w	d0,(a4)+
+		move.w	d1,(a4)+
+		AI_MANH
+		move.w	d5,(a4)+
+		addq.l	#2,a4
+		dbf		d3,.cand
+
+		; --- then the nearest first, until one is free. usually the first
+		;     or second is, so few get the letter check
+		moveq	#ai_offcount-1,d3	; tries
+.try:
+		lea		ai_cand,a4
+		move.w	#$7fff,d5
+		moveq	#-1,d4				; nearest left, byte offset
+		moveq	#0,d6
+.min:
+		cmp.w	4(a4,d6.w),d5
+		ble.s	.notMin
+		move.w	4(a4,d6.w),d5
+		move.w	d6,d4
+.notMin:
+		addq.w	#8,d6
+		cmp.w	#ai_offcount*8,d6
+		blo.s	.min
+		tst.w	d4
+		bmi.s	.use				; all blocked - keep the one we had
+		move.w	#$7fff,4(a4,d4.w)	; tried
+		; --- blocked? the vectors to every letter are in ai_list already
+		;     (ai_huntScan), so this is a few subtractions per letter
+		move.w	(a4,d4.w),d2
+		move.w	2(a4,d4.w),d7
+		lea		ai_list,a1
+		move.l	ai_listEnd(pc),a3
+		bra.s	.chkTest
+.chk:
+		movem.w	(a1)+,d0/d1/d6		; dx, dy, bit
+		addq.l	#6,a1				; rest of the entry
+		cmp.w	ai_target(pc),d6
+		beq.s	.chkTest			; the target itself
+		sub.w	d2,d0				; letter - station
+		sub.w	d7,d1
+		AI_WRAP
+		AI_MANH
+		cmp.w	#ai_stclear,d5
+		blo.s	.blocked			; something is in the way
+.chkTest:
+		cmp.l	a3,a1
+		blo.s	.chk
+		lsr.w	#1,d4				; free: ai_cand entry -> ai_offsets entry
+		move.w	d4,ai_offIdx
+		bra.s	.use
+.blocked:
+		dbf		d3,.try
+.use:
+		move.w	ai_offIdx,d3
+		lea		ai_offsets(pc),a2
+		move.w	ai_tdx,d0
+		add.w	(a2,d3.w),d0
+		move.w	ai_tdy,d1
+		add.w	2(a2,d3.w),d1
+		bsr		ai_wrap
+		move.w	d0,ai_stx
+		move.w	d1,ai_sty
+		moveq	#1,d0
+		rts
+
+;---------------------------------------------
+; turn onto the lead point until a shot would actually hit. ai_turn's
+; cones are angles - it stops anywhere inside about 7 degrees, which at
+; 100 pixels is a 12 pixel miss, so the ship sat there lined up "enough"
+; to stop turning and never well enough to fire. This one goes by the
+; miss in pixels (cross >> 15, see the hunt notes) instead, and turns in
+; single degrees once it is close, because 4 degree steps jump right over
+; a letter at range.
+; in: d2 = cross, d3 = dot
+;---------------------------------------------
+ai_huntTurn:
+		tst.l	d3
+		ble.s	.coarse				; behind us
+		move.l	d2,d4
+		bpl.s	.pos
+		neg.l	d4
+.pos:
+		cmp.l	#(ai_hitslack/2)<<15,d4
+		blo.s	.onTarget
+		cmp.l	#(ai_hitslack*3)<<15,d4
+		blo.s	.fine
+.coarse:
+		moveq	#ai_turnrate,d1
+		bra.s	.turn
+.fine:
+		moveq	#1,d1
+.turn:
+		st		ai_turning
+		tst.l	d2
+		bmi		obj_subangle
+		bra		obj_addangle
+.onTarget:
+		sf		ai_turning
+		rts
+
+;---------------------------------------------
+; nearest letter and the most dangerous one. letters still waiting or
+; zooming in count for both - the ship lines up on them and keeps out of
+; their way, it just can not shoot them yet (ai_targetSolid).
+; out: ai_target  nearest, unless the current one is less than
+;                 ai_huntsticky further away - then that stays
+;      ai_threat  the letter that is, or in 16 or 32 frames will be,
+;                 closest to us, if that is under ai_dangerdist. -1 if none
+;      ai_threatNow  how far away that one is right now
+;      ai_threatPx/Py  where it is then, relative to us
+;      ai_threatRx/Ry  its velocity relative to ours, >> 3
+;      ai_threatSolid  it can be shot
+; uses d0-d7/a1-a4
+;---------------------------------------------
+ai_huntScan:
+		move.w	#-1,ai_threat
+		move.w	#ai_dangerdist,ai_threatDist
+		move.w	#$7fff,ai_curDist
+		moveq	#-1,d3				; nearest so far
+		move.w	#$7fff,a2			; ... and how near
+		lea		ai_list,a5			; every live letter's vector, for
+		move.l	a5,ai_listEnd		; ai_pickStation
+		move.l	enemy_con(pc),d2
+		bne.s	.any
+		move.w	#-1,ai_target
+		rts
+.any:
+		; the ship, once - everything below is inlined, this runs for
+		; every letter every frame
+		move.w	obj_xc(a0),ai_shx
+		move.w	obj_yc(a0),d0
+		cmp.w	#480,d0				; see ai_signedCoord
+		blo.s	.shyOk
+		sub.w	#512,d0
+.shyOk:
+		move.w	d0,ai_shy
+		move.w	obj_xvelo(a0),ai_shvx
+		move.w	obj_yvelo(a0),ai_shvy
+		lea		enemy_structs(pc),a1
+		moveq	#31,d7				; bit 31 is struct 0
+.loop:
+		btst	d7,d2
+		beq		.next
+		tst.w	obj_flag(a1)		; already blowing up
+		bne		.next
+
+		move.w	obj_xc(a1),d0		; ai_deltaTo, inlined
+		sub.w	ai_shx(pc),d0
+		move.w	obj_yc(a1),d1
+		cmp.w	#480,d1
+		blo.s	.lyOk
+		sub.w	#512,d1
+.lyOk:
+		sub.w	ai_shy(pc),d1
+		AI_WRAP
+		; relative velocity * 16 frames, in pixels (velocity is 1/128 px)
+		move.w	obj_xvelo(a1),d4
+		sub.w	ai_shvx(pc),d4
+		asr.w	#3,d4
+		move.w	obj_yvelo(a1),d6
+		sub.w	ai_shvy(pc),d6
+		asr.w	#3,d6
+		move.w	d6,a4
+		move.w	d0,(a5)+			; into the list, see ai_list
+		move.w	d1,(a5)+
+		move.w	d7,(a5)+
+		move.w	d4,(a5)+
+		move.w	d6,(a5)+
+		move.w	obj_wait(a1),d6		; 0 = can be shot
+		or.w	obj_appear(a1),d6
+		move.w	d6,(a5)+
+		AI_MANH						; d5
+		move.w	d5,a3				; kept for ai_threatNow
+		cmp.w	ai_target(pc),d7
+		bne.s	.notCur
+		move.w	d5,ai_curDist
+.notCur:
+		cmp.w	a2,d5
+		bge.s	.notNearest
+		move.w	d5,a2
+		move.w	d7,d3
+.notNearest:
+		cmp.w	ai_threatDist(pc),d5	; too close right now?
+		bhs.s	.in16
+		bsr		.threat
+.in16:
+		add.w	d4,d0
+		add.w	a4,d1
+		AI_MANH
+		cmp.w	ai_threatDist(pc),d5
+		bhs.s	.in32
+		bsr		.threat
+.in32:
+		add.w	d4,d0
+		add.w	a4,d1
+		AI_MANH
+		cmp.w	ai_threatDist(pc),d5
+		bhs.s	.next
+		bsr		.threat
+.next:
+		lea		obj_len(a1),a1
+		dbf		d7,.loop
+		move.l	a5,ai_listEnd
+
+		; --- keep the current target unless the new one is clearly nearer,
+		;     or the nose swings back and forth between two of them
+		move.w	ai_curDist,d5
+		cmp.w	#$7fff,d5
+		beq.s	.take				; current one gone
+		sub.w	#ai_huntsticky,d5
+		cmp.w	a2,d5
+		ble.s	.done
+.take:
+		move.w	d3,ai_target
+.done:
+		rts
+
+.threat:
+		move.w	d5,ai_threatDist
+		move.w	d7,ai_threat
+		move.w	a3,ai_threatNow
+		move.w	d0,ai_threatPx
+		move.w	d1,ai_threatPy
+		move.w	d4,ai_threatRx
+		move.w	a4,ai_threatRy
+		sf		ai_threatSolid
+		tst.w	obj_wait(a1)
+		bne.s	.notSolid
+		tst.w	obj_appear(a1)
+		bne.s	.notSolid
+		st		ai_threatSolid
+.notSolid:
+		rts
+
+;---------------------------------------------
+; a1 = object -> d0/d1 = shortest vector from the ship (a0) to it. y can
+; be just above the top (see ai_signedCoord), x never is. uses d4.
+;---------------------------------------------
+ai_deltaTo:
+		move.w	obj_xc(a1),d0
+		sub.w	obj_xc(a0),d0
+		move.w	obj_yc(a1),d4
+		bsr		ai_signedCoord
+		move.w	d4,d1
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		sub.w	d4,d1
+		bra		ai_wrap
+
+;---------------------------------------------
+; d0/d1 -> d5 = |d0|+|d1|. uses d6.
+;---------------------------------------------
+ai_manhattan:
+		move.w	d0,d5
+		bpl.s	.x
+		neg.w	d5
+.x:
+		move.w	d1,d6
+		bpl.s	.y
+		neg.w	d6
+.y:
+		add.w	d6,d5
+		rts
+
+;---------------------------------------------
+; -> d0 = |xvelo|+|yvelo| of the ship. uses d1.
+;---------------------------------------------
+ai_speed:
+		move.w	obj_xvelo(a0),d0
+		bpl.s	.x
+		neg.w	d0
+.x:
+		move.w	obj_yvelo(a0),d1
+		bpl.s	.y
+		neg.w	d1
+.y:
+		add.w	d1,d0
+		rts
+
+;---------------------------------------------
+; a1 = target -> d0/d1 = where to aim so a shot meets it, ai_aimDist.
+; a shot covers about 2 pixels a frame, so it takes distance/2 frames to
+; get there; by then the target has moved on by its velocity relative to
+; ours (the shot inherits our velocity) times that.
+;---------------------------------------------
+ai_leadAim:
+		bsr		ai_deltaTo
+		bsr		ai_manhattan
+		lsr.w	#1,d5				; frames to get there
+		cmp.w	#ai_leadmax,d5
+		bls.s	.tOk
+		moveq	#ai_leadmax,d5
+.tOk:
+		move.w	obj_xvelo(a1),d6
+		sub.w	obj_xvelo(a0),d6
+		muls	d5,d6
+		asr.l	#7,d6
+		add.w	d6,d0
+		move.w	obj_yvelo(a1),d6
+		sub.w	obj_yvelo(a0),d6
+		muls	d5,d6
+		asr.l	#7,d6
+		add.w	d6,d1
+		bsr		ai_manhattan
+		move.w	d5,ai_aimDist
+		rts
+
+;---------------------------------------------
+; fire when a shot would pass within ai_hitslack of the lead point
+;---------------------------------------------
+ai_huntFire:
+		tst.w	ai_fireWait
+		bne.s	.no
+		tst.w	ai_holdFire			; the read pause
+		bne.s	.no
+		tst.b	ai_targetSolid		; still appearing - a shot would go through
+		beq.s	.snap
+		cmp.w	#ai_huntrange,ai_aimDist
+		bhs.s	.snap
+		move.l	ai_aimdot,d3
+		ble.s	.snap				; behind us
+		move.l	ai_aimcross,d4
+		bpl.s	.pos
+		neg.l	d4
+.pos:
+		cmp.l	#ai_hitslack<<15,d4	; cross >> 15 is the miss in pixels
+		bhs.s	.snap
+
+.fire:
+		; a shot fired while backing away crawls and never arrives - see
+		; ai_fire. 256 of its own plus our speed along the nose.
+		move.w	obj_xvelo(a0),d0
+		move.w	obj_yvelo(a0),d1
+		bsr		ai_crossdot
+		add.l	d3,d3
+		swap	d3
+		add.w	#256,d3
+		cmp.w	#ai_minclose,d3
+		blt.s	.no
+
+		bsr		ai_shoot
+		jsr		getRandomNumber
+		and.w	#3,d0
+		add.w	#ai_huntgap,d0
+		move.w	d0,ai_fireWait
+.no:
+		rts
+
+; --- not lined up on the target - but maybe on another letter. a player
+;     takes that shot too. every ai_snapevery frames, it is not cheap.
+.snap:
+		tst.b	ai_phase			; not on a scan frame, see ai_pilot
+		bne.s	.no
+		subq.w	#2,ai_snapTick		; (counts every other frame)
+		bpl.s	.no
+		move.w	#ai_snapevery-1,ai_snapTick
+		bsr.s	ai_snapScan
+		tst.w	d0
+		bne.s	.fire
+		rts
+
+;---------------------------------------------
+; any shootable letter within ai_snaprange that a shot fired now would hit
+; (within ai_hitslack of its lead point)? -> d0 non zero
+; uses d0-d7/a1/a3
+;---------------------------------------------
+ai_snapScan:
+		move.w	obj_angle(a0),d6	; the nose, once
+		sub.w	#90,d6
+		bpl.s	.aOk
+		add.w	#360,d6
+.aOk:
+		lsl.w	#2,d6
+		lea		sctab(pc),a3
+		move.w	2(a3,d6.w),ai_fx
+		move.w	(a3,d6.w),ai_fy
+		lea		ai_list,a1			; vectors and velocities from ai_huntScan
+		move.l	ai_listEnd(pc),a3
+		bra.s	.test
+.loop:
+		movem.w	(a1)+,d0-d5			; dx, dy, bit, rx, ry, not solid
+		tst.w	d5
+		bne.s	.test
+		AI_MANH
+		cmp.w	#ai_snaprange,d5
+		bhs.s	.test
+		lsr.w	#1,d5				; a shot's time to get there, as in
+		cmp.w	#ai_leadmax,d5		; ai_leadAim
+		bls.s	.tOk
+		moveq	#ai_leadmax,d5
+.tOk:
+		muls	d5,d3				; rx is velocity >> 3, so * t >> 4
+		asr.l	#4,d3
+		add.w	d3,d0
+		muls	d5,d4
+		asr.l	#4,d4
+		add.w	d4,d1
+		move.w	ai_fx(pc),d3		; dot
+		muls	d0,d3
+		move.w	ai_fy(pc),d4
+		muls	d1,d4
+		add.l	d4,d3
+		ble.s	.test				; behind us
+		move.w	ai_fx(pc),d4		; cross
+		muls	d1,d4
+		move.w	ai_fy(pc),d5
+		muls	d0,d5
+		sub.l	d5,d4
+		bpl.s	.cPos
+		neg.l	d4
+.cPos:
+		cmp.l	#ai_hitslack<<15,d4
+		bhs.s	.test
+		moveq	#1,d0
+		rts
+.test:
+		cmp.l	a3,a1
+		blo.s	.loop
+		moveq	#0,d0
+		rts
+
+ai_fx:			dc.w	0
+ai_fy:			dc.w	0
+ai_snapTick:	dc.w	0
+ai_shx:			dc.w	0		; the ship for ai_huntScan, y signed
+ai_shy:			dc.w	0
+ai_shvx:		dc.w	0
+ai_shvy:		dc.w	0
+ai_listEnd:		dc.l	ai_list
+ai_cand:		ds.w	4*8		; ai_pickStation: x, y, distance, spare
+; every live letter, rebuilt by ai_huntScan each frame: vector from the
+; ship, enemy_con bit, velocity relative to the ship >> 3, and 0 if it can
+; be shot
+ai_le			= 6*2		; bytes per entry
+ai_list:		ds.b	ai_le*32
+
+ai_threat:		dc.w	-1		; see ai_huntScan
+ai_threatDist:	dc.w	0
+ai_threatNow:	dc.w	0
+ai_curDist:		dc.w	0
+ai_aimDist:		dc.w	0
+ai_speedNow:	dc.w	0
+ai_threatPx:	dc.w	0
+ai_threatPy:	dc.w	0
+ai_threatRx:	dc.w	0
+ai_threatRy:	dc.w	0
+ai_vdx:			dc.w	0		; the velocity we want
+ai_vdy:			dc.w	0
+ai_stx:			dc.w	0		; vector to the station
+ai_sty:			dc.w	0
+ai_tdx:			dc.w	0		; vector to the target
+ai_tdy:			dc.w	0
+ai_tvx:			dc.w	0		; the target's velocity
+ai_tvy:			dc.w	0
+ai_offIdx:		dc.w	0		; chosen ai_offsets entry, byte offset
+ai_offTarget:	dc.w	-1		; target it was chosen for
+ai_offTick:		dc.w	0
+ai_modeTick:	dc.w	0
+ai_aimHold:		dc.w	0
+ai_braking:		dc.b	0
+ai_threatSolid:	dc.b	0
+ai_targetSolid:	dc.b	0
+ai_evading:		dc.b	0
+ai_mode:		dc.b	0		; 0 aim and shoot, else correcting the velocity
+ai_phase:		dc.b	0		; flips every frame, see ai_pilot
+ai_home:		dc.b	0		; no word, and the ship is back home
+				even
 
 ;---------------------------------------------
 ; The letter at whichever end of the word we are attacking from. Picking
@@ -3024,6 +4157,22 @@ letterAdvance:
 
 		; init letter asteroids from names table
 asteroids_init:
+		; --- a fresh word is whole again, and the autopilot goes back to
+		;     hovering beside it and lining up a pass along the row
+		sf		word_scattered
+		sf		ai_braking
+		move.b	#AS_HOVER,ai_astate
+		move.b	#HS_ROTATE,ai_hstate
+		st		ai_turning
+		sf		ai_sidePicked
+		clr.w	ai_settleTick
+		clr.w	ai_burst
+		move.w	#-1,ai_target
+		move.w	#-1,ai_offTarget
+		sf		ai_mode
+		sf		ai_home
+		clr.w	ai_aimHold
+
 		lea		names,a3
 		add.l	nameOffset,a3
 		move.l	(a3)+,a4
@@ -3075,33 +4224,23 @@ asteroids_init:
 .loop:
 		move.w	#ast_y_start,d1		; y
 
-		lea		coord_tabs+(5*4),a5	; letter start
 		move.b	(a4)+,d6
 		cmp.b	#' ',d6
 		beq.s	.skip
 		sub.b	#'a',d6
 		ext.w	d6
-		lsl		#2,d6
-		add.w	d6,a5
 
-		moveq	#letter,d5			; name
+		; obj_init copies the shape of type d5 out of coord_tabs, and the
+		; letters follow 'letter' in there - so it copies the right letter
+		; straight away. obj_name has to be 'letter' for all of them.
+		moveq	#letter,d5
+		add.w	d6,d5
 		movem.l	d0-d7/a1-a6,-(a7)
 		bsr		enemy_init
 		movem.l	(a7)+,d0-d7/a1-a6
+		move.w	#letter,obj_name(a0)
 
 		move.w	#12,obj_collsize(a0)
-		; move.l	(a5),obj_coords(a0)
-		move.l	(a5),a2
-
-		; copy line data to objects buffer
-		lea		obj_coords(a0),a3
-.copylinedata
-		moveq	#((max_objlines*4)+1)-1,d1
-.copy:
-		move.w	(a2)+,d5
-		move.w	d5,(a3)+
-		dbf		d1,.copy
-.copydone:
 		; move.w	d7,d6
 		; lsl.w	#2,d6
 		; move.w	d6,obj_angle(a0)
@@ -3643,9 +4782,11 @@ objects_draw:
 		move.w	#$8000,$74(a6)
 		move.w	#-1,$72(a6)
 .objects:
-		move.w	(a0)+,d5		; BLTSIZE, -1 for a point, 0 = end of table
-		beq.s	.end
+		move.w	(a0)+,d5		; BLTSIZE, -1 for a point, -2 for a letter's
+		beq.s	.end			; cached lines, 0 = end of table
 		bpl.s	.line			;point or line?
+		addq.w	#1,d5
+		bne.s	.cached
 					;<draw point>
 		move.w	(a0)+,a4
 		add.l	d6,a4
@@ -3667,7 +4808,28 @@ objects_draw:
 		movem.w	d4/a5,$62(a6)
 		move.w	d5,$58(a6)		;zeinchen der linie
 		bra.s	.objects
-.end:		
+
+; --- start and end of a run of line entries in a letter's cache
+.cached:
+		move.l	(a0)+,a1
+		move.l	(a0)+,a3
+.cline:
+		move.w	(a1)+,d5
+		move.w	(a1)+,a4
+		add.l	d6,a4
+		movem.w	(a1)+,d1-d4/a5
+.wait2:	btst	#6,2(a6)
+		bne.s	.wait2
+		move.l	a4,$48(a6)
+		move.l	a4,$54(a6)
+		move.w	d1,$52(a6)
+		movem.w	d2/d3,$40(a6)
+		movem.w	d4/a5,$62(a6)
+		move.w	d5,$58(a6)
+		cmp.l	a3,a1
+		blo.s	.cline
+		bra.s	.objects
+.end:
 		move.w	#$0400,$96(a6)	; blitter nasty off
 		rts
 ;----------------------------------------
@@ -3735,7 +4897,8 @@ sctab:
  dc.l $e5637d33,$e7937da5,$e9c57e0d,$ebf97e6b,$ee2f7ec0,$f0667f0b
  dc.l $f29e7f4b,$f4d77f82,$f7127faf,$f94c7fd2,$fb887feb,$fdc37ffa
 ;--------------------------------------------
-linetab:	ds.b	200*16
+linetab:	ds.b	340*line_entry	; letters, explosions, ship and shots all in
+							; one table now (updateGameLogic)
 
 ; a5: pointer to copperlist 
 setupStarfield::

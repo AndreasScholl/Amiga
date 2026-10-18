@@ -26,11 +26,6 @@ RASTER	macro
 		endm
 ; see postEffect - 1 uses the generated unrolled twist
 TWIST_UNROLLED	= 1
-; first buffer line that needs clearing every frame. the asteroids game
-; draws into the top of the buffer now, so this has to stay at 0. if the
-; game is ever removed again it can go back up to 30 (the scroll band
-; starts at line 35 and the dots only ever fall downwards from there).
-clearTop		= 0
 li				= $2e			; screen line size in bytes
 
 ; --- where the game area starts on the raster -------------------------
@@ -54,6 +49,34 @@ gameShift		= $9c-gameTop	; 14 raster lines gained at the top
 ; short at raster $10e - every dot vanished on that one invisible line.
 screenBottom	= $12c
 screenHeight	= screenBottom-gameTop	; 158
+
+; --- the full screen game buffer -------------------------------------
+; the asteroids game uses the whole screen, so its bitplane starts at the
+; top of the display window (fullTop) and the scroller's buffer is just
+; the lower part of it: scroller line 0 is game line topLines. everything
+; the scroller does stays relative to screenlocScroller as before.
+;   bufA/bufB         game line 0, raster fullTop
+;   + topLines*li     scroller line 0 = screenlocScroller, raster gameTop
+;   + screenHeight*li ember plane, see emberTop
+; above gameTop the game line is shown as plane 4 - over the logo, and
+; with three empty planes in front of it above and below the logo - see
+; gamebpl4 in clist. one pointer at the top of the frame is all it takes,
+; the plane runs on by itself down to gameTop.
+; the game plane runs from the top of the display window by itself, so the
+; window has to start exactly at fullTop - clist sets DIWSTRT/DIWSTOP
+; rather than living with whatever the system left there. $20 is as high
+; as the logo ever bobs (logoY-16), so the logo is never cut off.
+fullTop			= $20			; first line of the display window
+topLines		= gameTop-fullTop	; 110
+gameLines		= topLines+screenHeight	; 268, asteroids.s game_height
+bufA			= $70000
+bufB			= $78000
+scrollA			= bufA+topLines*li
+scrollB			= bufB+topLines*li
+; planes 2 of the empty rows above and below the logo read this. it can not
+; just repeat the blank line like planes 1 and 3 do, because plane 2 shares
+; its modulo with the game plane 4.
+zeroLines		= 40			; >= the most rows above (36) or below (32) the logo
 
 sc_offset		= 58+gameShift	; scroller dest y offset. pushed down in the
 								; buffer by the same amount the window moved
@@ -157,7 +180,7 @@ game_height		= screenHeight
 ; emberTop down, placed right behind plane 1 in the same buffer, so ONE
 ; clear blit wipes both. ember line y lives at plane1 base + emberOffset
 ; + y*li.
-;   $70000/$78000         plane 1, screenHeight lines
+;   scrollA/scrollB       plane 1, screenHeight lines
 ;   + screenHeight*li     ember plane, lines emberTop..screenHeight-1
 ; drawPoints never lets a dot glow above emberTop, otherwise its ember
 ; pixel would land in the bottom of plane 1.
@@ -167,6 +190,14 @@ clearLines		= screenHeight+screenHeight-emberTop	; 219
 
 		section "code",data,chip
 initScroller::
+		bsr		buildLogoPadded
+		move.l	#zeroArea,d0		; plane 2 above and below the logo
+		move.w	d0,topZero2l
+		move.w	d0,midZero2l
+		swap	d0
+		move.w	d0,topZero2h
+		move.w	d0,midZero2h
+
         moveq   #0,d1
         bsr.s   updateLogoPointers
 
@@ -223,11 +254,29 @@ logo_color_count = 10   ;14 ; colour MOVEs per gradient line. only 1..7 are
 ; 0 restores the old fade-to-black.
 logo_minfade     = 32
 
+;-------
+; the logo is 40 bytes a line, the game plane it now shares the logo rows
+; with is 46 (li). the two share a modulo, so the logo is copied once into
+; li wide lines: DDFSTRT $28 fetches 4 bytes earlier than the $38 the logo
+; was drawn for, so it goes in at +4, and the 6 spare bytes of each line
+; are behind the left and right border.
+buildLogoPadded:
+		lea		logo,a0
+		lea		logoPadded+4,a1
+		move.w	#3*logo_height-1,d7		; all three planes, line by line
+.line:
+		REPT	320/8/4
+		move.l	(a0)+,(a1)+
+		ENDR
+		lea		li-(320/8)(a1),a1
+		dbf		d7,.line
+		rts
+;-------
 ; d1: offset in bytes
 updateLogoPointers:
-		move.l	#logo,d0
+		move.l	#logoPadded,d0
         add.l   d1,d0
-		move.l	#(320/8)*logo_height,d1
+		move.l	#li*logo_height,d1
 		move.w	d0,logobp0l
 		swap	d0
 		move.w	d0,logobp0h
@@ -296,7 +345,16 @@ updateScroller::
 		cmp.w	#15,noiseX
 		bne.s	.nxToggle
 		move.w	#3,noiseX
-.nxToggle:		
+.nxToggle:
+
+		; --- the asteroids game thinks here, while the clear blit is still
+		;     running - it does not touch the buffer, only builds its draw
+		;     table. drawGameObjects at the end draws it.
+		cmp.w	#introGameStart,introTime
+		blo.s	.noGameLogic
+		RASTER	$000f
+		jsr		updateGameLogic
+.noGameLogic:
 
 ; --- from here on we need the cleared buffer. "scroll" starts with a
 ;     bbusy, which is where the blitter is finally waited for - by now
@@ -332,7 +390,7 @@ updateScroller::
 		cmp.w	#introGameStart,introTime
 		blo.s	.noGame
 		RASTER	$000f
-		jsr		updateGameObjects
+		jsr		drawGameObjects
 
 		lea		$dff000,a6
 .noGame:
@@ -361,30 +419,31 @@ clearScroller:				;<switch screens and clear>
 		lea		$dff000,a6
 		not.b	screenToggleScroller
 		bne.s	.s0
-		move.w	#0,bp0+2
-		move.w	#screenHeight*li,emberbpl	; ember plane of the shown buffer
-		move.l	#$78000,screenlocScroller
+		move.w	#scrollA&$ffff,bp0+2		; show A ...
+		move.w	#(scrollA+screenHeight*li)&$ffff,emberbpl
+		move.w	#bufA&$ffff,gamebpl4
+		move.l	#scrollB,screenlocScroller	; ... draw B
+		move.l	#bufB,screenloc				; asteroids draw on the whole screen
 		bra.s	.s1
 .s0:
-		move.w	#$8000,bp0+2
-		move.w	#$8000+(screenHeight*li),emberbpl
-		move.l	#$70000,screenlocScroller
+		move.w	#scrollB&$ffff,bp0+2
+		move.w	#(scrollB+screenHeight*li)&$ffff,emberbpl
+		move.w	#bufB&$ffff,gamebpl4
+		move.l	#scrollA,screenlocScroller
+		move.l	#bufA,screenloc
 .s1:
-		move.l	screenlocScroller,screenloc	; asteroids module draws here too
 		bsr		bbusy
-		move.l	screenlocScroller,d0
-		add.l	#clearTop*li,d0
-		move.l	d0,$54(a6)
+		move.l	screenloc,$54(a6)			; game top, scroller, ember
 		move.l	#-1,$44(a6)
 		move.l	#0,$64(a6)
 		move.l	#$01000000,$40(a6)
-		move.w	#((clearLines-clearTop)<<6)+(li/2),$58(a6)	; plane 1 + ember
+		move.w	#((topLines+clearLines)<<6)+(li/2),$58(a6)
 		rts
 ;---------------------------------------------
-screenToggleScroller:		
+screenToggleScroller:
 		dc.w	0
-screenlocScroller		
-		dc.l	$70000
+screenlocScroller
+		dc.l	scrollA
 ;-------
 ; move + plot every point.
 ;
@@ -2184,7 +2243,7 @@ updateLogoPos:
             bge     .noNegativePos
             ; if logo pos < 0 -> increase bitplane pointers
             neg.w   d0
-            mulu.w  #(320/8),d0             ; logo line in bytes
+            mulu.w  #li,d0                  ; logo line in bytes (logoPadded)
             ext.l   d0
             move.l  d0,d1
             bsr     updateLogoPointers
@@ -2320,17 +2379,21 @@ introRestart:
 ; sprites. So the starfield disappears behind a black rectangle. Hiding it
 ; properly means making the logo region look exactly like the empty single
 ; plane region above it - one plane, pointed at the blank line, modulo
-; -40 so it repeats.
+; -li so it repeats.
 ;---------------------------------------------
 introHideLogo:
 			move.w	#$1200,logoPlanes		; one plane instead of three
-			move.w	#$ffd8,logoPlaneMod
+			move.w	#$ffd2,logoPlaneMod
 			move.w	#$0006,logobp0h			; ... aimed at the empty line
 			move.w	#$e000-li,logobp0l
 			rts
 
 introShowLogo:
-			move.w	#$3200,logoPlanes
+			move.w	#$3200,logoPlanes		; logo only, or with the game
+			tst.b	introGameOn				; plane 4 in it once the game is up
+			beq.s	.noGame
+			move.w	#$4200,logoPlanes
+.noGame:
 			move.w	#$0000,logoPlaneMod
 			moveq	#0,d1
 			bsr		updateLogoPointers		; bp0..bp2 back onto the logo
@@ -2349,6 +2412,12 @@ introHideGame:
 			move.w	#$ffd2,gamePlaneMod		; -li, repeats the blank line
 			move.w	#$1200,gamePlanes2		; one plane, no dual playfield
 			move.w	#$1200,gamePlanes3
+			move.w	#$1200,topPlanes		; no game plane 4 above gameTop
+			move.w	#$1200,midPlanes
+			tst.b	introLogoShown
+			beq.s	.noLogo
+			move.w	#$3200,logoPlanes
+.noLogo:
 			rts
 
 introShowGame:
@@ -2356,6 +2425,12 @@ introShowGame:
 			move.w	#$0000,gamePlaneMod
 			move.w	#$2600,gamePlanes2
 			move.w	#$3600,gamePlanes3		; + ember plane, see emberTop
+			move.w	#$4200,topPlanes		; game plane 4 above gameTop
+			move.w	#$4200,midPlanes
+			tst.b	introLogoShown
+			beq.s	.noLogo
+			move.w	#$4200,logoPlanes
+.noLogo:
 			rts
 
 ;---------------------------------------------
@@ -2848,21 +2923,42 @@ logoColorsOrig:
 	dc.w	$018a,$03a2		; green, light
 	dc.w	$018c,$0abb		; chrome
 	dc.w	$018e,$0eee		; chrome
-	dc.w	$0190,$0000
-	dc.w	$0192,$0000
-	dc.w	$0194,$0000
+	; the last three slots of every gradient line are dummies now: colours
+	; 8..15 are the game plane over the logo and are set once at the top
+	; of clist. $1fe is the copper's no-op register.
+	dc.w	$01fe,$0000
+	dc.w	$01fe,$0000
+	dc.w	$01fe,$0000
 
-
+gameColor		= $0eee		; ship, shots and letters, same as colour 1 below
 
 ; copperlist
-clist:		
+clist:
 		dc.w	BPLCON0,$0200		; bitplanes off
 
 		dc.w	$0108,$0000		; even bitplanes modulo
 		dc.w	$010a,$0000		; odd bitplanes modulo
 
-		dc.w	DDFSTRT,$0038
-		dc.w	DDFSTOP,$00d0
+		; one fetch width for the whole screen, the game plane's. the logo
+		; was drawn for $38..$d0 and is padded to match (buildLogoPadded).
+		dc.w	DDFSTRT,$0028
+		dc.w	DDFSTOP,$00d8
+		; the display window, see fullTop. horizontally the usual $81..$c1
+		; (x 32..351 of the game plane), vertically fullTop..screenBottom
+		dc.w	DIWSTRT,(fullTop<<8)+$81
+		dc.w	DIWSTOP,((screenBottom&$ff)<<8)+$c1
+
+		; colours 8..15 = the game pixel over any logo colour (game plane 4,
+		; see the block at fullTop-1). colour 9 is the bar's shadow colour
+		; further down, so it is put back every frame.
+		dc.w	$0190,gameColor
+		dc.w	$0192,gameColor
+		dc.w	$0194,gameColor
+		dc.w	$0196,gameColor
+		dc.w	$0198,gameColor
+		dc.w	$019a,gameColor
+		dc.w	$019c,gameColor
+		dc.w	$019e,gameColor
 
 		; dc.w	$0104,%100100	; set playfield prios
 		dc.w	$0104
@@ -2884,46 +2980,81 @@ spoint:
 		dc.w	$01aa,$0125		; 4
 		dc.w	$01ac,$0fff
 		dc.w	$01ae,$0631		; 3
+
+		; from fullTop down to gameTop the game is plane 4 of a 4 plane
+		; screen, IN FRONT of the logo (colours 8..15, see above). no dual
+		; playfield: 4 planes in lowres cost the CPU nothing.
+		; above the logo: planes 1 and 3 repeat the blank line, plane 2 reads
+		; zeroArea (it shares a modulo with the game plane 4, so it can not
+		; repeat a line), plane 4 is the game. topPlanes is $1200 - just the
+		; blank plane 1 - until the game starts.
+		; the line BEFORE the window: when the logo starts right at the top
+		; its own pointer block runs on the same line as this one would, and
+		; both together no longer fit in before the first fetch.
+		dc.w	((fullTop-1)<<8)+$01,$fffe
+		; game plane 4 is only set here: it is fetched on every line from
+		; the top of the window down to gameTop, so it runs on by itself.
+		; NOT at the very top of clist: the copper runs that part at line 0,
+		; before the VBL handler's clearScroller has flipped gamebpl4, so it
+		; would show the buffer that is being cleared and redrawn right now
+		; - the ship and letters flicker or vanish above gameTop. by line
+		; fullTop-1 clearScroller (the first thing in the frame) is done.
+		dc.w	$00ec,bufA>>16
+		dc.w	$00ee
+gamebpl4:
+		dc.w	bufA&$ffff
+		dc.w	$0182,$0000	   ; black plane
+		dc.w	$00e0,$0006
+		dc.w	$00e2,$e000-li
+		dc.w	$00e8,$0006
+		dc.w	$00ea,$e000-li
 		dc.w	$00e4
-logobp1h:	
-		dc.w	0	
+topZero2h:
+		dc.w	0
 		dc.w	$00e6
-logobp1l:	
-		dc.w	0	
+topZero2l:
+		dc.w	0
+		dc.w	$0108,$ffd2			; odd planes modulo -li: repeat the blank line
+		dc.w	BPLCON0
+topPlanes:
+		dc.w	$1200
+
+; the logo start can be as high as fullTop itself, so this block must stay
+; short enough to finish before DDFSTRT on that line.
+logoStartWait:
+ 		dc.w	$4001,$fffe
+        ; note: logo bp0 has to be set here as we have a empty bitplane 0
+        ;       before the logo starts or else the sprites (stars) won't display
+		; the pointers go first - all of them have to be in before the
+		; first fetch at DDFSTRT $28
+		dc.w	$00e0
+logobp0h:
+		dc.w	0
+		dc.w	$00e2
+logobp0l:
+		dc.w	0
+		dc.w	$00e4
+logobp1h:
+		dc.w	0
+		dc.w	$00e6
+logobp1l:
+		dc.w	0
 		dc.w	$00e8
-logobp2h:	
-		dc.w	0	
+logobp2h:
+		dc.w	0
 		dc.w	$00ea
 logobp2l:
 		dc.w	0
-
-		dc.w	$2001,$fffe			; stars start
-		dc.w	$0182,$0000	   ; black plane
-		dc.w	BPLCON0,$1200		; one plane
-		dc.w	$00e0,$0006
-		dc.w	$00e2,$e000-li
-		dc.w	$0108,$ffd8			; even bitplanes modulo
-
-logoStartWait:
- 		dc.w	$4001,$fffe
 		dc.w	BPLCON0
 logoPlanes:
-		dc.w	$3200				; 3 bitplanes. patched to $1200 while the logo
-								; is still hidden, so the region behaves exactly
-								; like the empty single plane above it and the
-								; sprites keep showing through
+		dc.w	$3200				; 3 bitplanes, $4200 with the game plane. patched
+								; to $1200 while the logo is still hidden, so
+								; the region behaves exactly like the empty
+								; single plane above it and the sprites keep
+								; showing through
 		dc.w	$0108
 logoPlaneMod:
-		dc.w	$0000				; even bitplanes modulo, patched to $ffd8
-
-        ; note: logo bp0 has to be set here as we have a empty bitplane 0
-        ;       before the logo starts or else the sprites (stars) won't display
-		dc.w	$00e0               
-logobp0h:	
-		dc.w	0	
-		dc.w	$00e2
-logobp0l:	
-		dc.w	0
+		dc.w	$0000				; odd bitplanes modulo, patched to $ffd2
 
 logoColors:
 	; dc.w	$0182,$0463
@@ -2940,14 +3071,22 @@ logoColors:
 
 logoEndWait:
  		dc.w	$6c01,$fffe			; logo end wait
-		dc.w	BPLCON0,$0200		; bitplanes off
-
-;		dc.w	$0180,$0fff	   ; debug test
-		dc.w	$0182,$0000	   ; black plane
-		dc.w	BPLCON0,$1200		; one plane
+		; same as above the logo: empty planes 1..3, game plane 4 runs on.
+		; eight moves, all done before the first fetch at DDFSTRT $28.
 		dc.w	$00e0,$0006
 		dc.w	$00e2,$e000-li
-		dc.w	$0108,$ffd8			; even bitplanes modulo
+		dc.w	$00e8,$0006
+		dc.w	$00ea,$e000-li
+		dc.w	$00e4
+midZero2h:
+		dc.w	0
+		dc.w	$00e6
+midZero2l:
+		dc.w	0
+		dc.w	BPLCON0
+midPlanes:
+		dc.w	$1200
+		dc.w	$0108,$ffd2			; odd planes modulo -li: repeat the blank line
 
 		dc.w	(gameTop<<8)+1,$fffe	; start of "game" area
 		dc.w	BPLCON0,$1200	; 1 bitplanes on
@@ -2996,11 +3135,11 @@ gamePlanes2:
 		dc.w	$2600			; 2 bitplanes on	(dual playfield mode), patched
 							; to $1200 so the shadow plane is not fetched
 							; before the game starts
-		dc.w	$00e4,$0007			; bitplane 01
+		dc.w	$00e4,(scrollA+(li*(51+gameShift))-2)>>16	; bitplane 01
 		; dc.w	$00e6,(li*75)-2		; + lines offset to adjust shadow pos
 		; shifted with the rest of the buffer content so the shadow keeps
 		; reading the same lines it used to
-		dc.w	$00e6,(li*(51+gameShift))-2	; + lines offset to adjust shadow pos
+		dc.w	$00e6,(scrollA+(li*(51+gameShift))-2)&$ffff	; + lines offset to adjust shadow pos
 		dc.w	$0192,$0000	   ; shadow color
 
 		dc.w	$c501,$fffe
@@ -3212,3 +3351,9 @@ logoLineTab:	incbin	"logo_lines.bin"	; 37 bob positions x 73 lines x 7 words
 logoPalettes:	incbin	"logo_palettes.bin"	; 12 palettes x 25 blend steps x 92 colours
 logoFade:		incbin	"logo_fade.bin"		; see logoFadeLit / logoFadeLevels
 		even
+
+;--------------------------------------------------------------
+; chip memory the display reads, cleared by the loader
+		section "scrollerchip",bss_c
+logoPadded:		ds.b	3*logo_height*li	; the logo at the game plane's width
+zeroArea:		ds.b	zeroLines*li		; plane 2 above and below the logo
