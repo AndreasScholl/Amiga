@@ -8,7 +8,7 @@
 src_adr			= $6e000		; scroll buffer source adress
 src_line 		= $32			; source line width
 
-screenHeight	= 128
+; screenHeight (the buffer height) is defined further down, after gameTop
 
 ; --- raster time meter. 1 paints the background in a colour per stage of
 ;     updateScroller, so the CPU time each part takes shows up as a band:
@@ -48,6 +48,13 @@ logoBottom		= logoBobMax+logoY-16+logo_area_height	; $8d, lowest logo row
 gameTop			= logoBottom+1	; $8e
 gameShift		= $9c-gameTop	; 14 raster lines gained at the top
 
+; the buffer runs from gameTop down to the bottom of the display window
+; (the PAL default DIWSTOP $2cc1 -> last visible line $12b), so the dots
+; can fall all the way to the bottom edge. was 128, which ended 30 lines
+; short at raster $10e - every dot vanished on that one invisible line.
+screenBottom	= $12c
+screenHeight	= screenBottom-gameTop	; 158
+
 sc_offset		= 58+gameShift	; scroller dest y offset. pushed down in the
 								; buffer by the same amount the window moved
 								; up, so the scroll text stays put on screen
@@ -72,28 +79,67 @@ dissolveByte	= 14
 dissolveX		= dissolveByte*8	; = 64 pixels
 
 ; --- dissolve point system -------------------------------------------
-; a point stays alive until it falls out of the play area. gravity does
-; most of the work, so every point lives about the same pointLife frames
-; (there is no explicit lifetime counter - it cost ~30 cycles per point
-; per frame).
+; the dots stay white while they fall through the scroller's copper bar
+; and only start to glow out (orange, red, gone) once they are below it,
+; in front of the black background. below the bar each one stays white
+; for a random wait and then glows out, the later ones faster, so some go
+; out right under the bar and some are still bright near the bottom:
+;   group 0  wait  0..15, glow 32 frames
+;   group 1  wait 12..27, glow 16 frames
+;   group 2  wait 20..35, glow 16 frames
+;   group 3  wait 28..43, glow  8 frames
+;
+; the life counter rides in the low byte of the y velocity: accelY only
+; ever changes bit 9 and up, so that byte is never touched by the
+; physics, and the struct stays 16 bytes for movem. the extra bits it
+; adds to y are < 1/256 pixel a frame. it counts down once a frame:
+;   $80+n .. $80     white hot, plane 1 only (sign bit set after the subq
+;                    -> the fast path)
+;   $7f              still above emberTop? then back to $80+wait with a
+;                    fresh group and wait from y's fraction bits, and stay
+;                    white. the pick made on the last frame inside the bar
+;                    is the one that counts. the group's glow step - 1
+;                    goes into vx's low byte, which is just as free.
+;   $7f ..           glowing out, emberFrames life steps of 1, 2 or 4 a
+;                    frame on the ember plane: orange (plane 1 + ember),
+;                    red (ember only), then red flickering at random
+;   emberDead        burnt out, dropped
+; a dot spawns with pointHot, a little less than the fastest one needs to
+; reach emberTop (~90 frames), so the hold above only runs for the last
+; few frames before the bar's end.
+;
+; gravity makes every dot about equally fast at the bar's end (~0.85
+; pixels a frame), with ~55 frames left to screenBottom. wait + glow has
+; to stay inside that so a dot CAN fall to the bottom but never arrives
+; there still glowing: the groups above top out at 47, 43, 51 and 51.
 ;
 ; pool size = spawn rate * lifetime. if dense text spawns faster than
-; that, the pool overflows and the oldest points (the far end of the
-; trail) get dropped in mid air, so the trail length jumps around with
-; the letters. to stop that, addPoints only spawns while it has credit:
-; spawnRate credits come in per frame, each point costs one. the pool
-; then never overflows and every dot flies its full course.
-;   pointLife: frames from spawn to falling out of the bottom. follows
-;              accelY / startAddY / noiseY - recompute if they change.
+; that, the pool overflows and the oldest points get dropped in mid air.
+; to stop that, addPoints only spawns while it has credit: spawnRate
+; credits come in per frame, each point costs one. spawnRate is worked
+; out from the LONGEST life, so the pool can never overflow and every dot
+; burns out on its own.
 ;   spawnCap:  credit saved up in gaps (spaces) - limits the burst at
 ;              the start of the next letter.
-; a slower fall = longer trail but sparser crumbs, a faster fall =
-; shorter trail but denser. numPoints raises both, at ~150 cycles each.
+; numPoints raises density, at ~150 cycles each.
 ; numPoints		= 160		; max points kept alive after an update pass
 numPoints		= 128		; max points kept alive after an update pass
 maxSpawn		= 8			; max points that can be spawned in one frame
 pointsMax		= numPoints+maxSpawn
-pointLife		= 132		; slowest start vy: ~132 frames to fall 79 lines
+emberOrange		= 10		; life steps orange (white plane + ember plane)
+emberRed		= 11		; life steps red (ember plane only)
+emberFlicker	= 11		; life steps flickering red, the last glimmer
+emberFrames		= emberOrange+emberRed+emberFlicker	; must stay 32, see
+								; .emberStep / .emberBase in drawPoints
+emberDead		= $7f-emberFrames			; life byte at which a dot is gone
+emberWait		= $0f		; mask, random part of the wait below the bar
+pointHot		= 80		; < frames the fastest dot needs to reach emberTop
+pointLife		= 103+52	; longest life: the slowest dot leaves the bar
+								; after ~103, wait + glow is at most 52
+; dots are kept in x minus borderX. the visible screen starts at x 32, so
+; a dot that flies off to the left dies right at the border instead of
+; flying on unseen and curving back in further down, still white.
+borderX			= 32
 spawnRate		= (numPoints<<8)/pointLife	; credits per frame, 8.8
 spawnCap		= 4<<8		; must stay <= maxSpawn<<8
 dissolveLines	= 6			; scroller lines that dissolve
@@ -103,6 +149,21 @@ dissolveLines	= 6			; scroller lines that dissolve
 ; the end of the scroll buffer (the old value of 160 did exactly that)
 game_width		= 352
 game_height		= screenHeight
+
+; --- ember plane: the glowing-out colours of the dots ------------------
+; one extra plane, shown as dual playfield plane 3 (PF1's second plane)
+; from raster $ef down - the first black line under the scroller bar,
+; where the copper switches it on (gamePlanes3). it is only stored from
+; emberTop down, placed right behind plane 1 in the same buffer, so ONE
+; clear blit wipes both. ember line y lives at plane1 base + emberOffset
+; + y*li.
+;   $70000/$78000         plane 1, screenHeight lines
+;   + screenHeight*li     ember plane, lines emberTop..screenHeight-1
+; drawPoints never lets a dot glow above emberTop, otherwise its ember
+; pixel would land in the bottom of plane 1.
+emberTop		= $ef-gameTop					; the $ef01 wait in clist
+emberOffset		= (screenHeight-emberTop)*li
+clearLines		= screenHeight+screenHeight-emberTop	; 219
 
 		section "code",data,chip
 initScroller::
@@ -301,10 +362,12 @@ clearScroller:				;<switch screens and clear>
 		not.b	screenToggleScroller
 		bne.s	.s0
 		move.w	#0,bp0+2
+		move.w	#screenHeight*li,emberbpl	; ember plane of the shown buffer
 		move.l	#$78000,screenlocScroller
 		bra.s	.s1
-.s0:		
+.s0:
 		move.w	#$8000,bp0+2
+		move.w	#$8000+(screenHeight*li),emberbpl
 		move.l	#$70000,screenlocScroller
 .s1:
 		move.l	screenlocScroller,screenloc	; asteroids module draws here too
@@ -315,7 +378,7 @@ clearScroller:				;<switch screens and clear>
 		move.l	#-1,$44(a6)
 		move.l	#0,$64(a6)
 		move.l	#$01000000,$40(a6)
-		move.w	#((screenHeight-clearTop)<<6)+(li/2),$58(a6)
+		move.w	#((clearLines-clearTop)<<6)+(li/2),$58(a6)	; plane 1 + ember
 		rts
 ;---------------------------------------------
 screenToggleScroller:		
@@ -374,22 +437,27 @@ drawPoints:
 .gotCount:
 		subq.w	#1,d7
 
-		move.l	screenlocScroller,a0	; plot base
+		move.l	screenlocScroller,a0	; plot base. x is stored minus borderX,
+		addq.l	#borderX/8,a0			; the byte offset comes back in here
+		lea		emberOffset(a0),a6		; ember plane, same y*li+x/8 offsets
 		lea		yTable,a1				; y -> y*li
 		move.l	accelX,a2				; acceleration, 16.16
 		move.l	accelY,a3
-		move.l	#game_width<<16,d5		; clip limits
+		move.l	#(game_width-borderX)<<16,d5	; clip limits
 		move.l	#game_height<<16,d6
 .loop:
-		movem.l	(a5)+,d0-d3			; x, y, vx, vy
+		movem.l	(a5)+,d0-d3			; x, y, vx, vy (+ life in vy's low byte)
 		add.l	d2,d0				; x += vx
 		add.l	d3,d1				; y += vy
-		cmp.l	d5,d0				; unsigned -> catches < 0 as well
-		bhs.s	.kill
+		cmp.l	d5,d0				; unsigned -> catches < 0 as well, i.e.
+		bhs.s	.kill				; behind the left border
 		cmp.l	d6,d1
 		bhs.s	.kill
 		add.l	a2,d2				; vx += ax
-		add.l	a3,d3				; vy += ay
+		add.l	a3,d3				; vy += ay, low byte of ay is 0
+		subq.b	#1,d3				; one frame of life gone
+		bpl.s	.ember				; dropped below $80 -> glowing out
+.hot:
 		movem.l	d0-d3,(a4)			; survivor -> keep it
 		lea		point_len(a4),a4
 
@@ -403,15 +471,67 @@ drawPoints:
 									; only looks at the low 3 bits and ~x&7 is
 									; 7-(x&7), so this is eor #7 for 4 cycles less
 		add.w	d0,d3
-		bset	d2,(a0,d3.w)
+		bset	d2,(a0,d3.w)		; white hot: plane 1 only
 .kill:
 		dbf		d7,.loop
+		bra.s	.loopDone
+
+; --- glowing out. same plot, but the life byte in d3 picks the planes, so
+;     the pixel offset goes to d4 instead
+.ember:
+		cmp.l	#emberTop<<16,d1
+		bhs.s	.glow
+		; still over the bar: stay white. the glow group and the wait below
+		; the bar are picked afresh from y's fraction bits every frame - the
+		; pick made on the last frame inside the bar is the one that sticks
+		moveq	#3,d4
+		and.b	d1,d4				; group 0..3
+		move.b	.emberStep(pc,d4.w),d2	; glow step-1 rides in vx's low byte
+		move.b	d1,d3
+		lsr.b	#2,d3
+		and.b	#emberWait,d3		; 0..15
+		add.b	.emberBase(pc,d4.w),d3
+		or.b	#$80,d3				; sign bit: white again
+		bra.s	.hot
+.emberStep:	dc.b	0,1,1,3			; glow takes 32, 16, 16, 8 frames ...
+.emberBase:	dc.b	0,12,20,28		; ... after waiting this + 0..15 frames
+.glow:
+		sub.b	d2,d3				; late ones burn out faster
+		cmp.b	#emberDead,d3
+		bls.s	.kill				; burnt out: not written back
+		movem.l	d0-d3,(a4)
+		lea		point_len(a4),a4
+
+		swap	d0
+		swap	d1
+		add.w	d1,d1
+		move.w	(a1,d1.w),d4
+		move.w	d0,d2
+		lsr.w	#3,d0
+		not.w	d2
+		add.w	d0,d4
+		cmp.b	#emberDead+emberFlicker+emberRed,d3
+		bhi.s	.orange
+		cmp.b	#emberDead+emberFlicker,d3
+		bhi.s	.red
+		btst	#31,d1				; last glimmer: on y's half pixel bit,
+		beq.s	.kill				; so about every other frame, at random
+.red:
+		bset	d2,(a6,d4.w)		; ember plane only
+		dbf		d7,.loop
+		bra.s	.loopDone
+.orange:
+		bset	d2,(a6,d4.w)		; ember + plane 1
+		bset	d2,(a0,d4.w)
+		dbf		d7,.loop
+.loopDone:
 
 		move.l	a4,d0				; survivors -> new active count
 		sub.l	#points,d0
 		lsr.l	#4,d0
 		move.w	d0,activeCount
 .done:
+		lea		$dff000,a6			; borrowed for the ember plane
 		rts
 
 noiseX:
@@ -508,7 +628,7 @@ addPoint:				; add single point at screen line d7
 		lea		points,a5
 		add.w	d1,a5				; append at the end (= youngest)
 
-		move.l	#(dissolveX+1)<<16,point_x(a5)	; start x, no fraction
+		move.l	#(dissolveX+1-borderX)<<16,point_x(a5)	; start x, no fraction
 
 		moveq	#0,d0				; start y = scroller line
 		move.w	d7,d0
@@ -534,6 +654,7 @@ addPoint:				; add single point at screen line d7
 		ext.l	d0
 		lsl.l	#8,d0				; 9.7 -> 16.16 (<<9)
 		add.l	d0,d0
+		move.b	#$80+pointHot,d0	; life rides in the (empty) low byte
 		move.l	d0,point_yvelo(a5)
 .full:
 		moveq	#0,d0
@@ -2227,12 +2348,14 @@ introHideGame:
 			move.w	#$e000-li,bp0+2
 			move.w	#$ffd2,gamePlaneMod		; -li, repeats the blank line
 			move.w	#$1200,gamePlanes2		; one plane, no dual playfield
+			move.w	#$1200,gamePlanes3
 			rts
 
 introShowGame:
 			move.w	#$0007,gamebp0h
 			move.w	#$0000,gamePlaneMod
 			move.w	#$2600,gamePlanes2
+			move.w	#$3600,gamePlanes3		; + ember plane, see emberTop
 			rts
 
 ;---------------------------------------------
@@ -2844,6 +2967,17 @@ gamePlaneMod:
 
 		dc.w	$0182,$0eee	; game area before scroller color
 
+		; ember plane (dual playfield plane 3, see emberTop). the pointer
+		; is set up here while plane 3 is still off, so it sits untouched
+		; until gamePlanes3 at $ef switches the plane on. emberbpl is
+		; flipped with bp0.
+		dc.w	$00e8,$0007
+		dc.w	$00ea
+emberbpl:
+		dc.w	screenHeight*li
+		dc.w	$0186,$0f93	; dot glowing out, orange (plane 1 + ember)
+		dc.w	$0184,$0a32	; dot glowing out, red (ember only)
+
 barRegionStart:				; everything from here to barRegionEnd is the
 								; scroller bar, background AND shading
 		dc.w	$bf01,$fffe
@@ -2995,8 +3129,12 @@ barc18:	dc.w	$0180,$0001	; wall
 		dc.w	$ee01,$fffe
 barc19: dc.w	$0180,$0001	; wall 
 		dc.w	$ef01,$fffe
-		dc.w	$0180,$0000	; wall 
+		dc.w	$0180,$0000	; wall
 barRegionEnd:
+		dc.w	BPLCON0
+gamePlanes3:
+		dc.w	$3600			; black from here on: ember plane 3 joins in.
+							; patched to $1200 like gamePlanes2
 
 		; dc.w	$f001,$fffe
 		; dc.w	$0180,$0000	; wall end
@@ -3004,6 +3142,12 @@ barRegionEnd:
 
 		dc.w	$ffdf,$fffe		; wait for end of line 255
 		dc.w	$0001,$fffe
+		; the buffer ends at screenBottom. below it plane 1 would run on
+		; into the ember plane and show its dots again in white, and the
+		; shadow plane into whatever follows - so switch the planes off
+		; there, whatever the display window is set to.
+		dc.w	((screenBottom&$ff)<<8)+$01,$fffe
+		dc.w	BPLCON0,$0200	; bitplanes off
 ; sreg:		
 ; 		dc.w	$0102,$0010
 ; 		dc.w	BPL1PTH,src_adr>>16
