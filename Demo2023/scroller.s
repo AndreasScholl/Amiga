@@ -1809,6 +1809,8 @@ laserWordGap	= 7
 laserSolid		= 28			; px of solid streak at its head
 laserEmberGap	= 3				; a dot shed every this many frames
 laserPace		= 3				; frames a letter
+laserGlow		= 120			; px of dense glow behind the head
+laserFlashT		= 8				; frames of muzzle flash
 
 ; d0/d1 = the nose (game coordinates). keeps every register
 launchLaser::
@@ -1944,7 +1946,38 @@ laserAhead:
 ; that runs along it; and the dots it sheds
 drawLaser:
 		tst.b	laserOn
-		beq		.out
+		bne.s	.on
+		tst.b	laserCol				; gone: its lines' colours back to the
+		beq		.out					; text's
+		sf		laserCol
+		move.w	#$0988,tvBeam0
+		move.w	#$0a99,tvBeam1
+		move.w	#$0baa,tvBeam2
+		move.w	#$0dcc,tvBeam3
+		rts
+.on:
+		; --- its colours: the TV is off, the copper runs the bar through
+		;     tvList - the colour 1 of the beam's four lines burns white,
+		;     yellow, orange, red and back, a step a frame, the outer lines
+		;     a few steps behind (the text on them burns along with it)
+		tst.b	tvState
+		beq.s	.noCol
+		st		laserCol
+		lea		laserHot(pc),a2
+		move.w	laserAge,d0
+		moveq	#15,d1
+		and.w	d0,d1
+		add.w	d1,d1
+		move.w	(a2,d1.w),tvBeam1
+		addq.w	#4,d1
+		and.w	#31,d1
+		move.w	(a2,d1.w),tvBeam2
+		addq.w	#8,d1
+		and.w	#31,d1
+		move.w	(a2,d1.w),d0
+		move.w	d0,tvBeam0
+		move.w	d0,tvBeam3
+.noCol:
 		move.w	laserTail,d4
 		move.w	laserFront,d5
 		cmp.w	#borderX,d4
@@ -1957,36 +1990,104 @@ drawLaser:
 .fr:
 		cmp.w	d4,d5
 		ble		.out
-		move.w	d5,d2					; the head: solid
-		sub.w	#laserSolid,d2
-		cmp.w	d4,d2
-		bge.s	.h
-		move.w	d4,d2
-.h:
-		movem.w	d2/d4/d5,-(a7)
-		move.w	d2,d4
+		movem.w	d4/d5,-(a7)
+		; --- the core, two lines: one solid all the way, one solid too
+		;     with a fine break-up running along it
 		move.w	laserLine,d3
 		st		d1
 		bsr		laserSpan
 		addq.w	#1,d3
+		move.w	laserAge,d0
+		and.w	#7,d0
+		move.b	#$f7,d1
+		ror.b	d0,d1
 		bsr		laserSpan
-		movem.w	(a7),d2/d4/d5
-		; the rest of it: broken up, the gaps running along
+		; --- the glow either side, a line above and one below: broken,
+		;     the breaks racing along it, dense at the head, sparse behind
+		move.w	d5,d2
+		sub.w	#laserGlow,d2
+		cmp.w	d4,d2
+		bge.s	.g
+		move.w	d4,d2
+.g:
+		move.w	d4,-(a7)
+		move.w	d2,d4
+		move.w	laserAge,d0
+		add.w	d0,d0
+		and.w	#7,d0
+		move.b	#$cc,d1
+		rol.b	d0,d1
+		move.w	laserLine,d3
+		subq.w	#1,d3
+		bsr		laserSpan
+		addq.w	#3,d3
+		ror.b	#2,d1
+		bsr		laserSpan
+		move.w	(a7)+,d4
 		move.w	d2,d5
 		subq.w	#1,d5
 		cmp.w	d4,d5
-		blt.s	.embers
+		blt.s	.flare
 		move.w	laserAge,d0
 		and.w	#7,d0
-		move.b	#$f3,d1
-		rol.b	d0,d1
+		move.b	#$81,d1
+		ror.b	d0,d1
+		subq.w	#3,d3
+		bsr		laserSpan
+		addq.w	#3,d3
+		bsr		laserSpan
+		; --- the head: a flare, a spike up and down that flickers
+.flare:
+		movem.w	(a7),d4/d5
+		btst	#0,laserAge+1
+		bne.s	.muzzle
+		move.w	d5,d4
+		subq.w	#1,d4
+		cmp.w	#borderX,d4
+		blt.s	.muzzle
 		move.w	laserLine,d3
+		subq.w	#3,d3
+		st		d1
+		moveq	#8-1,d2
+.spike:
 		bsr		laserSpan
-		ror.b	#3,d1
 		addq.w	#1,d3
+		dbf		d2,.spike
+		; --- the muzzle: a blast of light at the nose as it fires, the
+		;     first frames, pulsing
+.muzzle:
+		move.w	laserAge,d0
+		cmp.w	#laserFlashT,d0
+		bhs.s	.embers
+		lea		laserFlash(pc),a2
+		btst	#0,d0
+		beq.s	.mf
+		lea		laserFlash2-laserFlash(a2),a2
+.mf:
+		move.w	laserLine,d3
+		subq.w	#3,d3
+		moveq	#8-1,d2
+		st		d1
+.mrow:
+		moveq	#0,d0
+		move.b	(a2)+,d0				; half its width on this row
+		move.w	laserNose,d4
+		addq.w	#3,d4
+		move.w	d4,d5
+		sub.w	d0,d4
+		add.w	d0,d5
+		cmp.w	#borderX,d4
+		bge.s	.m0
+		moveq	#borderX,d4
+.m0:
+		cmp.w	d4,d5
+		blt.s	.mnext
 		bsr		laserSpan
+.mnext:
+		addq.w	#1,d3
+		dbf		d2,.mrow
 .embers:
-		movem.w	(a7)+,d2/d4/d5
+		movem.w	(a7)+,d4/d5
 		cmp.w	#2,laserPhase			; (shedding while it is out)
 		beq.s	.out
 		move.w	laserAge,d0
@@ -2056,6 +2157,13 @@ laserSpan:
 .out:
 		movem.w	(a7)+,d4-d5
 		rts
+; the beam's colours, round and round: white hot, yellow, orange, red
+laserHot:
+		dc.w	$0fff,$0ffd,$0ffa,$0fe7,$0fd5,$0fb4,$0f93,$0f72
+		dc.w	$0e52,$0f72,$0f93,$0fb4,$0fd5,$0fe7,$0ffa,$0ffd
+; the muzzle flash, half widths of its 8 rows, two of them in turn
+laserFlash:	dc.b	1,3,6,9,9,6,3,1
+laserFlash2:	dc.b	0,2,4,6,6,4,2,0
 laserLMask:	dc.b	$ff,$7f,$3f,$1f,$0f,$07,$03,$01
 laserRMask:	dc.b	$80,$c0,$e0,$f0,$f8,$fc,$fe,$ff
 ; the dots it sheds: no sparks, no ring, a gentle sinking (blastPowers'
@@ -3849,6 +3957,8 @@ tvCollapse:
 tvLine:
 		cmp.w	#1,tvTime
 		bne.s	.hold
+		clr.w	tvShadowCol				; the bar is gone: its shadow (the dual
+										; playfield's) with it
 		; all black but the two middle lines, white
 		move.w	#$7fff,d0				; stretched past everything
 		moveq	#0,d1
@@ -3977,6 +4087,8 @@ laserPhase::	dc.w	0		; 0 out it goes, 1 the word, 2 gone through
 laserAge:		dc.w	0
 laserLast:		dc.w	0		; the last letter's end, + scrollSteps
 laserWait::		dc.w	0		; frames till the next letter
+laserCol:		dc.b	0		; the beam's colours are on (tvBeam0..3)
+				even
 laserHits:		dc.w	0		; (testing) letters it took ...
 laserWords:		dc.w	0		; ... and words
 flickT:			dc.w	0		; barFlicker: frames on ...
@@ -6737,7 +6849,9 @@ tvPlanes2:
 		dc.w	$0182,$0858,$010a,$0000,$0102,$00e0
 		TV_COL
 		TV_LINE	$cf
-		dc.w	$0182,$0858,$010a,$ffd2,$0102,$00c0,$0192,$0112
+		dc.w	$0182,$0858,$010a,$ffd2,$0102,$00c0,$0192
+tvShadowCol:
+		dc.w	$0112						; (the shadow, off with the TV: tvLine)
 		TV_COL
 		TV_LINE	$d0
 		dc.w	$0182,$0868,$010a,$0000,$0102,$00b0
@@ -6758,16 +6872,24 @@ tvPlanes2:
 		dc.w	$0182,$0888,$010a,$ffd2,$0102,$0060
 		TV_COL
 		TV_LINE	$d6
-		dc.w	$0182,$0988,$010a,$0000,$0102,$0050
+		dc.w	$0182
+tvBeam0:
+		dc.w	$0988,$010a,$0000,$0102,$0050
 		TV_COL
 		TV_LINE	$d7
-		dc.w	$0182,$0a99,$010a,$ffd2,$0102,$0040
+		dc.w	$0182
+tvBeam1:
+		dc.w	$0a99,$010a,$ffd2,$0102,$0040
 		TV_COL
 		TV_LINE	$d8
-		dc.w	$0182,$0baa,$010a,$0000,$0102,$0030
+		dc.w	$0182
+tvBeam2:
+		dc.w	$0baa,$010a,$0000,$0102,$0030
 		TV_COL
 		TV_LINE	$d9
-		dc.w	$0182,$0dcc,$010a,$ffd2,$0102,$0020
+		dc.w	$0182
+tvBeam3:
+		dc.w	$0dcc,$010a,$ffd2,$0102,$0020
 		TV_COL
 		TV_LINE	$da
 		dc.w	$0182,$0ddd,$010a,$0000,$0102,$0010
