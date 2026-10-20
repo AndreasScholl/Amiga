@@ -1433,6 +1433,7 @@ updateEnemies:
 .flagged:
 		btst	#1,d6				; explode flag set?
 		beq.s	.notExloding
+		addq.w	#1,ai_zooming		; (bursting: as dear as spinning in)
 		bsr		lineExplode
 		bra.s	.doneHit
 .notExloding:
@@ -1896,7 +1897,7 @@ ai_cross:		dc.l	0		; alignment against the target
 ai_dot:			dc.l	0
 ai_forming:		dc.b	0		; a letter of this word is still arriving
 				even
-ai_zooming:		dc.w	0		; letters spinning in (updateEnemies)
+ai_zooming:		dc.w	0		; letters spinning in or bursting (updateEnemies)
 				even
 ai_holdFire:	dc.w	ai_holdframes
 ai_sidePicked:	dc.b	0		; side chosen for the word now on screen
@@ -2335,10 +2336,10 @@ ai_pilot:
 		;     other (ai_phase). a 25 Hz look is still quicker than any player
 		not.b	ai_phase
 		beq.s	.noScan
-		cmp.w	#2,ai_zooming		; two letters or more spinning in (each one
-		bhs.s	.noScan				; costs nearly as much as the scan): the
-									; look round waits - none of them can be
-									; shot yet, and the frame would run over
+		cmp.w	#2,ai_zooming		; two letters or more spinning in or
+		bhs.s	.noScan				; bursting (each one costs nearly as much
+									; as the scan): the look round waits -
+									; else the frame would run over
 		bsr		ai_huntScan			; -> ai_target, ai_threat...
 .noScan:
 		; --- how long have we been in front of the logo or the scroller?

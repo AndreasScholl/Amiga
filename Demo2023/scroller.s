@@ -146,7 +146,8 @@ dissolveX		= dissolveByte*8	; = 64 pixels
 ;              the start of the next letter.
 ; numPoints raises density, at ~150 cycles each.
 ; numPoints		= 160		; max points kept alive after an update pass
-numPoints		= 128		; max points kept alive after an update pass
+numPoints		= 120		; max points kept alive after an update pass (128
+							; before: a few less for the EQUALIZER frames)
 maxSpawn		= 8			; max points that can be spawned in one frame
 pointsMax		= numPoints+maxSpawn
 emberOrange		= 10		; life steps orange (white plane + ember plane)
@@ -6106,21 +6107,32 @@ introInit:
 			lea		barRegionStart,a0
 			lea		barColorAddr,a1
 			lea		barColorsTarget,a2
+			lea		barInkAddr,a3
+			lea		barInkTarget,a4
 			moveq	#0,d0
+			moveq	#0,d2
 .scan:
 			cmp.l	#barRegionEnd,a0
 			bhs.s	.scanned
 			move.w	(a0),d1
+			cmp.w	#$0182,d1
+			beq.s	.ink
 			cmp.w	#$0180,d1
 			bne.s	.nextInst
 			move.l	a0,(a1)+		; where the value word lives
 			move.w	2(a0),(a2)+		; ... and what it should end up as
 			addq.w	#1,d0
+			bra.s	.nextInst
+.ink:
+			move.l	a0,(a3)+		; colour 1 too: the text's shading, which
+			move.w	2(a0),(a4)+		; the ship and the letters get in there
+			addq.w	#1,d2
 .nextInst:
 			lea		4(a0),a0
 			bra.s	.scan
 .scanned:
 			move.w	d0,barColorCount
+			move.w	d2,barInkCount
 
 introRestart:
 			bsr		blankLogo
@@ -6224,6 +6236,19 @@ blankBar:
 			clr.w	2(a0)
 			dbf		d0,.b
 .none:
+			; colour 1 of the bar (the text's shading - the ship and the
+			; letters get it too in there): till the bar comes it is the
+			; game's own colour, as above the bar. it goes over to the
+			; shading with the bar's fade (fadeInBar)
+			move.w	barInkCount,d0
+			beq.s	.noInk
+			subq.w	#1,d0
+			lea		barInkAddr,a1
+.i:
+			move.l	(a1)+,a0
+			move.w	#barInkPre,2(a0)
+			dbf		d0,.i
+.noInk:
 			rts
 
 ;---------------------------------------------
@@ -6311,6 +6336,36 @@ colorFadeIn:
 			or.w	d2,d6
 			rts
 
+; the same, but each nibble one up or down towards its target
+; d0 = current, d1 = target -> d6 = stepped. uses d2/d3/d4.
+colorStepTo:
+			moveq	#0,d6
+			move.w	#$00f,d4			; the nibble's mask: blue, green, red
+.nib:
+			move.w	d0,d2
+			and.w	d4,d2
+			move.w	d1,d3
+			and.w	d4,d3
+			cmp.w	d3,d2
+			beq.s	.set
+			bhi.s	.down
+			move.w	d4,d3				; one step of this nibble: the mask's
+			lsr.w	#3,d3				; lowest bit ($f>>3 = 1, $f0>>3 = $1e,
+			and.w	d4,d3				; and the mask: $10 ...)
+			add.w	d3,d2
+			bra.s	.set
+.down:
+			move.w	d4,d3
+			lsr.w	#3,d3
+			and.w	d4,d3
+			sub.w	d3,d2
+.set:
+			or.w	d2,d6
+			lsl.w	#4,d4
+			cmp.w	#$f000,d4
+			bne.s	.nib
+			rts
+
 ;---------------------------------------------
 ; lines above introLogoLine are one fade level ahead of the rest, so the
 ; brightness steps sweep down the logo. logoColorEngine does the colours.
@@ -6354,6 +6409,23 @@ fadeInBar:
 			bsr		colorFadeIn
 			move.w	d6,2(a0)
 			dbf		d7,.barfade
+			move.w	barInkCount,d7		; colour 1 along with it, up or down
+			beq.s	.inkDone
+			subq.w	#1,d7
+			lea		barInkAddr,a1
+			lea		barInkTarget,a2
+.ink:
+			move.l	(a1)+,a0
+			move.w	2(a0),d0
+			move.w	(a2)+,d1
+			cmp.w	d0,d1
+			beq.s	.inkThere
+			moveq	#0,d5
+			bsr		colorStepTo
+			move.w	d6,2(a0)
+.inkThere:
+			dbf		d7,.ink
+.inkDone:
 			tst.w	d5
 			beq.s	.done
 			st		introBarDone
@@ -6375,6 +6447,10 @@ barColorCount:	dc.w	0		; how many colour writes the scan found
 barColorAddr:	blk.l	96,0	; address of each copper MOVE in the bar
 barColorsTarget:
 				blk.w	96,0	; ... and the value it should finish on
+barInkCount:	dc.w	0		; the same for colour 1 ($0182) in the bar
+barInkAddr:		blk.l	48,0
+barInkTarget:	blk.w	48,0
+barInkPre		= $0eee			; colour 1 there till the bar comes (as above it)
 
 ; --------------------
 fadeOutBar:
