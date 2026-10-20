@@ -194,8 +194,12 @@ game_height		= screenHeight
 ; drawPoints never lets a dot glow above emberTop, otherwise its ember
 ; pixel would land in the bottom of plane 1.
 emberTop		= $ef-gameTop					; the $ef01 wait in clist
-emberOffset		= (screenHeight-emberTop)*li
-clearLines		= screenHeight+screenHeight-emberTop	; 219
+; the plane is shown from the bar's top on too (gamePlanes2 at $c4, three
+; planes there): the dots still glow only below emberTop, but the
+; fireworks burn out in colour in the bar as well (drawLattice)
+emberFwTop		= $c4-gameTop					; the $c401 wait (gamePlanes2)
+emberOffset		= (screenHeight-emberFwTop)*li
+clearLines		= screenHeight+screenHeight-emberFwTop	; 262
 
 		section "code",data,chip
 initScroller::
@@ -1202,6 +1206,11 @@ blastAt:
 		lsr.w	#3,d0
 		not.w	d2
 		bclr	d2,(a3,d0.w)			; and out of the text
+	ifne	fwAll						; (with the fireworks: they are the dots,
+		bra.s	.noPix					; no crumbs - and the frame can afford them)
+	endc
+		tst.b	blastNoCrumbs			; (the laser's: its firework is the dots)
+		bne.s	.noPix
 		subq.b	#1,debrisSkip
 		bne.s	.noPix
 		move.b	debrisEvery,debrisSkip
@@ -1253,6 +1262,9 @@ blastAt:
 		not.w	d2
 		bclr	d2,(a1,d0.w)
 		beq.s	.tno
+	ifne	fwAll						; (the firework is the dots)
+		bra.s	.tno
+	endc
 		subq.b	#1,debrisSkip
 		bne.s	.tno
 		move.b	debrisEvery,debrisSkip
@@ -1965,7 +1977,9 @@ laserStep:
 		move.w	#laserPace-1,laserWait
 		move.b	#3,bigBlast				; (pickPower: fat, not the biggest)
 		addq.w	#1,blastsDone
+		st		blastNoCrumbs
 		bsr		blastAt
+		sf		blastNoCrumbs
 		sf		fxPending				; not its sparks and rings: the Defender
 		bsr		latticeAdd				; lattice instead (debrisCx/Cy: blastAt)
 		addq.w	#1,laserHits			; (testing)
@@ -2252,7 +2266,8 @@ drawLaser:
 ; never gets up onto the logo. cheap: no state per spark - where they are
 ; for every age is a table (fw.i, fwgen.py), the burst is a centre, a size,
 ; a pop and an age
-latMax			= 12			; (long lives: more of them at once)
+latMax			= 10			; (long lives: more of them at once - 24 sparks
+								; each: 10 is what a frame can draw)
 latKick0		= 0				; the pop up: this + 0..latKickR (8.8 a frame) -
 latKickR		= 0				; none now: the table has the fall (fwgen.py)
 latGrav			= 0				; (the fall at run time, 8.8: off, see above)
@@ -2283,7 +2298,7 @@ latticeAdd:
 		bsr		debrisRandom
 		moveq	#0,d1
 		move.b	d0,d1
-		mulu	#3,d1					; the size: 0..2
+		mulu	#fwVariants,d1			; which: 4 kinds x 3 sizes (fwgen.py)
 		lsr.w	#8,d1
 		move.b	d1,lat_n(a2)
 		lsr.w	#8,d0
@@ -2323,100 +2338,97 @@ drawLattice:
 		; red - under the bar (the ember plane), white over it. the last
 		; third it twinkles: every spark has a 50:50 chance a frame
 		moveq	#0,d3					; (no twinkle)
-		move.w	lat_age(a4),d5
-		move.w	d5,d4
-		add.w	d4,d4
-		add.w	d5,d4					; age*3
-		move.w	d0,d2
-		add.w	d2,d2					; life*2
-		cmp.w	d2,d4
+		move.w	lat_age(a4),d5			; (twinkling from half its life on: the
+		move.w	d5,d4					; glow breaking up as it burns out)
+		add.w	d4,d4					; age*2
+		cmp.w	d0,d4					; life
 		blo.s	.noTw
 		bsr		debrisRandom
 		move.l	d0,d3
 		moveq	#0,d0
 		move.b	lat_life(a4),d0
 .noTw:
-		add.w	d5,d5
+		move.w	d5,d4					; white hot the first quarter, orange to
+		add.w	d4,d4					; 3/5, then red - glowing out a long time
+		add.w	d4,d4					; age*4
 		moveq	#0,d6
-		cmp.w	d0,d5
+		cmp.w	d0,d4
 		blo.s	.col
 		moveq	#1,d6
-		add.w	d5,d5
-		move.w	d0,d4
-		add.w	d4,d4
-		add.w	d0,d4
-		cmp.w	d4,d5
+		add.w	d5,d4					; age*5
+		move.w	d0,d2
+		add.w	d2,d2
+		add.w	d0,d2					; life*3
+		cmp.w	d2,d4
 		blo.s	.col
 		moveq	#2,d6
+		move.w	lat_age(a4),d0			; red, the last glow: every other frame
+		add.w	lat_x(a4),d0			; (bursts in turn) - it flickers out, and
+		btst	#0,d0					; costs half
+		bne		.next
 .col:
-		; --- the centre (the fall is in the table now, fwgen.py), x less the
-		;     border: one unsigned compare clips it, and the byte offset
-		;     gets the border's 4 bytes back in the addressing
+		; --- the centre (the fall is in the table, fwgen.py): x less the
+		;     border, so one unsigned compare clips it (the byte offset gets
+		;     the border's 4 bytes back in the addressing), and its line as
+		;     an offset - the table has dy * li, so no y table per spark, and
+		;     one unsigned compare clips that too
 		move.w	lat_x(a4),d4
 		sub.w	#borderX,d4
 		move.w	lat_line(a4),d5
-		; --- the table row: (size * fwAges + age) * fwSparks * 2
+		add.w	d5,d5
+		move.w	(a1,d5.w),d5			; line * li
+		; --- the table row: (variant * fwAges + age) * fwSparks * 4
 		moveq	#0,d0
 		move.b	lat_n(a4),d0
 		mulu	#fwAges,d0
 		add.w	lat_age(a4),d0
-		mulu	#fwSparks*2,d0
+		mulu	#fwSparks*4,d0
 		lea		fwTab,a6
-		add.w	d0,a6
+		add.l	d0,a6
 		moveq	#fwSparks-1,d7
 		tst.w	d6
 		bne.s	.cDot
-		; --- white hot (the first half: no twinkle, no ember plane yet)
+		; --- white hot (the first quarter: no twinkle, no ember plane yet)
 .wDot:
-		move.b	(a6)+,d0
-		ext.w	d0
+		move.w	(a6)+,d0
 		add.w	d4,d0					; x - borderX
-		move.b	(a6)+,d1
-		ext.w	d1
-		add.w	d5,d1					; line
+		move.w	(a6)+,d2
 		cmp.w	#game_width-borderX,d0
 		bhs.s	.wSkip
-		cmp.w	#screenHeight,d1
+		add.w	d5,d2					; line * li
+		cmp.w	#screenHeight*li,d2
 		bhs.s	.wSkip
-		move.w	d0,d2
-		lsr.w	#3,d2					; its byte
+		move.w	d0,d1
+		lsr.w	#3,d1					; its byte
+		add.w	d1,d2
 		not.w	d0						; its bit
-		add.w	d1,d1
-		add.w	(a1,d1.w),d2
 		bset	d0,borderX/8(a0,d2.w)
 .wSkip:
 		dbf		d7,.wDot
 		bra		.next
-		; --- orange, then red: under the bar the ember plane, and the last
-		;     third twinkling
+		; --- orange, then red - the ember plane (shown from the bar's top
+		;     on), the second half twinkling
 .cDot:
-		move.b	(a6)+,d0
-		ext.w	d0
+		move.w	(a6)+,d0
 		add.w	d4,d0
-		move.b	(a6)+,d1
-		ext.w	d1
-		add.w	d5,d1
+		move.w	(a6)+,d2
 		lsr.l	#1,d3					; twinkling: this one off now?
 		bcs.s	.cSkip
 		cmp.w	#game_width-borderX,d0
 		bhs.s	.cSkip
-		cmp.w	#screenHeight,d1
+		add.w	d5,d2
+		cmp.w	#screenHeight*li,d2
 		bhs.s	.cSkip
-		move.w	d0,d2
-		lsr.w	#3,d2
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
 		not.w	d0
-		cmp.w	#emberTop,d1
-		bhs.s	.cUnder
-		add.w	d1,d1
-		add.w	(a1,d1.w),d2
-		bset	d0,borderX/8(a0,d2.w)	; over the bar: white
-		bra.s	.cSkip
-.cUnder:
-		add.w	d1,d1
-		add.w	(a1,d1.w),d2
+		cmp.w	#emberFwTop*li,d2		; (a byte of x on it never makes a line)
+		blo.s	.cWhite
 		bset	d0,borderX/8(a5,d2.w)	; the ember plane ...
 		cmp.w	#1,d6
 		bne.s	.cSkip					; (red: that only)
+.cWhite:
 		bset	d0,borderX/8(a0,d2.w)	; ... and orange: plane 1 too
 .cSkip:
 		dbf		d7,.cDot
@@ -5043,7 +5055,6 @@ LA		set		0
 		dc.w	(latGrav*LA*LA)>>9
 LA		set		LA+1
 		endr
-		include	"fw.i"				; the sparks (fwgen.py)
 latCount::		dc.w	0		; Defender explosions going on ...
 lattices:		ds.b	lat_size*latMax		; ... drawLattice
 latLeft:		dc.w	0
@@ -5110,6 +5121,7 @@ msgCue::		dc.b	0		; FS_CUE: the message is next
 msgHalted::		dc.b	0		; the scroller stands, all of the message on show
 detWaiting:		dc.b	0
 fxPending::		dc.b	0		; blastAt's sparks and rings are due
+blastNoCrumbs:	dc.b	0		; blastAt: no glowing crumbs (the laser's)
 bigBlast:		dc.b	0		; pickPower: 1 the chain's, 2 the torpedo's
 torpOn::		dc.b	0		; the plasma torpedo is in the air
 laserObj:		dc.b	0		; ... at the game's letters (launchLaserAt)
@@ -6856,7 +6868,7 @@ introHideGame:
 introShowGame:
 			move.w	#$0007,gamebp0h
 			move.w	#$0000,gamePlaneMod
-			move.w	#$2600,gamePlanes2
+			move.w	#$3600,gamePlanes2		; (+ the ember plane: the fireworks' colours)
 			move.w	#$3600,gamePlanes3		; + ember plane, see emberTop
 			move.w	#$4200,topPlanes		; game plane 4 above gameTop
 			move.w	#$4200,midPlanes
@@ -7647,7 +7659,7 @@ barRegionStart:				; everything from here to barRegionEnd is the
 		dc.w	$0182,$0bbb
 		dc.w	$0100
 gamePlanes2:
-		dc.w	$2600			; 2 bitplanes on	(dual playfield mode), patched
+		dc.w	$3600			; 2 bitplanes on	(dual playfield mode), patched
 							; to $1200 so the shadow plane is not fetched
 							; before the game starts
 		dc.w	$00e4,(scrollA+(li*(51+gameShift))-2)>>16	; bitplane 01
@@ -7860,7 +7872,7 @@ tvList:
 		dc.w	$0182,$0bbb
 		dc.w	$0100
 tvPlanes2:
-		dc.w	$2600
+		dc.w	$3600
 		dc.w	$00e4,(scrollA+(li*(51+gameShift))-2)>>16
 		dc.w	$00e6,(scrollA+(li*(51+gameShift))-2)&$ffff
 		dc.w	$0192,$0000
@@ -8041,6 +8053,8 @@ logoLineTab:	incbin	"logo_lines.bin"	; 37 bob positions x 73 lines x 7 words
 logoPalettes:	incbin	"logo_palettes.bin"	; 12 palettes x 25 blend steps x 92 colours
 logoFade:		incbin	"logo_fade.bin"		; see logoFadeLit / logoFadeLevels
 		even
+		include	"fw.i"				; the fireworks' sparks (fwgen.py), 32k
+
 
 ;--------------------------------------------------------------
 ; chip memory the display reads, cleared by the loader

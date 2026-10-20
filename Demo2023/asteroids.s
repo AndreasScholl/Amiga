@@ -487,6 +487,10 @@ ai_readyOn		= 1			; between the words: to a ready spot and wait there
 ai_readyX0		= 52		; ... on the left (52..67) or the right (312..327)
 ai_readyX1		= 327
 ai_readyY		= 214		; ... below the bar (214..229)
+ai_waitCorr0	= 10		; waiting there: drifting faster than this, it
+ai_waitCorr1	= 4			; brakes, down to this - it stands
+ai_lookT0		= 70		; frames between looks round, + 0..63
+ai_lookDx		= 150		; how far beside the word it looks
 ai_waybotrange	= 31		; (mask)
 ; --- where the ship is hard to see: in front of the logo (raster $20 up to
 ;     about $84) and of the scroller and its bar (raster $bc..$ee)
@@ -1957,10 +1961,15 @@ ai_launched:	dc.b	0		; the launch shove has been spent
 				even
 ai_recover:		dc.b	0		; steering back onto the screen
 ai_ready:		dc.b	0		; ai_wantVelo: its waypoint is a ready spot
+ai_waiting:		dc.b	0		; ... and it is there
 ai_idleNow:		dc.b	0		; ... and it is idle this frame
 				even
 ai_side:		dc.w	-1		; which end of the word we attack from
 ai_dry:			dc.w	0		; frames since the last shot
+ai_corrStartNow:	dc.w	ai_corrstart	; (the steering's thresholds this frame)
+ai_corrStopNow:	dc.w	ai_corrstop
+ai_lookT:		dc.w	0		; waiting: frames to the next look round
+ai_lookOff:		dc.w	0		; ... and where it looks (beside the word)
 ai_burst:		dc.w	0		; shots left in the current burst
 ai_enterTimer:	dc.w	ai_enterwait
 ai_entered:		dc.b	0		; has the ship flown in yet?
@@ -2516,6 +2525,13 @@ ai_pilot:
 .noThreat:
 		bsr		ai_aimTarget		; -> ai_aimcross/dot, ai_targetSolid
 		bsr		ai_wantVelo			; -> ai_vdx/vdy, ai_evading
+		move.w	#ai_corrstart,ai_corrStartNow
+		move.w	#ai_corrstop,ai_corrStopNow
+		tst.b	ai_waiting			; at its ready spot: it brakes to a stand -
+		beq.s	.notWaiting			; it does not drift on
+		move.w	#ai_waitCorr0,ai_corrStartNow
+		move.w	#ai_waitCorr1,ai_corrStopNow
+.notWaiting:
 
 		; --- the word is broken up: hunt like a gunner. the nose goes from
 		;     target to target and nowhere else - no turning away to steer.
@@ -2524,6 +2540,9 @@ ai_pilot:
 		;     slowing down when far too fast, still use the steering below
 		tst.b	word_scattered
 		beq.s	.steerMode
+		tst.w	ai_target			; (none left - the word is gone: no gunner,
+		bmi.s	.steerMode			; the pilot flies on to its ready spot. it
+									; used to drift on, unsteered, for seconds)
 		tst.b	ai_evading
 		bne.s	.steerMode
 		bsr		ai_speed
@@ -2577,13 +2596,13 @@ ai_pilot:
 .noHold:
 		tst.b	ai_mode
 		bne.s	.correcting
-		cmp.w	#ai_corrstart,d5
+		cmp.w	ai_corrStartNow,d5
 		blo.s	.aim
 		st		ai_mode
 		st		ai_turning
 		clr.w	ai_modeTick
 .correcting:
-		cmp.w	#ai_corrstop,d5
+		cmp.w	ai_corrStopNow,d5
 		blo.s	.toAim
 		addq.w	#1,ai_modeTick
 		cmp.w	#ai_corrmax,ai_modeTick
@@ -2674,13 +2693,28 @@ ai_pilot:
 		beq.s	.notReady			; where the next word comes in, as a
 		tst.b	ai_ready			; player waits for it
 		beq.s	.notReady
+		subq.w	#1,ai_lookT			; now and then a look round: the nose a
+		bpl.s	.look				; little to the left or right of where
+		jsr		getRandomNumber		; the word comes, then back on it
+		move.w	d0,d1
+		and.w	#63,d1
+		add.w	#ai_lookT0,d1
+		move.w	d1,ai_lookT
+		lsr.w	#8,d0
+		and.w	#3,d0				; 0: on it (twice as likely), left, right
+		add.w	d0,d0
+		move.w	.lookTab(pc,d0.w),ai_lookOff
+.look:
 		move.w	#ast_x_center,d0
+		add.w	ai_lookOff,d0
 		sub.w	obj_xc(a0),d0
 		move.w	#ast_y_start,d1
 		sub.w	obj_yc(a0),d1
 		bsr		ai_crossdot
 		bsr		ai_huntTurn
 		bra		.fire
+.lookTab:
+		dc.w	0,-ai_lookDx,ai_lookDx,0
 .notReady:
 	endc
 		tst.w	ai_holdFire			; patrolling (see ai_wantVelo): the nose
@@ -2875,6 +2909,7 @@ ai_rushTarget:
 ai_wantVelo:
 		sf		ai_evading
 		sf		ai_idleNow
+		sf		ai_waiting
 		move.w	ai_threat,d7
 		bmi.s	.calm
 		tst.b	ai_threatSolid
@@ -3021,7 +3056,10 @@ ai_wantVelo:
 		cmp.w	#ai_homedist,d5
 		bhs.s	.toWay
 		tst.b	ai_ready			; at its ready spot: it stays there, braked,
-		bne.s	.toWay				; waiting for the next word (ai_pilot aims)
+		beq.s	.notAtReady			; waiting for the next word (ai_pilot aims)
+		st		ai_waiting
+		bra.s	.toWay
+.notAtReady:
 		bra.s	.newWay				; reached
 .leaveBusy:
 		tst.b	ai_wayTop			; on the way to the logo anyway? then
