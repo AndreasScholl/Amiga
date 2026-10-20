@@ -1818,6 +1818,14 @@ launchLaser::
 		move.w	d0,laserNose
 		move.w	d0,laserTail
 		move.w	d0,laserFront
+		cmp.w	#181,d1					; (on the text, wherever the nose is)
+		bge.s	.l0
+		move.w	#181,d1
+.l0:
+		cmp.w	#184,d1
+		ble.s	.l1
+		move.w	#184,d1
+.l1:
 		sub.w	#topLines,d1
 		move.w	d1,laserLine
 		clr.w	laserPhase
@@ -1950,11 +1958,7 @@ drawLaser:
 		tst.b	laserCol				; gone: its lines' colours back to the
 		beq		.out					; text's
 		sf		laserCol
-		move.w	#$0988,tvBeam0
-		move.w	#$0a99,tvBeam1
-		move.w	#$0baa,tvBeam2
-		move.w	#$0dcc,tvBeam3
-		rts
+		bra		laserColsBack
 .on:
 		; --- its colours: the TV is off, the copper runs the bar through
 		;     tvList - the colour 1 of the beam's four lines burns white,
@@ -1963,20 +1967,30 @@ drawLaser:
 		tst.b	tvState
 		beq.s	.noCol
 		st		laserCol
+		bsr		laserColsBack			; (the beam may be on other lines now)
+		lea		tvBeamTab,a3			; its four lines: from the one above
+		move.w	laserLine,d0			; its core (game y 181..184 -> 0..3)
+		add.w	#topLines-181,d0
+		lsl.w	#2,d0
+		add.w	d0,a3
 		lea		laserHot(pc),a2
 		move.w	laserAge,d0
 		moveq	#15,d1
 		and.w	d0,d1
 		add.w	d1,d1
-		move.w	(a2,d1.w),tvBeam1
+		move.l	4(a3),a4				; the core ...
+		move.w	(a2,d1.w),(a4)
 		addq.w	#4,d1
 		and.w	#31,d1
-		move.w	(a2,d1.w),tvBeam2
-		addq.w	#8,d1
+		move.l	8(a3),a4
+		move.w	(a2,d1.w),(a4)
+		addq.w	#8,d1					; ... and the glow either side
 		and.w	#31,d1
 		move.w	(a2,d1.w),d0
-		move.w	d0,tvBeam0
-		move.w	d0,tvBeam3
+		move.l	(a3),a4
+		move.w	d0,(a4)
+		move.l	12(a3),a4
+		move.w	d0,(a4)
 .noCol:
 		move.w	laserTail,d4
 		move.w	laserFront,d5
@@ -2115,6 +2129,21 @@ drawLaser:
 		dbf		d7,.e
 .out:
 		rts
+
+; colour 1 of the lines the beam can be on, as the text has it (tvList)
+laserColsBack:
+		lea		tvBeamTab,a3
+		lea		tvBeamOrig,a2
+		moveq	#8-1,d0
+.c:
+		move.l	(a3)+,a4
+		move.w	(a2)+,(a4)
+		dbf		d0,.c
+		rts
+tvBeamTab:
+		dc.l	tvBD4,tvBD5,tvBeam0,tvBeam1,tvBeam2,tvBeam3,tvBDA,tvBDB
+tvBeamOrig:
+		dc.w	$0777,$0888,$0988,$0a99,$0baa,$0dcc,$0ddd,$0eee
 
 ; one line d3 of the streak from x d4 to d5, d1.b the bits of each byte
 ; that are lit. keeps d1-d5
@@ -3212,7 +3241,7 @@ FS_CUE			= 8				; tells the ship the message is coming (msgCue)
 FS_TESTLOOP		= 9				; a text over and over till the ship is ready
 								; for the message (seq_defReady), then on
 FS_TAIL			= 10			; with finalAttackOn: on with feedTailAttack
-msgGap			= 4				; spaces from the ship being ready to the message
+msgGap			= 20			; spaces before the message (3.2 s)
 cuePause		= 20			; spaces between the dashes and the message
 glitchRampChars	= 2				; chars per glitchLevel step down
 stutterPerLevel	= 7				; hang odds (out of 256) per level ...
@@ -3689,7 +3718,9 @@ feedScript:
 		dc.w	FS_TESTLOOP
 		dc.l	glyphTest2
 		dc.w	FS_CALM					; ... till the ship is ready for the
-		dc.w	FS_SPACES,msgGap		; message
+		dc.w	FS_TEXT					; message: a few question marks, and
+		dc.l	whatText				; a pause, then it
+		dc.w	FS_SPACES,msgGap
 		dc.w	FS_MSG
 		dc.l	msgText
 		dc.w	FS_END
@@ -3723,6 +3754,8 @@ glyphTest1:
 glyphTest2:
 		dc.b	"<>    [ ]    0O0O    ( )    .  :  .  :    ##    +   -   *    "
 		dc.b	"8888    @   #   \\    MMM    o  o  o    WWW    ?   !    ",0
+whatText:
+		dc.b	"   ?    ??   ???",0
 testText4:
 		dc.b	"-      -   -    -          -- - - -    ---"
 testText4End:
@@ -6866,10 +6899,12 @@ tvShadowCol:
 		dc.w	$0182,$0666,$010a,$ffd2,$0102,$0080
 		TV_COL
 		TV_LINE	$d4
-		dc.w	$0182,$0777,$010a,$0000,$0102,$0070
+		dc.w	$0182
+tvBD4:	dc.w	$0777,$010a,$0000,$0102,$0070
 		TV_COL
 		TV_LINE	$d5
-		dc.w	$0182,$0888,$010a,$ffd2,$0102,$0060
+		dc.w	$0182
+tvBD5:	dc.w	$0888,$010a,$ffd2,$0102,$0060
 		TV_COL
 		TV_LINE	$d6
 		dc.w	$0182
@@ -6892,10 +6927,12 @@ tvBeam3:
 		dc.w	$0dcc,$010a,$ffd2,$0102,$0020
 		TV_COL
 		TV_LINE	$da
-		dc.w	$0182,$0ddd,$010a,$0000,$0102,$0010
+		dc.w	$0182
+tvBDA:	dc.w	$0ddd,$010a,$0000,$0102,$0010
 		TV_COL
 		TV_LINE	$db
-		dc.w	$0182,$0eee,$0102,$0000
+		dc.w	$0182
+tvBDB:	dc.w	$0eee,$0102,$0000
 		TV_COL
 		TV_LINE	$dc
 		TV_COL

@@ -5405,8 +5405,10 @@ seq_wdelta:
 ;            is an Asteroids ship again (seq_drift)
 seq_defX		= 56		; the Defender spot
 seq_defY		= 136
-seq_defStar		= -384		; the stars then: 1.5 px a frame to the left
-seq_starAcc		= 2			; how fast they change speed, 8.8 a frame
+seq_defStar		= -768		; the stars then: 3 px a frame to the left
+seq_starAcc		= 2			; how fast they slow down, 8.8 a frame ...
+seq_starAccD	= 4			; ... and speed up the other way (and run down
+							; at the end)
 seq_defvmax		= 120		; the drift over, top speed
 seq_tshotX		= 150		; DEFSHOOT: the spot it shoots the test from ...
 seq_tshotY		= 140		; (close: a shot only gets ~110 px far)
@@ -5421,6 +5423,8 @@ seq_dreverse	= 15		; the reverse: degrees a frame
 seq_dfireX		= 198		; a word is shot once it is in this far (the twist
 seq_dlastX		= 190		; is at 184) - and here at the latest
 seq_dcool		= 6			; frames between a word gone and the next shot
+seq_dswayX		= 16		; firing: the ship moves about this far to and
+seq_dswayY		= 3			; fro, and up and down
 
 seq_defshoot:
 		cmp.w	#1,seq_timer
@@ -5617,8 +5621,10 @@ seq_deftest:
 		bra		seq_dmove
 .row:
 		move.w	#90,seq_dface
-		move.w	#seq_defX,d0
-		move.w	#seq_rowY,d1
+		moveq	#seq_dswayX,d2		; on the row, never quite still
+		moveq	#seq_dswayY,d3
+		bsr		seq_dfloat
+		add.w	#seq_rowY-seq_defY,d1
 		bsr		seq_dmove
 		jsr		msgLeftX			; the first word
 		tst.w	d0
@@ -5632,7 +5638,7 @@ seq_deftest:
 		bpl.s	.ay
 		neg.w	d0
 .ay:
-		cmp.w	#1,d0
+		cmp.w	#seq_dswayY+1,d0
 		bhi.s	.out
 		cmp.w	#90,obj_angle(a0)
 		bne.s	.out
@@ -5647,13 +5653,19 @@ seq_deftest:
 		dc.w	60,	70,232,90		; down, across the bar, under it
 		dc.w	84,	46,206,270		; the reverse: round to the left, back
 		dc.w	106, 62,166,90		; and round again
+		dc.w	140, 98,128,90		; forward and up
+		dc.w	172, 64,228,90		; down again
+		dc.w	196, 42,196,270		; the reverse once more
+		dc.w	220, 70,150,90		; round again
+		dc.w	250, 86,122,90		; up
 		dc.w	0
 
 ; on the row: the laser, a word a shot, each one just before the twist
 seq_deffire:
 		move.w	#90,seq_dface
-		moveq	#8,d2				; to and fro a little, on the row
-		moveq	#0,d3
+		moveq	#seq_dswayX,d2		; to and fro, up and down a little, on
+		moveq	#seq_dswayY,d3		; the row: the laser goes off where the
+										; nose is (scroller.s keeps it on the text)
 		bsr		seq_dfloat
 		add.w	#seq_rowY-seq_defY,d1
 		bsr		seq_dmove
@@ -5680,7 +5692,7 @@ seq_deffire:
 		tst.b	msgEnded			; nothing on the row: all gone, if all of
 		beq.s	.out				; the message has come in
 		clr.w	starTarget			; the stars run down to a stand
-		move.w	#seq_starAcc,starAcc
+		move.w	#seq_starAccD,starAcc
 		sf		seq_shotsLive
 		sf		seq_dOn				; an Asteroids ship again - up off the row
 		sf		seq_dLow			; into the gap, briskly
@@ -7748,6 +7760,7 @@ updateStars::
 		beq.s	.going
 		sf		starTurn
 		move.w	#seq_defStar,starTarget
+		move.w	#seq_starAccD,starAcc
 .going:
 		; the dots' wind, in units of 1<<9 (drawPoints keeps each dot's glow
 		; step in the low bits of its x speed, so the low 9 bits of accelX
@@ -7769,23 +7782,9 @@ updateStars::
 		moveq	#9,d3
 		asl.l	d3,d2
 		move.l	d2,accelX
-		add.w	starFrac,d1			; whole pixels this frame - only one on a
-		move.w	d1,d0				; frame with a blast's sparks and rings
-		asr.w	#8,d0				; (scroller.s fxPending), the heaviest; the
-		moveq	#2,d2				; rest comes a frame later; two at most
-		tst.b	fxPending			; on any other frame
-		beq.s	.cap
-		moveq	#1,d2
-.cap:
-		cmp.w	d2,d0
-		ble.s	.c0
-		move.w	d2,d0
-.c0:
-		neg.w	d2
-		cmp.w	d2,d0
-		bge.s	.whole
-		move.w	d2,d0
-.whole:
+		add.w	starFrac,d1			; whole pixels this frame
+		move.w	d1,d0
+		asr.w	#8,d0
 		move.w	d0,d2
 		lsl.w	#8,d2
 		sub.w	d2,d1
@@ -7793,36 +7792,46 @@ updateStars::
 		tst.w	d0
 		beq.s	.out
 		bmi.s	.back
-		cmp.w	#2,d0				; two pixels: in one go, cheaper
-		blt.s	.fwd
-		subq.w	#2,d0
-		move.w	d0,-(a7)
-		bsr		starsFwd2
-		move.w	(a7)+,d0
-		bne.s	.fwd
-		rts
 .fwd:
+		cmp.w	#3,d0				; three: four now, two next frame (four or
+		bne.s	.f4					; two in one go are as cheap as one)
+		moveq	#4,d0
+		sub.w	#256,starFrac
+.f4:
+		cmp.w	#4,d0
+		blt.s	.f2
+		subq.w	#4,d0
 		move.w	d0,-(a7)
-		bsr.s	starsFwd
+		bsr		starsFwd4
 		move.w	(a7)+,d0
-		subq.w	#1,d0
 		bne.s	.fwd
 		rts
+.f2:
+		cmp.w	#2,d0
+		blt.s	.f1
+		bra		starsFwd2
+.f1:
+		bra		starsFwd
 .back:
-		cmp.w	#-2,d0
-		bgt.s	.back1
-		addq.w	#2,d0
+		cmp.w	#-3,d0
+		bne.s	.b4
+		moveq	#-4,d0
+		add.w	#256,starFrac
+.b4:
+		cmp.w	#-4,d0
+		bgt.s	.b2
+		addq.w	#4,d0
 		move.w	d0,-(a7)
-		bsr		starsBack2
+		bsr		starsBack4
 		move.w	(a7)+,d0
-		bne.s	.back1
+		bne.s	.back
 		rts
-.back1:
-		move.w	d0,-(a7)
-		bsr		starsBack
-		move.w	(a7)+,d0
-		addq.w	#1,d0
-		bne.s	.back1
+.b2:
+		cmp.w	#-2,d0
+		bgt.s	.b1
+		bra		starsBack2
+.b1:
+		bra		starsBack
 .out:
 		rts
 
@@ -7934,6 +7943,34 @@ starsFwd2:
 		STARS2	beq,add
 starsBack2:
 		STARS2	bne,sub
+
+; four pixels in one go: the front layer two HSTART steps, the one behind
+; it one, the next one pixel (its SH0 bit) - and the last a half: on when
+; that one carried
+STARS4	macro					; \1 beq (forwards) or bne (back), \2 add/sub
+		moveq	#1,d0
+		moveq	#2,d1
+		move.w	#stars_count-1,d7
+		lea		slst0+1,a0
+.loop\@:
+		\2.b	d1,(a0)
+		\2.b	d0,stars_count*8+0+4(a0)
+		bchg	#0,stars_count*16+0+2+8(a0)
+		\1.s	.n\@
+		\2.b	d0,stars_count*16+0+8(a0)
+		bchg	#0,stars_count*24+0+2+12(a0)
+		\1.s	.n\@
+		\2.b	d0,stars_count*24+0+12(a0)
+.n\@:
+		addq.l	#8,a0
+		dbf		d7,.loop\@
+		rts
+		endm
+
+starsFwd4:
+		STARS4	beq,add
+starsBack4:
+		STARS4	bne,sub
 		
 starGfx:	
 		dc.l	$00010000,$00000001,$00010001
