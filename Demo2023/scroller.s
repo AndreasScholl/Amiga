@@ -212,7 +212,7 @@ initScroller::
 		bsr		introInit		; start from black
 		bsr		logoPaletteInit
 
-		lea		spoint(pc),a5
+		lea		spoint,a5		; (too far for (pc) now)
 		jsr		setupStarfield	; starfield
 		bsr		setupScroller
 		bsr		initPoints
@@ -371,7 +371,6 @@ updateScroller::
 		beq.s	.normalKeep			; keep the dots that makes alive
 		move.w	#seqKeep,pointKeep
 .normalKeep:
-		sf		seqHitDone			; one blast a frame, see scrollerHit
 
 		; --- the asteroids game thinks here, while the clear blit is still
 		;     running - it does not touch the buffer, only builds its draw
@@ -399,11 +398,17 @@ updateScroller::
 		RASTER	$0ff0
 		bsr		scroll
 		bsr		postEffect
+		tst.b	seq_hits			; the ship's shots against the text as it
+		beq.s	.noShots			; is shown this frame (textShot)
+		jsr		seqShotScan
+.noShots:
 
 		lea		$dff000,a6
 		RASTER	$00f0
-		bsr		addPoints
-		bra.s	.scrollOn
+		tst.w	scrollStepped		; the text only crumbles when it moves: a
+		beq.s	.scrollOn			; hanging scroller would put the same
+		bsr		addPoints			; column into dots again and again, and
+		bra.s	.scrollOn			; the pool would drop the glowing ones
 .scrollOff:
 		jsr		bbusy				; scroll did this wait for the clear
 .scrollOn:
@@ -526,6 +531,7 @@ drawPoints:
 
 		sub.w	pointKeep,d7		; more alive than we want to keep?
 		ble.s	.noOverflow
+		add.w	d7,pointsRetired	; (testing)
 		move.w	d7,d0				; -> retire that many of the oldest
 		lsl.w	#4,d0				; * point_len
 		add.w	d0,a5
@@ -549,9 +555,9 @@ drawPoints:
 		add.l	d2,d0				; x += vx
 		add.l	d3,d1				; y += vy
 		cmp.l	d5,d0				; unsigned -> catches < 0 as well, i.e.
-		bhs.s	.kill				; behind the left border
+		bhs.s	.clipped			; behind the left border
 		cmp.l	d6,d1
-		bhs.s	.kill
+		bhs.s	.clippedY
 		add.l	a2,d2				; vx += ax
 		add.l	a3,d3				; vy += ay, low byte of ay is 0
 		subq.b	#1,d3				; one frame of life gone
@@ -590,6 +596,10 @@ drawPoints:
 		lsr.b	#2,d3
 		and.b	#emberWait,d3		; 0..15
 		add.b	.emberBase(pc,d4.w),d3
+		btst	#8,d2					; a piece of a blast (addDebris): a
+		beq.s	.dissolveDot			; quarter of the wait, it is meant to be
+		lsr.b	#2,d3					; seen glowing as it falls
+.dissolveDot:
 		or.b	#$80,d3				; sign bit: white again
 		bra.s	.hot
 .emberStep:	dc.b	0,1,1,3			; glow takes 32, 16, 16, 8 frames ...
@@ -597,7 +607,7 @@ drawPoints:
 .glow:
 		sub.b	d2,d3				; late ones burn out faster
 		cmp.b	#emberDead,d3
-		bls.s	.kill				; burnt out: not written back
+		bls.s	.burnt				; burnt out: not written back
 		movem.l	d0-d3,(a4)
 		lea		point_len(a4),a4
 
@@ -623,6 +633,26 @@ drawPoints:
 		bset	d2,(a6,d4.w)		; ember + plane 1
 		bset	d2,(a0,d4.w)
 		dbf		d7,.loop
+		bra.s	.loopDone
+; (testing: what becomes of the blast's dots - vx bit 8, see addDebris)
+.clippedY:
+		btst	#8,d2
+		beq.s	.kill
+		btst	#7,d3
+		beq.s	.kill
+		addq.w	#1,whiteLostY
+.clipped:
+		btst	#8,d2
+		beq.s	.kill
+		btst	#7,d3				; gone off the edge while still white?
+		beq.s	.kill
+		addq.w	#1,whiteLost
+		bra.s	.kill
+.burnt:
+		btst	#8,d2
+		beq.s	.kill
+		addq.w	#1,burntOut
+		bra.s	.kill
 .loopDone:
 
 		move.l	a4,d0				; survivors -> new active count
@@ -797,7 +827,9 @@ debrisHot		= 8				; frames to the first ember check (drawPoints
 								; .ember) - short, so the wait below the bar
 								; is picked as the dot leaves it
 debrisMaxDy		= 4				; lines from the centre that count, at most
-debrisDrop		= $3000			; + 3/16 pixel a frame downwards
+debrisMinVy		= $1800		; at least 3/32 of a pixel down a frame
+debrisDrop		= $5000		; + 5/16 pixel a frame downwards: out of the bar
+								; quickly, to glow below it
 debrisRndCount	= 64			; random longs in debrisRndTab, power of two
 ; the x speed of a dot starts at the scroll's own -1 pixel a frame, so the
 ; pieces carry on the way the text was going, and the wind (accelX) bends
@@ -812,7 +844,7 @@ debrisRndCount	= 64			; random longs in debrisRndTab, power of two
 ;   a ring       round, flat, tall, a star of rays, or a double ring
 ;   a direction  the sparks go all round, on along the shot, back at the
 ;                shooter, or up as a fountain
-sparkMax		= 48			; sparks in the air at once
+sparkMax		= 40			; sparks in the air at once
 spark_len		= 18			; x, y, vx, vy (16.16), life
 sparkLife		= 8				; frames, + 0..7
 sparkDrag		= 3				; v -= v >> this, every frame
@@ -822,176 +854,401 @@ ring_len		= 8				; x.w, line, age, kind, step, frames, pad
 ringKinds		= 5
 bigOdds			= 40			; out of 256: a big one ...
 medOdds			= 120			; ... a medium one, the rest small
-bigSparkRoom	= 24			; a big one only while this many sparks are
+bigSparkRoom	= 20			; a big one only while this many sparks are
 								; still free (else it is medium)
 
 ; per power: sparks, speed (1/16 px a frame, + 0..31), ring step (radius
-; per frame), ring frames, text bytes taken (3 or 5: a letter is 8 px
-; and sits across two bytes, so 2 left bits of it behind), every n-th pixel a
-; dot, dot x speed per pixel, dot y speed per line
+; per frame), ring frames, shock rings (one after the other, 2 frames
+; apart), every n-th pixel of the letter a dot, dot x speed per pixel from
+; the middle, dot y speed per line
 				rsreset
 bp_sparks:		rs.b	1
 bp_speed:		rs.b	1
 bp_ringStep:	rs.b	1
 bp_ringFrames:	rs.b	1
-bp_bytes:		rs.b	1
+bp_rings:		rs.b	1
 bp_every:		rs.b	1
 bp_spreadX:		rs.w	1
 bp_spreadY:		rs.w	1
 bp_len:			rs.b	0
 blastPowers:
-		dc.b	5,12,2,4,3,5
-		dc.w	$1800,$1000
-		dc.b	10,20,3,5,3,4
-		dc.w	$2000,$1400
-		dc.b	18,30,4,6,5,3
-		dc.w	$3000,$2000
+		dc.b	10,24,3,5,1,3
+		dc.w	$2000,$1800
+		dc.b	16,32,4,6,2,3
+		dc.w	$2800,$2000
+		dc.b	24,44,5,6,3,2
+		dc.w	$3800,$2800
 
-; in:  d0/d1 = shot x/y in game coordinates, d2/d3 = its velocity
-; out: d1 = non zero if it hit some text
-; keeps a0 and a6 (shots_set's shot and draw table), like shot_collision
-scrollerHit::
-		tst.b	seqHitDone				; one blast a frame
-		bne		.miss
-		move.l	a0,-(a7)
-		movem.w	d2/d3,blastVx
-		bsr		pickPower				; -> a3 = blastPowers entry
-		moveq	#0,d4
-		move.b	bp_bytes(a3),d4			; bytes the blast takes
-		move.w	d4,hitN
-		sub.w	#topLines,d1			; -> scroller line
+;---------------------------------------------
+; THE SHOTS AGAINST THE TEXT
+;---------------------------------------------
+; seqShotScan (asteroids.s) hands every shot in the air to textShot, every
+; frame, right after postEffect has put this frame's text into the buffer -
+; so the test is against the pixels exactly as they are shown. the white
+; text is plane 1, and plane 1 is shown 1:1 in the bar: the line doubling
+; and the 16 pixel shift there are on the shadow plane only (BPL2MOD and
+; the playfield 2 delay). the ship and its shots are drawn into the same
+; plane, so where a shot meets a letter in the buffer, it meets it on
+; screen.
+; the whole way the shot came this frame is walked pixel by pixel, in the
+; text's own frame - if the text moved a pixel left meanwhile, the start
+; of the way moves with it - and the first lit pixel is the hit. nothing
+; can slip through between two frames.
+; the letter that was hit goes completely (blastAt): its columns are found
+; in the buffer, every one of its pixels is taken out of this frame's
+; picture and out of the source text, and the blast sits on it - its
+; dots at once, its sparks and rings a frame later (fxPending), which
+; spreads the work. one blast a frame: another hit waits in hitQueue -
+; the shot is gone at once all the same.
+blastsPerFrame	= 1				; (a blast is ~25000 cycles)
+hitQueueMax		= 8
+queueSearch		= 3				; a queued hit looks this far for its letter
+
+; once a frame, before the shots: the hits held over from last frame
+textShotBegin::
+		clr.w	blastsDone
+		tst.b	fxPending				; last frame's blast still owes its
+		beq.s	.noFx					; sparks and rings: they come now, and
+		sf		fxPending				; that is this frame's blast - any hit
+		bsr		blastFx					; waits in the queue
+		move.w	#blastsPerFrame,blastsDone
+		rts
+.noFx:
+		move.w	hitQueueN,d7
+		beq.s	.none
+		clr.w	hitQueueN
+		subq.w	#1,d7
+		lea		hitQueue,a4
+		movem.w	(a4)+,d0/d1				; the oldest one
+		sub.w	scrollStepped,d0		; (the text has moved on since)
+		move.w	d7,hitQueueN			; the others wait on
+		beq.s	.last
+		lea		hitQueue,a3
+		subq.w	#1,d7
+.shift:
+		move.l	(a4)+,(a3)+
+		dbf		d7,.shift
+.last:
+		addq.w	#1,blastsDone
+		bra		blastAt
+.none:
+		rts
+
+; in:  d0/d1 = where the shot was last frame, d2/d3 = where it is now
+;      (game coordinates), d4/d5 = its velocity
+; out: d0 non zero if it hit
+; keeps a0/a5/a6
+textShot::
+		movem.w	d4/d5,blastVx
+		add.w	scrollStepped,d0		; the start, in the text's frame
+		sub.w	#topLines,d1			; -> scroller lines
+		sub.w	#topLines,d3
+		move.w	d2,d4
+		sub.w	d0,d4					; dx
+		move.w	d3,d5
+		sub.w	d1,d5					; dy
+		move.w	d4,d6
+		bpl.s	.ax
+		neg.w	d6
+.ax:
+		move.w	d5,d7
+		bpl.s	.ay
+		neg.w	d7
+.ay:
+		cmp.w	d7,d6
+		bhs.s	.n
+		move.w	d7,d6
+.n:
+		tst.w	d6						; d6 = steps, at least one
+		bne.s	.n1
+		moveq	#1,d6
+.n1:
+		ext.l	d4
+		asl.l	#8,d4
+		divs	d6,d4					; x step, 8.8
+		ext.l	d4
+		ext.l	d5
+		asl.l	#8,d5
+		divs	d6,d5					; y step, 8.8
+		ext.l	d5
+		moveq	#0,d2
+		move.w	d0,d2
+		ext.l	d2
+		asl.l	#8,d2
+		add.l	#128,d2					; x, 8.8, rounded
+		move.w	d1,d3
+		ext.l	d3
+		asl.l	#8,d3
+		add.l	#128,d3					; line, 8.8
+		move.l	screenlocScroller,a1
+		lea		yTable,a2
+.walk:
+		move.l	d3,d1
+		asr.l	#8,d1					; line
+		cmp.w	#yTop,d1
+		blt.s	.next
+		cmp.w	#rightLine+hitRows,d1
+		bge.s	.next
+		move.l	d2,d0
+		asr.l	#8,d0					; x
+		cmp.w	#dissolveX,d0
+		blt.s	.next
+		cmp.w	#game_width,d0
+		bge.s	.next
+		move.w	d1,d7
+		add.w	d7,d7
+		move.w	(a2,d7.w),d7			; line * li
+		move.w	d0,a3
+		lsr.w	#3,d0
+		add.w	d0,d7
+		move.w	a3,d0
+		not.w	d0						; bit 7-(x&7)
+		btst	d0,(a1,d7.w)
+		bne.s	.hit
+.next:
+		add.l	d4,d2
+		add.l	d5,d3
+		dbf		d6,.walk
+		moveq	#0,d0
+		rts
+.hit:
+		move.w	a3,d0					; x, d1 = line
+		move.w	blastsDone,d7
+		cmp.w	#blastsPerFrame,d7
+		bhs.s	.queue
+		addq.w	#1,blastsDone
+		bsr		blastAt
+		moveq	#1,d0
+		rts
+.queue:
+		move.w	hitQueueN,d7
+		cmp.w	#hitQueueMax,d7
+		bhs.s	.full
+		addq.w	#1,hitQueueN
+		lsl.w	#2,d7
+		lea		hitQueue,a3
+		add.w	d7,a3
+		move.w	d0,(a3)+
+		move.w	d1,(a3)
+.full:
+		moveq	#1,d0
+		rts
+
+; is column d0 of the buffer lit in any of the 7 text rows from line d6?
+; -> Z clear if so. a1 = buffer, a2 = yTable. uses d2/d3/d7
+colLit:
+		move.w	d0,d2
+		lsr.w	#3,d2
+		move.w	d0,d3
+		not.w	d3
+		move.w	d6,d7
+		add.w	d7,d7
+		move.w	(a2,d7.w),d7
+		add.w	d2,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		moveq	#0,d7
+		rts
+.yes:
+		moveq	#1,d7
+		rts
+
+; the letter at buffer x d0, line d1 is blown up: all of it, and the
+; blast on it. keeps a0/a5/a6
+blastAt:
+		move.l	screenlocScroller,a1
+		lea		yTable,a2
+		; --- which part of the text: the bottom row ...
+		cmp.w	#rightLine,d1
+		blt.s	.notRight
+		cmp.w	#rightLine+hitRows,d1
+		bge.s	.notRight
 		cmp.w	#hitRightX,d0
-		bhs.s	.right
+		blo.s	.notRight
+		moveq	#rightLine,d6			; its first line
+		move.w	#hitRightX,a3			; its columns ...
+		move.w	#game_width-1,a4
+		moveq	#24,d5					; ... and source x = buffer x + 24
+		bra.s	.letter
+.notRight:
+		; ... the top row, before the twist ...
+		cmp.w	#yTop,d1
+		blt		.twist
+		cmp.w	#yTop+hitRows,d1
+		bge		.twist
+		cmp.w	#dissolveX,d0
+		blo		.twist
 		cmp.w	#hitTwistX,d0
 		bhs		.twist
-		cmp.w	#dissolveX,d0
-		blo		.missPop
-		; --- left block. screen bytes are source bytes
-		sub.w	#yTop-hitSlack,d1
-		cmp.w	#hitRows+2*hitSlack,d1	; unsigned: above the block as well
-		bhs		.missPop
-		lsr.w	#3,d0					; first byte
-		move.w	d4,d1
-		lsr.w	#1,d1
-		sub.w	d1,d0					; centred on the shot
-		cmp.w	#dissolveByte,d0
-		bge.s	.lOk
-		moveq	#dissolveByte,d0
-.lOk:
-		moveq	#$14,d1
-		sub.w	d4,d1
-		cmp.w	d1,d0
-		ble.s	.lOk2
-		move.w	d1,d0
-.lOk2:
-		move.w	d0,d2					; source byte
-		moveq	#yTop,d6				; line of row 0
-		bra.s	.block
-		; --- right block
-.right:
-		sub.w	#rightLine-hitSlack,d1
-		cmp.w	#hitRows+2*hitSlack,d1
-		bhs		.missPop
-		lsr.w	#3,d0					; screen byte
-		move.w	d4,d1
-		lsr.w	#1,d1
-		sub.w	d1,d0					; centred on the shot
-		cmp.w	#$17,d0
-		bge.s	.rOk
-		moveq	#$17,d0
-.rOk:
-		moveq	#src_line-3,d1			; all the source bytes inside the line
-		sub.w	d4,d1
-		cmp.w	d1,d0
-		ble.s	.rOk2
-		move.w	d1,d0
-.rOk2:
-		move.w	d0,d2
-		addq.w	#3,d2					; source byte
-		moveq	#rightLine,d6
-		; --- d0 = screen byte, d2 = source byte, d6 = line of row 0
-.block:
-		lea		src_adr,a2
-		add.w	d2,a2
-		move.l	a2,a1
-		moveq	#0,d3
-		moveq	#hitRows-1,d7
-.test:
-		move.w	hitN,d2
-		subq.w	#1,d2
-.tb:
-		or.b	(a1,d2.w),d3
-		dbf		d2,.tb
-		lea		src_line(a1),a1
-		dbf		d7,.test
-		tst.b	d3
-		beq		.missPop
-		st		seqHitDone
-		addq.w	#1,hitTotal
-		lsl.w	#3,d0
-		move.w	d0,d5					; x of the first pixel
-		move.w	hitN,d1
-		lsl.w	#2,d1
+		moveq	#yTop,d6
+		move.w	#dissolveX,a3
+		move.w	#hitTwistX-1,a4
+		moveq	#0,d5
+		; --- the column hit (a queued hit may be a pixel or two off)
+.letter:
+		move.w	d0,d4
+		bsr		colLit
+		bne.s	.found
+		moveq	#1,d1
+.search:
+		move.w	d4,d0
+		sub.w	d1,d0
+		bsr		colLit
+		bne.s	.found
+		move.w	d4,d0
 		add.w	d1,d0
-		move.w	d0,debrisCx				; centre of the blast
+		bsr		colLit
+		bne.s	.found
+		addq.w	#1,d1
+		cmp.w	#queueSearch,d1
+		bls.s	.search
+		rts								; nothing there any more
+.found:
+		; --- the letter: lit columns either side, up to a blank one
+		move.w	d0,d4					; first column
+		move.w	d0,d1					; last column
+.left:
+		cmp.w	a3,d4
+		bls.s	.leftDone
+		move.w	d4,d0
+		subq.w	#1,d0
+		bsr		colLit
+		beq.s	.leftDone
+		subq.w	#1,d4
+		bra.s	.left
+.leftDone:
+.right:
+		cmp.w	a4,d1
+		bhs.s	.rightDone
+		move.w	d1,d0
+		addq.w	#1,d0
+		bsr		colLit
+		beq.s	.rightDone
+		addq.w	#1,d1
+		bra.s	.right
+.rightDone:
+		; --- the blast, on the middle of it
+		bsr		pickPower
+		move.w	d4,d0
+		add.w	d1,d0
+		lsr.w	#1,d0
+		move.w	d0,debrisCx
 		move.w	d6,d0
 		addq.w	#hitRows/2,d0
 		move.w	d0,debrisCy
-		bsr		blastFx
+		st		fxPending				; its sparks and rings: next frame
+		addq.w	#1,hitTotal
+		; --- every pixel of it out of the picture and out of the source,
+		;     and every n-th one a glowing dot
+		lea		src_adr,a3
 		moveq	#hitRows-1,d7
 .row:
-		move.w	d5,d1					; x of the byte
-		move.w	hitN,d2
-		subq.w	#1,d2
-.byte:
-		move.b	(a2),d4
-		beq.s	.nextByte
-		clr.b	(a2)					; gone from the text
-		move.w	d1,d3					; x of the pixel
-.bit:
-		add.b	d4,d4
-		bcc.s	.noPix
+		move.w	d4,d3					; x
+.col:
+		move.w	d6,d0
+		add.w	d0,d0
+		move.w	(a2,d0.w),d0
+		move.w	d3,d2
+		lsr.w	#3,d2
+		add.w	d2,d0
+		move.w	d3,d2
+		not.w	d2
+		bclr	d2,(a1,d0.w)			; out of this frame's picture
+		beq.s	.noPix
+		move.w	d3,d0
+		add.w	d5,d0
+		move.w	d0,d2
+		lsr.w	#3,d0
+		not.w	d2
+		bclr	d2,(a3,d0.w)			; and out of the text
 		subq.b	#1,debrisSkip
 		bne.s	.noPix
 		move.b	debrisEvery,debrisSkip
-		bsr		addDebris
+		bsr		addDebris				; (x d3, line d6)
 .noPix:
 		addq.w	#1,d3
-		tst.b	d4
-		bne.s	.bit
-.nextByte:
-		addq.l	#1,a2
-		addq.w	#8,d1
-		dbf		d2,.byte
-		lea		src_line(a2),a2
-		sub.w	hitN,a2
+		cmp.w	d1,d3
+		bls.s	.col
 		addq.w	#1,d6
+		lea		src_line(a3),a3
 		dbf		d7,.row
-.hit:
-		move.l	(a7)+,a0
-		moveq	#1,d1
-		rts
-.missPop:
-		move.l	(a7)+,a0
-.miss:
-		moveq	#0,d1
 		rts
 
 		; --- the twist, 48 source pixels squeezed into 24 on screen and
-		;     turned over top to bottom. source pixel p (0..47) is roughly
-		;     at x hitTwistX+p/2, line yTop+p*7/16 (see table2), so the
-		;     two bytes to test follow from the shot's LINE: p ~ line*16/7
+		;     turned over top to bottom (see table2). it is only ever hit in
+		;     the first attack: the pixels round the hit go from the
+		;     picture, and the two source bytes for that line from the text
 .twist:
-		sub.w	#yTop,d1
-		cmp.w	#rightLine+hitRows-yTop,d1
-		bhs		.missPop
-		subq.w	#3,d1					; the middle of the 7 rows
+		move.w	d0,d4
+		move.w	d1,d6
+		bsr		pickPower
+		move.w	d4,debrisCx
+		move.w	d6,debrisCy
+		st		fxPending
+		addq.w	#1,hitTotal
+		; the picture: 12 x 9 pixels round the hit
+		move.w	d6,d0
+		subq.w	#4,d0
+		cmp.w	#yTop,d0
+		bge.s	.ty0
+		moveq	#yTop,d0
+.ty0:
+		move.w	d0,d6
+		moveq	#9-1,d7
+.trow:
+		cmp.w	#rightLine+hitRows,d6
+		bge.s	.tsrc
+		move.w	d4,d3
+		subq.w	#6,d3
+		moveq	#12-1,d1
+.tcol:
+		move.w	d6,d0
+		add.w	d0,d0
+		move.w	(a2,d0.w),d0
+		move.w	d3,d2
+		lsr.w	#3,d2
+		add.w	d2,d0
+		move.w	d3,d2
+		not.w	d2
+		bclr	d2,(a1,d0.w)
+		beq.s	.tno
+		subq.b	#1,debrisSkip
+		bne.s	.tno
+		move.b	debrisEvery,debrisSkip
+		bsr		addDebris
+.tno:
+		addq.w	#1,d3
+		dbf		d1,.tcol
+		addq.w	#1,d6
+		dbf		d7,.trow
+.tsrc:
+		; the source: p ~ line*16/7 -> two bytes of $14..$19, every row
+		move.w	debrisCy,d1
+		sub.w	#yTop+3,d1
 		bpl.s	.tPos
 		moveq	#0,d1
 .tPos:
-		mulu	#73,d1					; * 2/7 -> byte
+		mulu	#73,d1
 		lsr.w	#8,d1
-		subq.w	#1,d1					; and the one before it
+		subq.w	#1,d1
 		bpl.s	.tOk
 		moveq	#0,d1
 .tOk:
@@ -999,74 +1256,574 @@ scrollerHit::
 		ble.s	.tOk2
 		moveq	#6-2,d1
 .tOk2:
-		lea		src_adr+$14,a2
-		add.w	d1,a2
-		move.l	a2,a1
-		moveq	#0,d3
+		lea		src_adr+$14,a3
+		add.w	d1,a3
 		moveq	#hitRows-1,d7
-.tTest:
-		or.b	(a1),d3
-		or.b	1(a1),d3
-		lea		src_line(a1),a1
-		dbf		d7,.tTest
-		tst.b	d3
-		beq		.missPop
-		st		seqHitDone
-		lsl.w	#3,d1					; p of the first byte
-		move.w	d1,a3
-		move.w	d1,d6
-		lsr.w	#1,d1
-		add.w	#hitTwistX+4,d1
-		move.w	d1,debrisCx
-		mulu	#7,d6
-		lsr.w	#4,d6
-		add.w	#yTop+hitRows/2,d6
-		move.w	d6,debrisCy
-		move.l	a3,-(a7)
-		bsr		blastFx
-		move.l	(a7)+,a3
-		moveq	#yTop,d5				; line of row 0 at the twist's start
-		moveq	#hitRows-1,d7
-.tRow:
-		move.w	a3,d1					; p of the byte
-		moveq	#2-1,d2
-.tByte:
-		move.b	(a2),d4
-		beq.s	.tNext
-		clr.b	(a2)
-		move.w	d1,d3					; p of the pixel
-.tBit:
-		add.b	d4,d4
-		bcc.s	.tNo
-		subq.b	#1,debrisSkip
-		bne.s	.tNo
-		move.b	debrisEvery,debrisSkip
-		movem.w	d3/d6,-(a7)
-		move.w	d3,d6
-		mulu	#7,d6
-		lsr.w	#4,d6
-		add.w	d5,d6					; line
-		lsr.w	#1,d3
-		add.w	#hitTwistX,d3			; x
-		bsr		addDebris
-		movem.w	(a7)+,d3/d6
-.tNo:
-		addq.w	#1,d3
-		tst.b	d4
-		bne.s	.tBit
-.tNext:
-		addq.l	#1,a2
-		addq.w	#8,d1
-		dbf		d2,.tByte
-		lea		src_line-2(a2),a2
-		addq.w	#1,d5
-		dbf		d7,.tRow
-		bra		.hit
+.tclr:
+		clr.b	(a3)
+		clr.b	1(a3)
+		lea		src_line(a3),a3
+		dbf		d7,.tclr
+		rts
 
+; how many letters ahead can shots on one line hit, one after the other?
+; in:  d0/d1 = screen x from/to (the bottom row), d2 = the shots' line
+; out: d0 = the letters from the first one on that have a pixel on that
+;      line - counting stops at one that has none (a shot would pass it,
+;      and it would stay). works on the source, a byte at a time
+lettersOnLine::
+		movem.l	d1-d7/a0-a1,-(a7)
+		moveq	#0,d6					; letters
+		sub.w	#rightLine,d2			; -> text row
+		cmp.w	#hitRows,d2
+		bhs		.out					; (unsigned: above as well)
+		cmp.w	#hitRightX,d0
+		bge.s	.lo
+		move.w	#hitRightX,d0
+.lo:
+		add.w	#24,d0					; -> source x
+		add.w	#24,d1
+		lsr.w	#3,d0					; source bytes
+		lsr.w	#3,d1
+		cmp.w	#src_line-1,d1
+		ble.s	.hi
+		moveq	#src_line-1,d1
+.hi:
+		sub.w	d0,d1
+		bmi		.out
+		lea		src_adr,a0
+		add.w	d0,a0					; row 0 of the first byte
+		mulu	#src_line,d2
+		lea		(a0,d2.w),a1			; the shots' row
+		moveq	#0,d5					; 0 out of a letter, 1 in one, 2 in one
+										; that has a pixel on the line
+.byte:
+		move.b	(a0),d3					; the 7 rows together
+		or.b	src_line(a0),d3
+		or.b	2*src_line(a0),d3
+		or.b	3*src_line(a0),d3
+		or.b	4*src_line(a0),d3
+		or.b	5*src_line(a0),d3
+		or.b	6*src_line(a0),d3
+		move.b	(a1)+,d4				; the line
+		addq.l	#1,a0
+		moveq	#8-1,d7
+.bit:
+		add.b	d4,d4
+		scs		d2						; on the line?
+		add.b	d3,d3
+		bcc.s	.blank
+		tst.w	d5
+		bne.s	.inLetter
+		moveq	#1,d5
+.inLetter:
+		tst.b	d2
+		beq.s	.nextBit
+		moveq	#2,d5
+		bra.s	.nextBit
+.blank:
+		tst.w	d5
+		beq.s	.nextBit
+		cmp.w	#2,d5
+		bne.s	.out					; a letter shots on this line would miss
+		addq.w	#1,d6
+		moveq	#0,d5
+.nextBit:
+		dbf		d7,.bit
+		dbf		d1,.byte
+		cmp.w	#2,d5					; one going on at the end of the range
+		bne.s	.out
+		addq.w	#1,d6
+.out:
+		move.w	d6,d0
+		movem.l	(a7)+,d1-d7/a0-a1
+		rts
+
+;---------------------------------------------
+; THE HYPER POWER BLAST
+;---------------------------------------------
+; the last attack: seq_run (asteroids.s) fires one plasma blast along the
+; bottom text row (launchTorpedo) - a muzzle flash at the nose, then a huge
+; pulsing blob of plasma with sparks streaming off behind it. nothing
+; stops it: it goes along the row at one speed, torpSpeed, and out of the
+; screen. each letter goes off the moment the blast's front gets to that
+; letter's last column - against the text as it is shown this frame. only
+; if the frame has already had its blast (a blast and its sparks take two
+; frames, fxPending) does a letter go off a frame late; detLate* count it.
+; the rest of the sentence, still coming in after the blast has gone, runs
+; into its wake (wakeOn): each letter goes off as soon as it is all on
+; screen.
+; a blast's sparks and rings come a frame after it (fxPending), so with
+; detGap at 2 or more there is never more than one blast's work a frame.
+torpSpeed		= $28000		; 2.5 px a frame (16.16), always
+torpHead		= 4				; its front, from torpX
+torpHalf		= 4				; lines above and below its line it hits on
+torpRingGap		= 6				; a shock ring every this many frames in text
+detMax			= 32
+detGap			= 0				; extra frames between the letters going off (a
+								; blast and its sparks take two anyway)
+wakeLastX		= game_width-1	; in the wake a letter goes off once its last
+								; column is on screen
+
+; d0/d1 = the ship's nose (game coordinates), d2 = the ship's x speed
+; (1/128 px a frame)
+launchTorpedo::
+		movem.l	d0-d7/a0-a3,-(a7)
+		moveq	#0,d3
+		move.w	d0,d3
+		swap	d3
+		move.l	d3,torpX				; 16.16
+		sub.w	#topLines,d1
+		move.w	d1,torpLine
+		move.l	#torpSpeed,torpVX		; (the ship's speed does not come into it)
+		st		torpOn
+		clr.w	torpAge
+		clr.w	torpInText
+		move.w	#-1,torpNextEnd
+		clr.w	detN
+		clr.w	detTimer
+		; --- the muzzle flash: a small blast at the nose, forwards
+		move.w	d0,debrisCx
+		move.w	d1,debrisCy
+		move.l	#flashPower,blastPow
+		move.w	#256,blastVx
+		clr.w	blastVy
+		bsr		blastFx
+		movem.l	(a7)+,d0-d7/a0-a3
+		rts
+
+; every frame after postEffect, from textFrame: the blast goes on at its
+; one speed, and the first letter ahead goes off the moment the blast's
+; front gets to that letter's last column
+torpedoStep:
+		tst.b	torpOn
+		beq		.out
+		addq.w	#1,torpAge
+		move.l	torpX,d2
+		add.l	torpVX,d2
+		move.l	d2,torpX
+		swap	d2						; x now
+		cmp.w	#game_width+28,d2		; (its tail out as well)
+		bge		.gone
+		bsr		torpTrail
+		; --- a shock ring now and then while it is in the text
+		tst.w	torpInText
+		beq.s	.noRing
+		move.w	torpAge,d0
+		ext.l	d0
+		divu	#torpRingGap,d0
+		swap	d0
+		tst.w	d0
+		bne.s	.noRing
+		bsr		torpRing
+.noRing:
+		; --- the first letter on the row, and its last column - found
+		;     once and kept (in text terms, + scrollSteps) until it is gone
+		move.w	torpNextEnd,d4
+		bmi.s	.find
+		sub.w	scrollSteps,d4
+		bra.s	.ended
+.find:
+		moveq	#0,d0
+		bsr		firstLitCol
+		tst.w	d0
+		bmi		.out
+		move.l	screenlocScroller,a1
+		lea		yTable,a2
+		moveq	#rightLine,d6
+		move.w	d0,d4
+.end:
+		cmp.w	#game_width-1,d4
+		bhs.s	.ended0
+		move.w	d4,d0
+		addq.w	#1,d0
+		bsr		colLit
+		beq.s	.ended0
+		addq.w	#1,d4
+		bra.s	.end
+.ended0:
+		cmp.w	#game_width-1,d4		; (cut off by the border: not kept,
+		bhs.s	.ended					; it is still coming in)
+		move.w	d4,d0
+		add.w	scrollSteps,d0
+		move.w	d0,torpNextEnd
+.ended:
+		move.l	torpX,d0
+		swap	d0
+		addq.w	#torpHead,d0			; the blast's front
+		cmp.w	d4,d0
+		blt.s	.notYet
+		; --- there: it goes off now - unless this frame has had its blast
+		;     (the last one's sparks), then the next frame
+		tst.b	fxPending
+		bne.s	.wait
+		tst.w	blastsDone
+		bne.s	.wait
+		move.w	d4,d0
+		move.w	#rightLine+hitRows/2,d1
+		move.b	#1,bigBlast
+		addq.w	#1,blastsDone
+		bsr		blastAt
+		move.w	#-1,torpNextEnd			; the next one
+		addq.w	#1,torpInText
+		; (testing: how late it went off)
+		moveq	#0,d0
+		tst.b	detWaiting
+		beq.s	.onTime
+		move.w	introTime,d0
+		sub.w	detWaitFrom,d0
+		addq.w	#1,detLateN
+		add.w	d0,detLateFrames
+.onTime:
+		sf		detWaiting
+		move.w	detLogN,d1
+		cmp.w	#32,d1
+		bhs.s	.out
+		addq.w	#1,detLogN
+		add.w	d1,d1
+		add.w	d1,d1
+		lea		detLog,a3
+		add.w	d1,a3
+		move.w	introTime,(a3)+			; frame it went off
+		move.w	d0,(a3)					; frames after the blast got there
+		rts
+.wait:
+		tst.b	detWaiting
+		bne.s	.out
+		st		detWaiting
+		move.w	introTime,detWaitFrom
+		rts
+.notYet:
+.out:
+		rts
+.gone:
+		sf		torpOn
+		st		wakeOn					; anything still coming in: the wake
+		rts
+
+; the letters it went through go off, one every detGap frames - and once it
+; has gone, the ones that come in after it
+detStep:
+		tst.b	fxPending				; the last blast's sparks are due
+		bne		.out
+		tst.w	blastsDone
+		bne		.out
+		tst.w	detTimer
+		beq.s	.ready
+		subq.w	#1,detTimer
+		rts
+.ready:
+		move.w	detN,d7
+		beq.s	.wake
+		; --- the oldest on the list (the leftmost)
+		lea		detQueue,a3
+		move.w	(a3),d0
+		sub.w	scrollSteps,d0			; where it is now
+		subq.w	#1,d7
+		move.w	d7,detN
+		beq.s	.popped
+		subq.w	#1,d7
+.shift:
+		move.w	2(a3),(a3)+
+		dbf		d7,.shift
+.popped:
+		move.w	#rightLine+hitRows/2,d1
+		move.b	#1,bigBlast
+		addq.w	#1,blastsDone
+		bsr		blastAt
+		move.w	#detGap,detTimer
+.out:
+		rts
+		; --- the wake: a letter coming in goes off once it is all in
+.wake:
+		tst.b	wakeOn
+		beq.s	.out
+		moveq	#0,d0
+		bsr		firstLitCol				; the first letter on the row
+		tst.w	d0
+		bmi.s	.none
+		move.l	screenlocScroller,a1
+		lea		yTable,a2
+		moveq	#rightLine,d6
+		move.w	d0,d4
+.end:
+		move.w	d4,d0					; its last column - on screen?
+		addq.w	#1,d0
+		bsr		colLit
+		beq.s	.ended
+		addq.w	#1,d4
+		cmp.w	#wakeLastX,d4
+		blo.s	.end
+		rts								; still coming in: wait
+.ended:
+		move.w	d4,d0
+		move.w	#rightLine+hitRows/2,d1
+		move.b	#1,bigBlast
+		addq.w	#1,blastsDone
+		bsr		blastAt
+		move.w	#detGap,detTimer
+		rts
+.none:
+		tst.b	msgEnded				; nothing more to come: it is over
+		beq.s	.out
+		jsr		msgLeftX
+		tst.w	d0
+		bpl.s	.out
+		sf		wakeOn
+		rts
+
+; the first lit column of this frame's bottom text row in the buffer, from
+; screen x d0 up to the right border -> d0, -1 if none. a byte at a time
+firstLitCol:
+		movem.l	d1-d3/a0-a1,-(a7)
+		cmp.w	#hitRightX,d0
+		bge.s	.lo
+		move.w	#hitRightX,d0
+.lo:
+		move.l	screenlocScroller,a0
+		add.w	#rightLine*li,a0
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,a0
+.byte:
+		cmp.w	#game_width,d0
+		bge.s	.none
+		move.b	(a0),d3
+		or.b	li(a0),d3
+		or.b	2*li(a0),d3
+		or.b	3*li(a0),d3
+		or.b	4*li(a0),d3
+		or.b	5*li(a0),d3
+		or.b	6*li(a0),d3
+		move.w	d0,d2
+		and.w	#7,d2
+		lsl.b	d2,d3					; the bits left of d0 in this byte go
+		beq.s	.nextByte
+.bit:
+		add.b	d3,d3
+		bcs.s	.found
+		addq.w	#1,d0
+		bra.s	.bit
+.nextByte:
+		or.w	#7,d0
+		addq.w	#1,d0
+		addq.l	#1,a0
+		bra.s	.byte
+.found:
+		cmp.w	#game_width,d0
+		blt.s	.out
+.none:
+		moveq	#-1,d0
+.out:
+		movem.l	(a7)+,d1-d3/a0-a1
+		rts
+
+; is column d0 lit on any of the blast's lines (from line d6, 2*torpHalf
+; + 1 of them)? -> Z clear if so. uses d3/d5/d7
+torpCol:
+		move.w	d0,d5
+		lsr.w	#3,d5
+		move.w	d0,d3
+		not.w	d3
+		move.w	d6,d7
+		add.w	d7,d7
+		move.w	(a2,d7.w),d7
+		add.w	d5,d7
+		moveq	#2*torpHalf,d5
+.l:
+		btst	d3,(a1,d7.w)
+		bne.s	.yes
+		add.w	#li,d7
+		dbf		d5,.l
+		moveq	#0,d7
+		rts
+.yes:
+		moveq	#1,d7
+		rts
+
+; two sparks streaming off behind the blast, short lived. d2 = its x
+torpTrail:
+		movem.l	d0-d4/a0-a1,-(a7)
+		move.w	sparkNum,d4
+		cmp.w	#sparkMax-2,d4
+		bhs.s	.out
+		addq.w	#2,sparkNum
+		mulu	#spark_len,d4
+		lea		sparks,a0
+		add.l	d4,a0
+		moveq	#2-1,d4
+.s:
+		bsr		debrisRandom
+		moveq	#0,d1
+		move.w	d2,d1
+		sub.w	#10,d1
+		swap	d1
+		move.l	d1,(a0)+				; x, off its tail
+		moveq	#7,d1
+		and.w	d0,d1
+		subq.w	#3,d1
+		add.w	torpLine,d1
+		swap	d1
+		clr.w	d1
+		move.l	d1,(a0)+				; y, round its line
+		move.w	d0,d1
+		and.l	#$ffff,d1
+		sub.l	#$18000,d1				; x speed: back, -1.5..-0.5 px
+		move.l	d1,(a0)+
+		swap	d0
+		move.w	d0,d1
+		ext.l	d1						; y speed: -0.5..0.5 px
+		move.l	d1,(a0)+
+		move.w	#5,(a0)+				; life
+		dbf		d4,.s
+.out:
+		movem.l	(a7)+,d0-d4/a0-a1
+		rts
+
+; a small shock ring at the blast, thrown off as it ploughs
+torpRing:
+		movem.l	d0/a0,-(a7)
+		move.w	ringCount,d0
+		cmp.w	#ringMax,d0
+		bhs.s	.out
+		addq.w	#1,ringCount
+		lsl.w	#3,d0
+		lea		rings,a0
+		add.w	d0,a0
+		move.l	torpX,d0
+		swap	d0
+		move.w	d0,(a0)+				; x
+		move.b	torpLine+1,(a0)+		; line
+		clr.b	(a0)+					; age
+		move.b	#1,(a0)+				; flat
+		move.b	#3,(a0)+				; step
+		move.b	#4,(a0)+				; frames
+.out:
+		movem.l	(a7)+,d0/a0
+		rts
+
+; the blast itself, from drawBlastFx: a huge blob of plasma, nine lines
+; high, that pulses (a0 = buffer, a1 = yTable). a row at a time, a byte at
+; a time
+drawTorpedo:
+		tst.b	torpOn
+		beq		.out
+		move.l	torpX,d2
+		swap	d2						; x
+		lea		torpShape,a2
+		btst	#1,torpAge+1			; two shapes, swapping every 2 frames
+		beq.s	.shape
+		lea		torpShape2-torpShape(a2),a2
+.shape:
+		lea		torpRowX-torpShape(a2),a3
+		move.w	torpLine,d3
+		subq.w	#torpHalf,d3
+		moveq	#2*torpHalf,d6
+.row:
+		move.b	(a3)+,d4				; this row: from x + n ...
+		ext.w	d4
+		add.w	d2,d4					; x0
+		moveq	#0,d5
+		move.b	(a2)+,d5
+		add.w	d4,d5
+		subq.w	#1,d5					; x1
+		cmp.w	#screenHeight,d3
+		bhs.s	.nextRow
+		cmp.w	#game_width-1,d5		; clipped to the buffer line
+		ble.s	.c1
+		move.w	#game_width-1,d5
+.c1:
+		tst.w	d4
+		bpl.s	.c0
+		moveq	#0,d4
+.c0:
+		cmp.w	d4,d5
+		blt.s	.nextRow
+		move.w	d3,d0
+		add.w	d0,d0
+		move.w	(a1,d0.w),d7
+		lea		(a0,d7.w),a4			; the line
+		move.w	d4,d0
+		lsr.w	#3,d0					; first byte
+		move.w	d5,d1
+		lsr.w	#3,d1					; last byte
+		moveq	#7,d7
+		and.w	d4,d7
+		move.b	.lmask(pc,d7.w),d7		; first byte's bits
+		cmp.w	d0,d1
+		beq.s	.one
+		or.b	d7,(a4,d0.w)
+		addq.w	#1,d0
+.mid:
+		cmp.w	d1,d0
+		bhs.s	.last
+		st		(a4,d0.w)
+		addq.w	#1,d0
+		bra.s	.mid
+.last:
+		moveq	#7,d7
+		and.w	d5,d7
+		move.b	.rmask(pc,d7.w),d7
+		or.b	d7,(a4,d1.w)
+		bra.s	.nextRow
+.one:
+		moveq	#7,d0
+		and.w	d5,d0
+		and.b	.rmask(pc,d0.w),d7		; first and last in one byte
+		or.b	d7,(a4,d1.w)
+.nextRow:
+		addq.w	#1,d3
+		dbf		d6,.row
+.out:
+		rts
+.lmask:	dc.b	$ff,$7f,$3f,$1f,$0f,$07,$03,$01
+.rmask:	dc.b	$80,$c0,$e0,$f0,$f8,$fc,$fe,$ff
+; per row of the blob: how wide it is, and (9 bytes on) where it starts
+; from x - a fat head with a long tail of plasma behind it. two of them,
+; it swaps between them
+torpShape:
+		dc.b	5,11,16,20,23,20,16,11,5
+torpRowX:
+		dc.b	-3,-8,-12,-16,-18,-16,-12,-8,-3
+torpShape2:
+		dc.b	7,13,18,22,25,22,18,13,7
+		dc.b	-4,-9,-14,-18,-20,-18,-14,-9,-4
+		even
+
+; once a frame, after postEffect (seqShotScan): held over hits, the blast,
+; the letters it set off
+textFrame::
+		bsr		textShotBegin
+		bsr		torpedoStep
+		bra		detStep
+
+; the muzzle flash, and the blasts of the letters the power blast takes:
+; fat (blastPowers' layout)
+flashPower:
+		dc.b	10,24,3,4,2,4
+		dc.w	$1000,$1000
+chainPower:
+		dc.b	10,48,4,6,2,4
+		dc.w	$3800,$2800
 ;-------
 ; roll the power of the next blast -> a3 = its blastPowers entry, and
 ; debrisEvery, blastPow set from it. uses d0
 pickPower:
+		move.b	bigBlast,d0				; the power blast's letters (1): one of
+		beq.s	.normal					; the three fat ones, at random
+		sf		bigBlast
+		bsr		debrisRandom
+		lea		chainPower,a3
+		and.w	#3,d0
+		beq.s	.set
+		lea		blastPowers+bp_len,a3	; (medium)
+		cmp.w	#1,d0
+		beq.s	.set
+		cmp.w	#sparkMax-bigSparkRoom,sparkNum
+		bhi.s	.set
+		lea		bp_len(a3),a3			; (big)
+		bra.s	.set
+.normal:
 		bsr		debrisRandom
 		lea		blastPowers,a3
 		and.w	#$ff,d0
@@ -1125,8 +1882,31 @@ addDebris:
 		sub.w	#$2000,d2				; noise, -1/8..1/8
 		ext.l	d2
 		add.l	d2,d1
-		clr.b	d1						; glow step rides in here, see drawPoints
-		move.l	d1,(a5)+
+		; near the right edge not so fast to the right that it goes off it
+		; still white: it can take ~70 frames to sink out of the bar, and
+		; accelX alone takes it ~60 px to the right in that time
+		move.w	#game_width-64,d2
+		sub.w	d3,d2
+		ext.l	d2
+		asl.l	#8,d2
+		asl.l	#2,d2					; room / 64, 16.16
+		cmp.l	d2,d1
+		ble.s	.vxOk
+		move.l	d2,d1
+.vxOk:
+		move.w	d3,d2					; and the same to the left
+		sub.w	#borderX+4,d2
+		ext.l	d2
+		asl.l	#8,d2
+		asl.l	#3,d2
+		neg.l	d2
+		cmp.l	d2,d1
+		bge.s	.vxOk2
+		move.l	d2,d1
+.vxOk2:
+		and.w	#$fe00,d1				; glow step rides in the low byte, see
+		or.w	#$0100,d1				; drawPoints - and bit 8 says: a piece of
+		move.l	d1,(a5)+				; a blast (it glows out sooner)
 		; --- y speed
 		move.w	d6,d1
 		sub.w	debrisCy,d1
@@ -1144,6 +1924,10 @@ addDebris:
 		and.l	#$7fff,d0
 		sub.l	#$2000,d0				; noise, -1/8..3/8
 		add.l	d0,d1
+		cmp.l	#debrisMinVy,d1			; not up into the logo: there it would
+		bge.s	.vyOk					; stay white (it only glows below the
+		move.l	#debrisMinVy,d1			; bar) and drift off the screen so
+.vyOk:
 		move.b	#$80+debrisHot,d1		; life rides in the low byte
 		move.l	d1,(a5)
 .full:
@@ -1171,7 +1955,13 @@ blastFx:
 		move.l	blastPow,a3
 		move.w	debrisCx,d5
 		move.w	debrisCy,d6
-		; --- the ring
+		; --- the shock rings: one, two or three, two frames apart, each
+		;     of its own kind
+		moveq	#0,d1
+		move.b	bp_rings(a3),d1
+		subq.w	#1,d1
+		moveq	#0,d2					; the first one's age (later ones
+.ring:									; start below 0 and wait)
 		move.w	ringCount,d0
 		cmp.w	#ringMax,d0
 		bhs.s	.noRing
@@ -1181,7 +1971,7 @@ blastFx:
 		add.w	d0,a0
 		move.w	d5,(a0)+				; x
 		move.b	d6,(a0)+				; line
-		clr.b	(a0)+					; age
+		move.b	d2,(a0)+				; age
 		bsr		debrisRandom
 		and.w	#7,d0
 		cmp.w	#ringKinds,d0
@@ -1191,6 +1981,8 @@ blastFx:
 		move.b	d0,(a0)+
 		move.b	bp_ringStep(a3),(a0)+
 		move.b	bp_ringFrames(a3),(a0)+
+		subq.w	#2,d2
+		dbf		d1,.ring
 .noRing:
 		; --- the way the sparks go: 0 all round, 1 on along the shot,
 		;     2 back at the shooter, 3 up like a fountain
@@ -1349,13 +2141,15 @@ drawBlastFx:
 		move.l	a4,a5					; read
 .rLoop:
 		movem.w	(a5)+,d2-d5				; x, line:age, kind:step, frames:pad
-		move.w	d3,d0
-		and.w	#$ff,d0					; age
+		move.b	d3,d0
+		ext.w	d0						; age, below 0 while it waits
 		lsr.w	#8,d3					; line
+		and.w	#$ff,d3
 		move.w	d5,d1
 		lsr.w	#8,d1					; frames
+		and.w	#$ff,d1
 		cmp.w	d1,d0
-		bhs		.rKill
+		bge		.rKill
 		move.w	d2,(a4)+
 		move.w	d3,d1
 		lsl.w	#8,d1
@@ -1364,6 +2158,8 @@ drawBlastFx:
 		move.w	d1,(a4)+				; line, age + 1
 		move.w	d4,(a4)+
 		move.w	d5,(a4)+
+		tst.w	d0
+		bmi		.rWait					; not yet
 		; radius = 2 + age * step
 		moveq	#0,d1
 		move.b	d4,d1					; step
@@ -1417,6 +2213,7 @@ drawBlastFx:
 		bsr		ringRound
 .rNext:
 		move.w	(a7)+,d7
+.rWait:
 		dbf		d7,.rLoop
 		bra.s	.rDone
 .rKill:
@@ -1427,6 +2224,7 @@ drawBlastFx:
 		lsr.w	#3,d0					; / ring_len
 		move.w	d0,ringCount
 .noRings:
+		bsr		drawTorpedo
 		lea		$dff000,a6
 		rts
 
@@ -1447,6 +2245,15 @@ ringRound:
 ; keeps d2-d7
 ringDraw:
 		movem.l	d4-d7/a2-a3,-(a7)
+		cmp.w	#4,ringCount			; a lot of rings at once: 8 points
+		bhs.s	.thin					; each (the frame time)
+		cmp.w	#10,d4					; a small ring: 8 points are plenty
+		bhi.s	.big
+.thin:
+		cmp.w	#4,d6
+		bhs.s	.big
+		moveq	#4,d6
+.big:
 		lea		ringPts,a2
 		lsl.w	#5,d4
 		add.w	d4,a2					; x offsets from line rx
@@ -1633,6 +2440,9 @@ msgFrom::
 ;                      kept for the ship (msgFrom), and letters of it
 ;                      closer than stutterHoldX make the scroller hang
 ;                      until they are shot
+;   FS_CALM            the scroller is mended at once: level 0, no hang,
+;                      no tear, no noise, full speed
+;   FS_CUE             msgCue for the ship: time to get into position
 ;   FS_END             the feed is off (seqTextOff), spaces from now on
 ; glitchLevel sets how often the scroller hangs (stutterStep), how often a
 ; band of the bar tears sideways and whether specks of noise get into the
@@ -1647,17 +2457,33 @@ FS_SALAD		= 3
 FS_TEXT			= 4
 FS_DOTS			= 5
 FS_MSG			= 6
+FS_CALM			= 7				; all well again at once: glitchLevel 0
+FS_CUE			= 8				; tells the ship the message is coming (msgCue)
+cuePause		= 20			; spaces between the dashes and the message
 glitchRampChars	= 2				; chars per glitchLevel step down
 stutterPerLevel	= 7				; hang odds (out of 256) per level ...
 tearPerLevel	= 5				; ... torn frame odds per level
 noiseLevel		= 12			; specks of noise from this level up
 noiseOdds		= 60			; ... with these odds (out of 256)
-stutterHoldX	= 214			; message letters left of this: hang
+stutterHoldX	= 186			; message letters left of this: hang (the twist
+								; starts at 184) - an emergency net only
+msgHaltX		= 188			; the message stops with its first letter here:
+								; all 20 chars of it on screen, to x 346
+msgEaseD		= 12			; ... slowing down over the last 12 pixels
 stutterMaxHang	= 120			; ... but never for longer than this
 tearMax			= 24
 shipClear		= 8				; raster lines round the ship never torn
 
+; (called from seq_pilot: keeps every register. it used to hand a0 back
+; pointing at barRegionEnd, and the ship's obj_move then wrote its position
+; over the copper moves there - BPLCON0 never switched the ember plane on
+; again, and the dots stayed white until the end)
 startGlitch::
+		movem.l	d0-d2/a0-a3,-(a7)
+		bsr.s	.go
+		movem.l	(a7)+,d0-d2/a0-a3
+		rts
+.go:
 		move.b	#FEED_SCRIPT,feedMode
 		move.l	#feedScript,feedPtr
 		clr.w	feedPos
@@ -1694,6 +2520,24 @@ feedNext:
 		clr.w	feedPos
 		bra		.cmd
 .notLevel:
+		cmp.w	#FS_CALM,d1
+		bne.s	.notCalm
+		clr.w	glitchLevel
+		clr.w	glitchTarget
+		clr.w	stutterHold
+		addq.l	#2,feedPtr
+		bra		.cmd
+.notCalm:
+		cmp.w	#FS_CUE,d1
+		bne.s	.notCue
+		st		msgCue
+		; where the message will start: after the dashes and the pause
+		move.w	scrollSteps,d0
+		add.w	#(src_line-2-3)*8+cueAhead*8,d0
+		move.w	d0,msgPredAbs
+		addq.l	#2,feedPtr
+		bra		.cmd
+.notCue:
 		cmp.w	#FS_SPACES,d1
 		bne.s	.notSpaces
 		move.w	feedPos,d0
@@ -1805,6 +2649,43 @@ corruptGlyph:
 
 ; -> d0 non zero: hang this frame. called from scroll
 stutterStep:
+		tst.b	finalAttackOn			; (asteroids.s) no attack on the message:
+		beq.s	.free					; it runs through, no halt, no hold
+		; --- the message all put in: ease the scroller to a stop with all
+		;     of it on screen (msgHalted) - it stands until it is gone
+		tst.b	msgEnded
+		beq.s	.noHalt
+		tst.b	msgHalted				; (and on until the blast is out: the
+		beq.s	.hold					; empty row may as well wait, it keeps
+		tst.b	torpOn					; its last sparks' frames lighter)
+		bne.s	.hangE
+.hold:
+		bsr		msgLeftX
+		tst.w	d0
+		bmi.s	.noHalt					; (all of it gone: on it goes)
+		move.w	msgStartAbs,d0
+		sub.w	scrollSteps,d0
+		sub.w	#msgHaltX,d0			; how far from where it stops
+		ble.s	.halted
+		cmp.w	#msgEaseD,d0
+		bhi.s	.noHalt
+		move.w	#msgEaseD,d1			; the last msgEaseD pixels slower and
+		sub.w	d0,d1					; slower: a step every 1, 2, 3, 4
+		ext.l	d1						; frames
+		divu	#3,d1
+		addq.w	#1,d1
+		addq.w	#1,haltTick
+		cmp.w	haltTick,d1
+		bhi.s	.hangE
+		clr.w	haltTick
+		moveq	#0,d0
+		rts
+.halted:
+		st		msgHalted
+.hangE:
+		moveq	#1,d0
+		rts
+.noHalt:
 		; a message letter close to the twist: hang until it is shot
 		bsr		msgLeftX
 		tst.w	d0
@@ -1812,6 +2693,7 @@ stutterStep:
 		cmp.w	#stutterHoldX,d0
 		bhs.s	.free
 		addq.w	#1,hangCount
+		addq.w	#1,holdFrames			; (should never happen, see seq_run)
 		cmp.w	#stutterMaxHang,hangCount
 		blo.s	.hang
 		clr.w	hangCount				; (a step through now and then, so it
@@ -2021,10 +2903,11 @@ feedScript:
 		dc.w	FS_LEVEL,2
 		dc.w	FS_TEXT
 		dc.l	testText3
+		dc.w	FS_CALM					; mended: from the dashes on it runs
+		dc.w	FS_CUE					; clean, and the ship gets ready
 		dc.w	FS_TEXT
 		dc.l	testText4
-		dc.w	FS_LEVEL,1
-		dc.w	FS_SPACES,20			; a long pause - all quiet?
+		dc.w	FS_SPACES,cuePause		; a long pause - all quiet?
 		dc.w	FS_MSG
 		dc.l	msgText
 		dc.w	FS_END
@@ -2038,9 +2921,18 @@ testText2:
 testText3:
 		dc.b	"DISPLAY ONLINE AGAIN.    ",0
 testText4:
-		dc.b	"-      -   -    -          -- - - -    ---",0
+		dc.b	"-      -   -    -          -- - - -    ---"
+testText4End:
+		dc.b	0
+cueAhead		= testText4End-testText4+cuePause	; chars from the cue to
+										; the message (see feedScript)
+; it runs through like any text (with finalAttackOn the scroller stops for
+; it, see stutterStep - the attack for a 20 char "CAPTAIN, WTF HAPPENS")
 msgText:
-		dc.b	"CAPTAIN, WHAT THE FUCK HAPPENS HERE",0
+		dc.b	"CAPTAIN, WHAT THE FUCK HAPPENS HERE"
+msgTextEnd:
+		dc.b	0
+msgTextLen		= msgTextEnd-msgText
 		even
 
 ;---------------------------------------------
@@ -2345,13 +3237,39 @@ blastVx:		dc.w	0		; the velocity of the shot that caused it
 blastVy:		dc.w	0
 hitN:			dc.w	2		; text bytes the blast takes
 hitTotal:		dc.w	0		; blasts so far (for testing)
+blastsDone:		dc.w	0		; this frame
+hitQueueN:		dc.w	0
+hitQueue:		ds.w	2*hitQueueMax	; x, line of the hits held over
+scrollStepped:	dc.w	0		; the text moved a pixel this frame
+holdFrames:		dc.w	0		; frames the hold for the message caught (testing)
+haltTick:		dc.w	0
+detWaitFrom:	dc.w	0		; (testing: letters going off late)
+detLateN:		dc.w	0
+detLateFrames:	dc.w	0
+detLogN:		dc.w	0
+detLog:			ds.w	2*32	; frame it went off, frames late
+whiteLost:		dc.w	0		; (testing) blast dots gone while still white
+whiteLostY:		dc.w	0		; ... of them off the top or bottom
+burntOut:		dc.w	0		; ... and burnt out as they should
+torpX:			dc.l	0		; 16.16
+torpVX:			dc.l	0
+torpLine:		dc.w	0
+torpAge:		dc.w	0
+torpInText:		dc.w	0		; letters it has gone through
+torpNextEnd:	dc.w	-1		; the next letter's last column + scrollSteps
+detN::			dc.w	0		; letters set to go off ...
+detTimer:		dc.w	0
+detQueue:		ds.w	detMax	; ... x + scrollSteps, the leftmost first
+
+pointsRetired:	dc.w	0		; dots dropped at the cap (testing)
 sparkNum:		dc.w	0
 sparks:			ds.b	spark_len*sparkMax
 ringCount:		dc.w	0
 ringKind:		dc.w	0
 rings:			ds.b	ring_len*ringMax
 scrollSteps::	dc.w	0		; pixels the text has moved, ever
-msgStartAbs:	dc.w	0		; screen x + scrollSteps of the message's start
+msgStartAbs::	dc.w	0		; screen x + scrollSteps of the message's start
+msgPredAbs::	dc.w	0		; ... and where it will be, from the cue on
 msgEndAbs:		dc.w	0		; ... and of its end
 feedPtr:		dc.l	0		; feedScript command now
 feedPos:		dc.w	0
@@ -2367,7 +3285,6 @@ tearLine:		ds.w	tearMax+1	; raster line of each, + an end
 seqTextOff::	dc.b	0		; the feed is off: only spaces from now on
 scrollGone::	dc.b	0		; ... and none of the old text is left
 scrollReady::	dc.b	0		; the text runs across the whole bar
-seqHitDone:		dc.b	0		; a shot has hit this frame
 debrisSkip:		dc.b	4
 debrisEvery:	dc.b	4		; every n-th lit pixel of a blast is a dot
 feedMode:		dc.b	FEED_TEXT
@@ -2376,6 +3293,13 @@ stutterOn:		dc.b	0
 glitchOn:		dc.b	0
 msgStarted::	dc.b	0
 msgEnded::		dc.b	0
+msgCue::		dc.b	0		; FS_CUE: the message is next
+msgHalted::		dc.b	0		; the scroller stands, all of the message on show
+detWaiting:		dc.b	0
+fxPending:		dc.b	0		; blastAt's sparks and rings are due
+bigBlast:		dc.b	0		; pickPower: 1 the chain's, 2 the torpedo's
+torpOn::		dc.b	0		; the plasma torpedo is in the air
+wakeOn::		dc.b	0		; the blast has gone: letters coming in go off
 				even
 postest:
 		dc.w	0
@@ -3370,6 +4294,7 @@ scroll:
 
 		; the scroller "breaking" in the destruction sequence: it hangs now
 		; and then, see stutterStep
+		clr.w	scrollStepped
 		tst.b	stutterOn
 		beq.s	.step
 		bsr		stutterStep
@@ -3378,6 +4303,7 @@ scroll:
 		rts
 .step:
 		addq.w	#1,scrollSteps			; how far the text has moved, ever
+		move.w	#1,scrollStepped		; ... and this frame (textShot)
 
 		; scroll by 1 (pixels) with blitter
 		move.w	#$8400,DMACON(a6)		

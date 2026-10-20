@@ -586,7 +586,7 @@ initGameObjects::
 		bsr		buildYOffTab		; needed by drawline/set_point below
 
 		; --- every enemy slot gets its own line cache block, for good
-		lea		enemy_structs(pc),a0
+		lea		enemy_structs,a0
 		lea		enemy_cache,a1
 		moveq	#32-1,d0
 .cachePtrs:
@@ -1653,14 +1653,8 @@ shots_set:
 		move.l	a1,-(a7)
 		bsr		obj_move
 		bsr		shot_collision
-		tst.w	d1
-		bne.s	.collDone
-		tst.b	seq_hits			; the destruction sequence: the shots go
-		beq.s	.collDone			; for the scroll text
-		move.w	obj_xc(a0),d0
-		move.w	obj_yc(a0),d1
-		jsr		scrollerHit
-.collDone:
+		; (the shots of the destruction sequence against the text: see
+		;  seqShotScan, after the text of this frame is drawn)
 		move.l	(a7)+,a1
 		movem.w	(a7)+,d0/d7
 		
@@ -4766,15 +4760,53 @@ seq_lookrate	= 5			; degrees a frame, looking round
 seq_spinrate	= 4			; the pirouette: 360/4 = 90 frames
 seq_a1x			= 96		; first attack from here: over the bar, left
 seq_a1y			= 132
-seq_a1shots		= 3
-seq_a1gap		= 16		; frames between them
-seq_a1watch		= 110		; frames it thinks before the scroller breaks
-seq_thinksway	= 16		; after it: degrees the nose sways, thinking
+seq_a1gap		= 12		; frames between the shots (5..8 of them)
+seq_a1from		= 216		; letters from here ...
+seq_a1to		= 334		; ... to here are shot at
+seq_a1v			= 64		; edging about between shots, 1/128 px a frame
+seq_a1watch		= 110		; frames after the last shot till the scroller breaks
 seq_roamv		= 120		; looking round while the scroller is mended
-seq_runx0		= 100		; the run starts here ...
-seq_runx1		= 320		; ... and ends here at the most
-seq_runlead		= 44		; it keeps this far behind the next letter ...
-seq_runv		= 154		; ... getting there at 0.6 px a frame at most (8.8)
+seq_facerate	= 4			; degrees a frame, turning the nose round
+seq_rowY		= 183		; the bottom text row: game y 181..185 is
+seq_wave		= 2			; scroller line 71..75 (the blast hits on 9)
+seq_wavestep	= 4			; degrees a frame
+; the attack (seq_run), speeds in 1/128 px a frame
+seq_lapY		= 40		; the run up: this high over the screen ...
+seq_lapv		= 300		; ... at this speed, or paced between these two
+seq_lapvmin		= 160		; so it comes round just as the first letter
+seq_lapvmax		= 448		; is at seq_lapfront
+seq_wrapX		= 368		; (where it goes round: obj_move's wrap_x1)
+seq_lapfront	= 340		; the lap is paced to have the ship on the left as
+seq_appfront	= 385		; the first letter is here; down it goes from
+							; there once the letter is in this far
+seq_appx		= 60		; (at about here, x up to seq_appmaxx): down it
+seq_appmaxx		= 110		; goes
+seq_appv		= 384		; the approach: speed, and the point on the row
+seq_lead		= 40		; it steers at, this far ahead - a steep dive first,
+							; levelling out onto the row
+seq_flyacc		= 11		; how hard it changes its velocity, a frame
+seq_flymin		= 112		; never slower than this (1/128 px a frame)
+seq_fireX		= 206		; the blast meets the first letter here, just
+							; before the twist (scroller.s stutterHoldX 190)
+seq_closest		= 64		; letters this close: fire at once
+seq_torpclose	= 10		; px a frame blast and letter close at (7 + the
+							; ship's 2 + the text's 1)
+seq_recoil		= 64		; kick on firing (it slows, it does not stop)
+seq_vcruise		= 192		; the run up at an Asteroids pace (1.5 px a frame) ...
+seq_vmin		= 128		; ... paced between these two
+seq_vfast		= 240
+seq_finalX		= 64		; on the row by here, on the last crossing
+msgHaltX0		= 188-30	; (scroller.s msgHaltX, less the slowing down)
+seq_fireX0		= 32		; it fires with its nose in here, the first quarter
+seq_fireX1		= 112
+seq_breakdx		= 60		; the break: up to here (right of it) ...
+seq_breakY		= 20
+seq_breakv		= 420		; ... at this speed
+seq_breakdone	= 110		; up past here: roaming
+seq_roamfly		= 300		; roaming speed afterwards
+seq_boredgap	= 30		; frames between bored shots, + 0..63
+seq_rungap		= 5			; frames between the shots of a burst ...
+seq_runpause	= 8			; ... and 8..15 after a burst
 seq_targetx1	= 340		; letters further right than this are not
 							; visible enough to shoot yet
 seq_urgentx		= 236		; a letter left of this: no time to fly about
@@ -4804,7 +4836,7 @@ SQ_SPIN			= 1
 SQ_A1MOVE		= 2
 SQ_A1SHOOT		= 3
 SQ_REPOS		= 4
-SQ_SNIPE		= 5
+SQ_RUN			= 5
 SQ_CLEAN		= 6
 SQ_LEAVE		= 7
 SQ_HOLD			= 8
@@ -4832,7 +4864,7 @@ seq_pilot:
 		dc.w	seq_a1move-.states
 		dc.w	seq_a1shoot-.states
 		dc.w	seq_repos-.states
-		dc.w	seq_snipe-.states
+		dc.w	seq_run-.states
 		dc.w	seq_clean-.states
 		dc.w	seq_leave-.states
 		dc.w	seq_hold-.states
@@ -4918,6 +4950,14 @@ seq_a1move:
 		blo.s	.done
 .there:
 		st		seq_hits			; from now on the shots hit the text
+		st		seq_shotsLive
+		jsr		getRandomNumber		; 5..8 letters to shoot out
+		and.w	#3,d0
+		addq.w	#5,d0
+		move.w	d0,seq_a1n
+		sf		seq_wOn				; seq_wander starts afresh after it
+		move.w	#seq_a1x,seq_ax
+		move.w	#seq_a1y,seq_ay
 		clr.w	seq_shots
 		clr.w	seq_gap
 		clr.w	seq_aimT
@@ -4926,19 +4966,24 @@ seq_a1move:
 		rts
 
 seq_a1shoot:
-		cmp.w	#seq_a1shots,seq_shots
-		bhs.s	.watch
+		move.w	seq_a1n,d0
+		cmp.w	seq_shots,d0
+		bls		.watch
+		movem.w	seq_ax,d0/d1		; edging about over the bar between
+		move.w	#seq_a1v,seq_glidevNow	; shots
+		bsr		seq_glide
+		move.w	#seq_glidev,seq_glidevNow
 		tst.w	seq_gap
 		beq.s	.aim
 		subq.w	#1,seq_gap
 .aim:
 		; a letter of the running text, the left part of the right block
 		bsr		seq_claimX
-		cmp.w	#230,d0
+		cmp.w	#seq_a1from,d0
 		bge.s	.from
-		move.w	#230,d0
+		move.w	#seq_a1from,d0
 .from:
-		move.w	#320,d1
+		move.w	#seq_a1to,d1
 		jsr		findText
 		tst.w	d0
 		bmi.s	.done
@@ -4959,45 +5004,23 @@ seq_a1shoot:
 		addq.w	#1,seq_shots
 		move.w	#seq_a1gap,seq_gap
 		clr.w	seq_timer
+		jsr		getRandomNumber		; and on to another spot, a little off
+		move.w	d0,d1
+		and.w	#31,d0
+		sub.w	#16,d0
+		add.w	#seq_a1x,d0
+		move.w	d0,seq_ax
+		lsr.w	#8,d1
+		and.w	#15,d1
+		subq.w	#8,d1
+		add.w	#seq_a1y,d1
+		move.w	d1,seq_ay
 .done:
 		rts
-		; --- the shots are out. the ship has a think about what it has
-		;     done: it drifts back a little and the nose sways slowly to and
-		;     fro, then the scroller breaks
+		; --- the shots are out: off it goes, pleased with itself (seq_wander:
+		;     a dash, a loop, a roll), and the scroller breaks behind it
 .watch:
-		cmp.w	#1,seq_timer
-		bne.s	.thinking
-		move.w	obj_angle(a0),seq_thinkA
-		move.w	obj_xc(a0),d0
-		sub.w	#14,d0
-		move.w	d0,seq_ax
-		move.w	obj_yc(a0),d0
-		subq.w	#8,d0
-		move.w	d0,seq_ay
-.thinking:
-		movem.w	seq_ax,d0/d1
-		move.w	#40,seq_glidevNow	; slowly
-		bsr		seq_glide
-		move.w	#seq_glidev,seq_glidevNow
-		move.w	seq_timer,d0		; the sway: sin(6 t) * 16 degrees
-		mulu	#6,d0
-		divu	#360,d0
-		swap	d0					; (t*6) mod 360
-		lsl.w	#2,d0
-		lea		sctab(pc),a3
-		move.w	(a3,d0.w),d1
-		muls	#seq_thinksway,d1
-		swap	d1
-		add.w	d1,d1
-		add.w	seq_thinkA,d1
-		bpl.s	.aPos
-		add.w	#360,d1
-.aPos:
-		cmp.w	#360,d1
-		blo.s	.aOk
-		sub.w	#360,d1
-.aOk:
-		move.w	d1,obj_angle(a0)
+		bsr		seq_wander
 		cmp.w	#seq_a1watch,seq_timer
 		blo		.done
 		jsr		startGlitch			; the scroller breaks
@@ -5008,8 +5031,14 @@ seq_a1shoot:
 ; round, lively, spot to spot - well away from the bar - until the
 ; captain's message starts to come in
 seq_repos:
-		tst.b	msgStarted
-		bne.s	.go
+		sf		seq_shotsLive		; shots now are only for show
+		tst.b	finalAttackOn		; no last attack: it searches on (seq_wander)
+		bne.s	.attack				; to the end, the message runs through and
+		bsr		seq_wander			; after it the TV goes off
+		bra		seq_endCheck
+.attack:
+		tst.b	msgCue				; the scroller is mended: the attack
+		bne		.go					; begins, with its run up
 		tst.b	seq_sub
 		bne.s	.look
 		cmp.w	#1,seq_timer		; a new spot
@@ -5032,6 +5061,17 @@ seq_repos:
 		and.w	#3,d0
 		add.w	d0,d0
 		lea		.heights(pc),a1
+		add.w	(a1,d0.w),d1
+		move.w	d1,seq_ay
+		tst.b	msgCue				; once the scroller is mended it keeps
+		beq.s	.fly				; over the bar - all over it, the logo,
+		jsr		getRandomNumber		; the space under it - so it is never
+		moveq	#15,d1				; far from where the dive starts
+		and.w	d0,d1
+		lsr.w	#4,d0
+		and.w	#3,d0
+		add.w	d0,d0
+		lea		.heightsUp(pc),a1
 		add.w	(a1,d0.w),d1
 		move.w	d1,seq_ay
 .fly:
@@ -5062,179 +5102,1110 @@ seq_repos:
 		clr.w	seq_timer
 		rts
 .go:
-		; the message is coming: to the left end of the run
-		move.l	#seq_runx0<<8,seq_runXf
-		bsr		seq_newHeight
-		move.w	#1,seq_burst
-		bra		seq_next
+		bra		seq_next			; the message is coming: the attack
 ; well clear of the bar: over the logo, under the bar, between them
 ; (+ 0..15)
 .heights:
 		dc.w	40,232,72,96
+; once the scroller is mended: over the logo, either side of its bottom,
+; between it and the bar (+ 0..15)
+.heightsUp:
+		dc.w	36,64,100,124
 
-;--- SNIPE ------------------------------------
-; the run, left to right (seq_runAlong): the ship glides along over or
-; under the bar (seq_hover) with the nose on the next letter all the time,
-; and fires as soon as it is lined up and in range - single shots and
-; short bursts, a letter each, and now and then another height
-seq_snipe:
-		tst.b	msgEnded			; all of it out, and all of it gone?
-		beq.s	.going
-		jsr		msgLeftX
-		tst.w	d0
-		bpl.s	.going
-		jsr		glitchStop
-		bra		seq_next
-.going:
-		bsr		seq_runAlong
-		bsr		seq_hover
-		tst.w	seq_gap
-		beq.s	.noGap
-		subq.w	#1,seq_gap
-.noGap:
-		bsr		seq_claimX
-		jsr		msgFrom				; the next letter
-		tst.w	d0
-		bmi.s	.done
-		cmp.w	#seq_targetx1,d0
-		bgt.s	.done
-		move.w	d0,d3
-		moveq	#0,d2				; the scroller hangs for it here
-		cmp.w	#seq_holdx,d0
-		blt.s	.moving
-		moveq	#16,d2				; else it moves at about 1 - level/32
-		move.w	glitchLevel,d1
-		lsr.w	#1,d1
-		sub.w	d1,d2
-.moving:
-		move.w	#seq_textY,d1
-		bsr		seq_aim
-		move.w	d0,d4
-		move.w	d3,d0
-		bsr		seq_inRange
-		bne.s	.inRange
-.done:								; (out of range: the run gets it there)
+; bored: now and then a shot into the air, wherever the nose points - but
+; only when it points upwards, away from the bar (and the shots of this
+; time do not count against the text anyway, see seq_shotsLive)
+seq_bored:
+		subq.w	#1,seq_boredT
+		bpl.s	.no
+		jsr		getRandomNumber
+		and.w	#63,d0
+		add.w	#seq_boredgap,d0
+		move.w	d0,seq_boredT
+		move.w	obj_angle(a0),d0	; the nose up-ish: angle 300..360, 0..60
+		cmp.w	#60,d0
+		blo.s	.shoot
+		cmp.w	#300,d0
+		bls.s	.no
+.shoot:
+		jsr		getRandomNumber		; one, sometimes two
+		btst	#5,d0
+		beq.s	.one
+		move.w	#4,seq_boredT2
+.one:
+		bra		ai_shoot
+.no:
+		tst.w	seq_boredT2			; the second of a pair
+		beq.s	.out
+		subq.w	#1,seq_boredT2
+		bne.s	.out
+		bra		ai_shoot
+.out:
 		rts
-.inRange:
-		tst.w	seq_gap
-		bne.s	.done
+
+;--- WANDER -----------------------------------
+; from the last shot of the first attack to the end of it all. the ship
+; never stops and never hangs about: it flies on a heading (seq_hd) at a
+; speed (seq_spd), the heading swings round towards the spot it is after
+; (an 8th of the way a frame, seq_trate at most), the speed eases to the
+; spot's own (seq_wacc a frame) - curves, no corners, no jerks. the nose
+; goes along the heading, and now and then looks off it (seq_look).
+;   dash     right after the hits: away along the gap between the logo and
+;            the bar, fast - a fly-by
+;   loop     a victory loop, round once
+;   roll     on, straight, the nose spinning round once
+;   search   then it looks for something new to do: spot to spot, the gap
+;            and the black under the bar in turn, anywhere across and now
+;            and then out over an edge and round. a speed of its own for
+;            each spot; now and then it looks round on the way (glance), or
+;            has a curious look at the broken scroller (peek)
+; the logo and the bar are only ever flown across, the spots are clear of
+; both (seq_wmidY0.., seq_wlowY0..)
+WM_DASH			= 0
+WM_LOOP			= 1
+WM_ROLL			= 2
+WM_SEARCH		= 3
+seq_wdashv		= 300		; the dash: this fast (2.3 px a frame) ...
+seq_wdashT		= 64		; ... this long
+seq_wdasha		= 6			; ... getting up to it this hard
+seq_wloopr		= 80		; the loop: 5 degrees a frame, round in 72 frames
+seq_wloopv		= 220		; ... at 1.7 px a frame (a radius of ~20 px)
+seq_wrollv		= 170		; the roll: at this speed ...
+seq_wrollT		= 40		; ... the nose round once in this many frames
+seq_wacc		= 2			; speed change a frame at most, 1/128 px
+seq_wmin		= 72		; never slower than this (0.56 px a frame)
+seq_wthere		= 20		; px (manhattan) that count as "there"
+seq_wlegT		= 420		; frames to a spot at most, then the next one
+seq_wmidY0		= 118		; the gap between logo and bar: y 118..141
+seq_wlowY0		= 220		; the black under the bar: y 220..243
+seq_wpeekY		= 144		; peeking: along just over the bar
+seq_wglanceA	= 34		; looking round: this far off the heading ...
+seq_wglanceT	= 46		; ... over this many frames, there and back
+seq_wpeekT		= 72		; the look at the scroller
+seq_wcrossv		= 170		; over to the other band: at least this fast
+seq_wzonev		= 240		; over the logo or the bar: at least this fast
+seq_wlogoY		= 112		; the logo is above this (game y) ...
+seq_wbarY0		= 152		; ... the bar between these (ship included)
+seq_wbarY1		= 214
+seq_wtop		= 14		; soft walls: here it turns away from the
+seq_wbottom		= 242		; top and the bottom, hard
+seq_wwallr		= 96		; (6 degrees a frame)
+seq_wturnv		= 110		; turning round: this slow, a tight turn
+seq_wblend		= 24		; frames from the drift into the dash
+
+seq_wander:
+		tst.b	seq_wOn
+		bne.s	.on
+		st		seq_wOn
+		move.w	obj_xvelo(a0),seq_wv0x	; (the drift it had: blended out, no
+		move.w	obj_yvelo(a0),seq_wv0y	; kink)
+		move.w	#seq_wblend,seq_wBlend
+		move.w	obj_angle(a0),d0	; off the way the nose points
+		lsl.w	#4,d0
+		move.w	d0,seq_hd
+		bsr		ai_speed
+		cmp.w	#seq_wmin,d0
+		bhs.s	.sp
+		move.w	#seq_wmin,d0
+.sp:
+		move.w	d0,seq_spd
+		clr.w	seq_wm
+		clr.w	seq_wT
+		clr.w	seq_look
+		clr.w	seq_lookT
+		clr.w	seq_lookWish
+		clr.w	seq_lookWait
+		move.w	obj_xc(a0),d0		; the fly-by: along the gap, to the right
+		add.w	#140,d0
+		move.w	d0,seq_ax
+		move.w	#seq_wmidY0+12,seq_ay
+		move.w	#seq_wdashv,seq_tspd
+		move.w	#56,seq_trate
+		move.w	#seq_wdasha,seq_wa		; (it shoots off)
+.on:
+		addq.w	#1,seq_wT
+		move.w	seq_wm,d0
+		beq.s	.dash
+		cmp.w	#WM_LOOP,d0
+		beq.s	.loop
+		cmp.w	#WM_ROLL,d0
+		beq.s	.roll
+		bra		.search
+.dash:
+		bsr		seq_wsteer
+		cmp.w	#seq_wdashT,seq_wT
+		blo		seq_wmove
+		move.w	#WM_LOOP,seq_wm
+		clr.w	seq_wT
+		move.w	#seq_wloopv,seq_tspd
+		move.w	#seq_wacc,seq_wa
+		bra		seq_wmove
+.loop:
+		move.w	#-seq_wloopr,d0		; up and round, anticlockwise
+		bsr		seq_wturnBy
+		bsr		seq_wspeed
+		cmp.w	#5760/seq_wloopr,seq_wT
+		blo		seq_wmove
+		move.w	#WM_ROLL,seq_wm
+		clr.w	seq_wT
+		move.w	#seq_wrollv,seq_tspd
+		bra		seq_wmove
+.roll:
+		bsr		seq_wspeed			; straight on, slowing a little ...
+		move.w	seq_wT,d0
+		cmp.w	#seq_wrollT,d0
+		bhs.s	.rolled
+		move.w	d0,d1				; ... the nose once round, eased in and
+		mulu	d0,d0				; out: 360 t^2 (3T - 2t) / T^3
+		neg.w	d1
+		add.w	d1,d1
+		add.w	#3*seq_wrollT,d1
+		mulu	d1,d0
+		mulu	#360,d0
+		divu	#seq_wrollT*seq_wrollT*seq_wrollT,d0
+		move.w	d0,seq_look
+		bra		seq_wmove
+.rolled:
+		clr.w	seq_look
+		move.w	#WM_SEARCH,seq_wm
+		bsr		seq_wnext
+		bra		seq_wmove
+.search:
+		bsr		seq_wsteer
+		bsr		seq_wlooks
+		movem.w	seq_ax,d0/d1		; there - or long enough on the way: the
+		bsr		seq_wdelta			; next spot
+		tst.w	d0
+		bpl.s	.dx
+		neg.w	d0
+.dx:
+		tst.w	d1
+		bpl.s	.dy
+		neg.w	d1
+.dy:
+		add.w	d1,d0
+		cmp.w	#seq_wthere,d0
+		blo.s	.next
+		cmp.w	#seq_wlegT,seq_wT
+		blo		seq_wmove
+.next:
+		bsr		seq_wnext
+		bra		seq_wmove
+
+; the velocity from heading and speed, the nose from heading and look
+seq_wmove:
+		move.w	seq_hd,d2
+		lsr.w	#4,d2
+		move.w	d2,d3
+		lsl.w	#2,d2
+		lea		sctab(pc),a3
+		move.w	(a3,d2.w),d0		; sin: x
+		muls	seq_spd,d0
+		add.l	d0,d0
+		swap	d0
+		move.w	d0,obj_xvelo(a0)
+		move.w	2(a3,d2.w),d0		; cos: up
+		muls	seq_spd,d0
+		add.l	d0,d0
+		swap	d0
+		neg.w	d0
+		move.w	d0,obj_yvelo(a0)
+		move.w	seq_wBlend,d1		; the first frames: from the drift it had
+		beq.s	.look				; to this, bit by bit
+		subq.w	#1,seq_wBlend
+		move.w	obj_xvelo(a0),d0
+		sub.w	seq_wv0x,d0
+		muls	seq_wBlend,d0
+		divs	#seq_wblend,d0
+		sub.w	d0,obj_xvelo(a0)
+		move.w	obj_yvelo(a0),d0
+		sub.w	seq_wv0y,d0
+		muls	seq_wBlend,d0
+		divs	#seq_wblend,d0
+		sub.w	d0,obj_yvelo(a0)
+.look:
+		add.w	seq_look,d3
+.n0:
+		bpl.s	.n1
+		add.w	#360,d3
+		bra.s	.n0
+.n1:
+		cmp.w	#360,d3
+		blo.s	.n2
+		sub.w	#360,d3
+		bra.s	.n1
+.n2:
+		move.w	d3,obj_angle(a0)
+		rts
+
+; heading d0 (1/16 degree, signed) further round
+seq_wturnBy:
+		add.w	seq_hd,d0
+		bpl.s	.p
+		add.w	#5760,d0
+.p:
+		cmp.w	#5760,d0
+		blo.s	.ok
+		sub.w	#5760,d0
+.ok:
+		move.w	d0,seq_hd
+		rts
+
+; the speed a step nearer seq_tspd, never below seq_wmin
+; over the logo or the bar it does not dawdle: seq_wzonev at least there,
+; and it gets up to it twice as hard
+seq_wspeed:
+		move.w	seq_wa,d1
+		move.w	seq_tspd,d0
+		cmp.w	#seq_wmin,d0
+		bge.s	.t
+		move.w	#seq_wmin,d0
+.t:
+		tst.b	seq_wTight			; turning round: slower, a tight turn
+		beq.s	.notTight
+		sf		seq_wTight
+		cmp.w	#seq_wturnv,d0
+		ble.s	.notTight
+		move.w	#seq_wturnv,d0
+.notTight:
+		move.w	obj_yc(a0),d2
+		cmp.w	#seq_wlogoY,d2
+		blo.s	.zone
+		cmp.w	#seq_wbarY0,d2
+		blo.s	.free
+		cmp.w	#seq_wbarY1,d2
+		bhi.s	.free
+.zone:
+		cmp.w	#seq_wzonev,d0
+		bge.s	.free
+		move.w	#seq_wzonev,d0
+		add.w	d1,d1
+.free:
+		sub.w	seq_spd,d0
+		cmp.w	d1,d0
+		ble.s	.a0
+		move.w	d1,d0
+.a0:
+		neg.w	d1
+		cmp.w	d1,d0
+		bge.s	.a1
+		move.w	d1,d0
+.a1:
+		add.w	d0,seq_spd
+		rts
+
+; d0/d1 = a spot -> d0/d1 = the way there from the ship, x the short way
+; round (the play area wraps)
+seq_wdelta:
+		sub.w	obj_xc(a0),d0
+		sub.w	obj_yc(a0),d1
+		cmp.w	#(wrap_x1-wrap_x0)/2,d0
+		blt.s	.x0
+		sub.w	#wrap_x1-wrap_x0,d0
+.x0:
+		cmp.w	#-(wrap_x1-wrap_x0)/2,d0
+		bge.s	.x1
+		add.w	#wrap_x1-wrap_x0,d0
+.x1:
+		rts
+
+; the heading towards seq_ax/seq_ay: an 8th of the angle it is off by, a
+; frame, seq_trate at most (1/16 degree); and the speed
+seq_wsteer:
+		; --- soft walls: off the bottom or the top it would come round on
+		;     the other side, so before that it turns away, hard
+		move.w	seq_hd,d1
+		lsr.w	#4,d1				; heading, degrees
+		move.w	obj_yc(a0),d0
+		cmp.w	#seq_wbottom,d0
+		bge.s	.low
+		cmp.w	#seq_wtop,d0
+		bgt.s	.steer
+		cmp.w	#90,d1				; at the top, going up?
+		blo.s	.wCw				; up and right: clockwise, round to the right
+		cmp.w	#270,d1
+		bls.s	.steer
+		bra.s	.wAcw				; up and left: anticlockwise
+.low:
+		cmp.w	#90,d1				; at the bottom, going down?
+		bls.s	.steer
+		cmp.w	#270,d1
+		bhs.s	.steer
+		cmp.w	#180,d1
+		bhs.s	.wCw				; down and left: clockwise, round and up
+.wAcw:
+		move.w	#-seq_wwallr,d0		; down and right: anticlockwise
+		bra.s	.wall
+.wCw:
+		move.w	#seq_wwallr,d0
+.wall:
+		bsr		seq_wturnBy
+		bra		seq_wspeed
+.steer:
+		movem.w	seq_ax,d0/d1
+		bsr		seq_wdelta
+		move.w	seq_hd,d2
+		lsr.w	#4,d2
+		lsl.w	#2,d2
+		lea		sctab(pc),a3
+		move.w	(a3,d2.w),d4		; the heading: sin, -cos
+		move.w	2(a3,d2.w),d5
+		move.w	d4,d2				; cross = sin dy + cos dx
+		muls	d1,d2
+		move.w	d5,d3
+		muls	d0,d3
+		add.l	d3,d2
+		muls	d0,d4				; dot = sin dx - cos dy
+		muls	d1,d5
+		sub.l	d5,d4
+		move.l	d2,d3
+		bpl.s	.cp
+		neg.l	d3
+.cp:
+		move.w	seq_trate,d6
+		move.w	obj_yc(a0),d0			; over the logo or the bar: round and
+		cmp.w	#seq_wlogoY,d0			; out of it as hard as at a wall
+		blo.s	.hard
+		cmp.w	#seq_wbarY0,d0
+		blo.s	.rate
+		cmp.w	#seq_wbarY1,d0
+		bhi.s	.rate
+.hard:
+		cmp.w	#seq_wwallr,d6
+		bhs.s	.rate
+		move.w	#seq_wwallr,d6
+.rate:
+		tst.l	d4
+		bgt.s	.ahead
+		; behind it: round hard, tight and slower (seq_wTight) - and under
+		; the bar round by way of "down", away from the bar
+		st		seq_wTight
+		cmp.w	#seq_wwallr,d6
+		bhs.s	.bRate
+		move.w	#seq_wwallr,d6
+.bRate:
+		move.w	obj_yc(a0),d0
+		cmp.w	#seq_wbarY1,d0
+		bls.s	.turn
+		cmp.w	#seq_wbottom-12,d0	; (not down by the bottom: there the wall
+		bhs.s	.turn				; turns it, upwards)
+		cmp.w	#180*16,seq_hd
+		blo.s	.cw					; heading right-ish: clockwise, else
+		neg.w	d6					; anticlockwise
+		bra.s	.cw
+.ahead:
+		cmp.l	d4,d3
+		bhs.s	.turn				; 45 degrees off or more: the full rate
+.norm:
+		cmp.l	#$7fff,d4
+		bls.s	.small
+		asr.l	#1,d4
+		asr.l	#1,d3
+		bra.s	.norm
+.small:
 		tst.w	d4
-		bne.s	.fire
-		addq.w	#1,seq_aimT
-		cmp.w	#seq_aimmax,seq_aimT
-		blo.s	.done
-.fire:
-		bsr		seq_fireAt
-		clr.w	seq_aimT
-		move.w	#seq_burstgap,seq_gap
-		subq.w	#1,seq_burst
-		bgt.s	.done
-		; the burst is out: a pause, and one time in four a new height and
-		; place in the run
-		move.w	#seq_burstpause,seq_gap
+		beq.s	.turn
+		lsl.l	#8,d3
+		divu	d4,d3				; tan * 256
+		mulu	#917,d3				; * 57.3 * 16: 1/16 degrees * 256
+		lsr.l	#8,d3
+		move.w	d3,d0
+		lsr.w	#3,d3				; an 8th of it
+		bne.s	.some
+		cmp.w	#4,d0				; (a hair off: leave it, no twitching)
+		blo.s	.none
+		moveq	#1,d3
+.some:
+		cmp.w	d6,d3
+		bhs.s	.turn
+		move.w	d3,d6
+.turn:
+		tst.l	d2
+		bpl.s	.cw
+		neg.w	d6
+.cw:
+		move.w	d6,d0
+		bsr		seq_wturnBy
+.none:
+		bra		seq_wspeed
+
+; the next spot to look for something at
+seq_wnext:
+		clr.w	seq_wT
+		addq.w	#1,seq_wp
+		jsr		getRandomNumber
+		move.l	d0,d5
+		move.w	d5,d1				; a turn rate of its own: 2.5 .. 4.4
+		lsr.w	#7,d1				; degrees a frame
+		and.w	#31,d1
+		add.w	#40,d1
+		move.w	d1,seq_trate
+		swap	d5
+		moveq	#31,d2				; (where in the band: 0..23)
+		and.w	d5,d2
+		mulu	#3,d2
+		lsr.w	#2,d2
+		; --- what for: just flying on (5 in 8), a look round on the way (2
+		;     in 8), or a curious look at the scroller (1 in 8, not twice
+		;     running)
+		move.w	d5,d6
+		lsr.w	#5,d6
+		and.w	#7,d6
+		cmp.w	#5,d6
+		blo.s	.fly
+		cmp.w	#7,d6
+		blo.s	.glance
+		tst.b	seq_wPeeked
+		bne.s	.glance
+		; --- the peek: slowly along just over the bar (or just under it),
+		;     the nose turned to have a look at it
+		st		seq_wPeeked
+		move.w	#seq_wpeekY,d1
+		tst.b	seq_wLow
+		beq.s	.pY
+		move.w	#seq_wlowY0,d1
+.pY:
+		move.w	d1,seq_ay
+		bsr		.across
+		move.w	#84,seq_tspd
+		move.w	#$8001,seq_lookWish
+		move.w	#20,seq_lookWait
+		rts
+		; --- a look round: slowly on in the same band, this way and that
+.glance:
+		sf		seq_wPeeked
+		bsr.s	.band
+		bsr.s	.across
+		move.w	d5,d1
+		lsr.w	#8,d1
+		and.w	#15,d1
+		add.w	#76,d1				; 0.6 .. 0.7 px a frame
+		move.w	d1,seq_tspd
+		move.w	#2,seq_lookWish
+		move.w	#30,seq_lookWait
+		rts
+		; --- just flying: 0.8 .. 1.8 px a frame - on in the same band, or
+		;     (1 in 2) over to the other one, across the bar, steeply and
+		;     not slowly
+.fly:
+		sf		seq_wPeeked
+		clr.w	seq_lookWish
+		jsr		getRandomNumber
+		moveq	#127,d1
+		and.w	d0,d1
+		add.w	#100,d1
+		move.w	d1,seq_tspd
+		btst	#8,d0
+		beq.s	.same
+		not.b	seq_wLow
+		bsr.s	.band
+		cmp.w	#seq_wcrossv,seq_tspd
+		bhs.s	.fast
+		move.w	#seq_wcrossv,seq_tspd
+.fast:
+		swap	d0
+		and.w	#63,d0
+		sub.w	#32,d0				; x at most 32 off: steeply across
+		add.w	obj_xc(a0),d0
+		bra.s	.wrapX
+.same:
+		bsr.s	.band
+		bra.s	.across
+; seq_ay: in the band, d2 down into it
+.band:
+		move.w	#seq_wmidY0,d1
+		tst.b	seq_wLow
+		beq.s	.bm
+		move.w	#seq_wlowY0,d1
+.bm:
+		add.w	d2,d1
+		move.w	d1,seq_ay
+		rts
+; seq_ax: anywhere from edge to edge - or (1 in 4) 150 px on round an edge,
+; out on one side and in on the other
+.across:
 		jsr		getRandomNumber
 		move.w	d0,d1
 		and.w	#3,d1
-		bne.s	.sameSpot
-		bsr		seq_newHeight
-		jsr		getRandomNumber
-.sameSpot:
-		lsr.w	#4,d0
-		and.w	#3,d0				; the next burst: 1, 2 or 3 shots
-		bne.s	.burst
-		moveq	#1,d0
-.burst:
-		move.w	d0,seq_burst
-		rts
-
-; is the letter at screen x d0 within seq_range of the ship? -> Z clear if
-; it is. keeps d0/d3
-seq_inRange:
-		movem.w	d0/d3,-(a7)
-		sub.w	obj_xc(a0),d0
-		bpl.s	.x
-		neg.w	d0
-.x:
-		move.w	#seq_textY,d1
-		sub.w	obj_yc(a0),d1
-		bpl.s	.y
-		neg.w	d1
-.y:
-		cmp.w	d1,d0				; distance ~ max + min/2
-		bhs.s	.big
-		exg		d0,d1
-.big:
-		lsr.w	#1,d1
-		add.w	d0,d1
-		move.w	d1,d5
-		movem.w	(a7)+,d0/d3
-		cmp.w	#seq_range,d5
-		bhi.s	.no
-		moveq	#1,d5
-		rts
-.no:
-		moveq	#0,d5
-		rts
-
-; the run along the bar, left to right: its place (seq_runXf, 8.8) eases
-; on towards seq_runlead behind the next letter to shoot - a 16th of the
-; way a frame, at most seq_runv. so the ship goes along
-; smoothly, whatever the scroller does in its stutter: it starts on the
-; left while the message comes in from the right, and as the letters go
-; one after the other from the left it works its way to the right
-seq_runAlong:
-		bsr		seq_claimX
-		jsr		msgFrom				; d0 = the next letter to shoot, -1 none
-		tst.w	d0
-		bmi.s	.set				; nothing in sight: stay
-		sub.w	#seq_runlead,d0
-		ext.l	d0
-		asl.l	#8,d0
-		sub.l	seq_runXf,d0
-		asr.l	#4,d0
-		cmp.l	#seq_runv,d0
-		ble.s	.vHi
-		move.l	#seq_runv,d0
-.vHi:
-		cmp.l	#-seq_runv,d0		; (back as well, for a letter a shot
-		bge.s	.step				; missed - but the letters go from the
-		move.l	#-seq_runv,d0		; left, so mostly it is on to the right)
-.step:
-		add.l	d0,seq_runXf
-.set:
-		move.l	seq_runXf,d1
-		asr.l	#8,d1
-		cmp.w	#seq_runx1,d1
-		ble.s	.x1
-		move.w	#seq_runx1,d1
-.x1:
-		add.w	seq_jx,d1
-		move.w	d1,seq_ax
-		rts
-
-; a new height for the run: well over the bar 3 times in 4, else under
-; it, and a little ahead of or behind the run's place
-seq_newHeight:
-		jsr		getRandomNumber
-		moveq	#7,d1
-		and.w	d0,d1
-		move.w	d0,d2
-		lsr.w	#4,d2
-		and.w	#3,d2
-		cmp.w	#3,d2
-		beq.s	.under
-		add.w	#112,d1
-		bra.s	.y
-.under:
-		add.w	#236,d1
-.y:
-		move.w	d1,seq_ay
+		bne.s	.anywhere
+		move.w	obj_xc(a0),d0
+		cmp.w	#184,d0
+		blo.s	.leftAbout
+		add.w	#150,d0
+		bra.s	.wrapX
+.leftAbout:
+		sub.w	#150,d0
+		bra.s	.wrapX
+.anywhere:
+		moveq	#0,d1
+		move.b	d0,d1
 		lsr.w	#8,d0
-		and.w	#15,d0
-		subq.w	#8,d0				; -8..7
-		move.w	d0,seq_jx
+		and.w	#63,d0
+		add.w	d1,d0
+		add.w	#36,d0				; x 36..353
+.wrapX:
+		cmp.w	#wrap_x1,d0
+		blt.s	.w0
+		sub.w	#wrap_x1-wrap_x0,d0
+.w0:
+		cmp.w	#wrap_x0,d0
+		bge.s	.w1
+		add.w	#wrap_x1-wrap_x0,d0
+.w1:
+		move.w	d0,seq_ax
 		rts
 
+; looking round: the nose off the heading and back again, seq_look =
+; amp * sin(180 k / len). a look at the scroller turns it to point at the
+; bar, a glance goes this way and that
+seq_wlooks:
+		tst.w	seq_lookT
+		bne.s	.running
+		tst.w	seq_lookWait
+		beq.s	.start
+		subq.w	#1,seq_lookWait
+		rts
+.start:
+		move.w	seq_lookWish,d0
+		and.w	#$7fff,d0
+		beq.s	.out
+		subq.w	#1,seq_lookWish
+		tst.w	seq_lookWish
+		bmi.s	.peek
+		move.w	#seq_wglanceT,seq_lookLen
+		move.w	#seq_wglanceA,d0
+		not.b	seq_lookSide
+		beq.s	.amp
+		neg.w	d0
+.amp:
+		move.w	d0,seq_lookAmp
+		move.w	#12,seq_lookWait	; a moment between the looks
+		bra.s	.go
+.peek:
+		clr.w	seq_lookWish
+		move.w	#180,d0				; the nose down at the bar ...
+		cmp.w	#seq_textY,obj_yc(a0)
+		blo.s	.down
+		moveq	#0,d0				; ... or up at it
+.down:
+		move.w	seq_hd,d1
+		lsr.w	#4,d1
+		sub.w	d1,d0				; that far round from the heading
+		cmp.w	#180,d0
+		blt.s	.p0
+		sub.w	#360,d0
+.p0:
+		cmp.w	#-180,d0
+		bge.s	.p1
+		add.w	#360,d0
+.p1:
+		cmp.w	#100,d0				; (not round past the tail)
+		ble.s	.p2
+		moveq	#100,d0
+.p2:
+		cmp.w	#-100,d0
+		bge.s	.p3
+		moveq	#-100,d0
+.p3:
+		move.w	d0,seq_lookAmp
+		move.w	#seq_wpeekT,seq_lookLen
+.go:
+		move.w	seq_lookLen,seq_lookT
+.running:
+		subq.w	#1,seq_lookT
+		move.w	seq_lookLen,d0
+		sub.w	seq_lookT,d0		; k: 1..len
+		mulu	#180,d0
+		divu	seq_lookLen,d0		; 180 k / len
+		lsl.w	#2,d0
+		lea		sctab(pc),a3
+		move.w	(a3,d0.w),d0
+		muls	seq_lookAmp,d0
+		add.l	d0,d0
+		swap	d0
+		move.w	d0,seq_look
+.out:
+		rts
+
+; the end of it all (no last attack): the message gone by, the text all
+; gone, then the TV goes off
+seq_endCheck:
+		tst.b	tvGo
+		bne.s	.done
+		tst.b	msgEnded
+		beq.s	.done
+		jsr		msgLeftX
+		tst.w	d0
+		bpl.s	.done
+		jsr		glitchStop
+		tst.b	scrollGone
+		beq.s	.wait
+		addq.w	#1,seq_tvT
+		cmp.w	#seq_tvdelay,seq_tvT
+		blo.s	.done
+		st		tvGo				; switch the TV off
+		bra.s	.done
+.wait:
+		clr.w	seq_tvT
+.done:
+		rts
+
+;--- RUN --------------------------------------
+; the last attack (only with finalAttackOn), flown like a fighter's - the ship never stops, the
+; nose always along the way it flies (seq_fly):
+;   lap       from the cue on (the scroller is mended) it takes a run up:
+;             high over the screen to the right, out of it, and in again
+;             from the left (the play area wraps). the speed of the lap is
+;             set so it comes round just as the last words are far enough
+;             in - and if they are not, it goes round again
+;   approach  from the left, down out of the height in a curve onto the
+;             bottom text row, straight at the letters
+;   fire      the power blast (launchTorpedo, with its muzzle flash and a
+;             kick), once the first letter will be at seq_fireX by the
+;             time the blast is there - or at once if the letters are too
+;             near
+;   break     straight away it pulls up and away out of the blast's way,
+;             up and to the right
+;   roam      and then it flies about over the bar, the logo, the screen,
+;             spot to spot - all through the scroller going off and the TV
+SR_LAP			= 0
+SR_APPROACH		= 1
+SR_BREAK		= 2
+SR_ROAM			= 3
+
+seq_run:
+		move.w	seq_phase,d0
+		beq.s	.lap
+		cmp.w	#SR_APPROACH,d0
+		beq		.approach
+		cmp.w	#SR_BREAK,d0
+		beq		.break
+		bra		.roam
+
+		; --- the run up: once or twice across the screen and round (the
+		;     play area wraps), at an Asteroids pace, coming down a little
+		;     all the way - a long, flat glide from where it was to the
+		;     bottom text row, which it reaches early on the last crossing
+.lap:
+		tst.b	seq_runInit
+		bne.s	.lapGo
+		st		seq_runInit
+		move.w	obj_yc(a0),seq_y0
+		; how far to fly: round once at least, and once or twice more if the
+		; message is that far off - at the cruising speed
+		bsr		seq_frontEst
+		move.w	#seq_wrapX,d1
+		sub.w	obj_xc(a0),d1
+		add.w	#seq_finalX-16,d1		; the way round once (d1)
+		moveq	#0,d2					; extra laps
+		tst.w	d0
+		bmi.s	.laps
+		sub.w	#msgHaltX0,d0			; frames to go
+		ble.s	.laps
+		mulu	#seq_vcruise,d0
+		lsr.l	#7,d0					; the way at the cruising speed
+		sub.w	d1,d0
+		ble.s	.laps
+		add.w	#176,d0
+		ext.l	d0
+		divu	#seq_wrapX-16,d0		; laps, rounded
+		move.w	d0,d2
+		cmp.w	#2,d2
+		bls.s	.laps
+		moveq	#2,d2
+.laps:
+		move.w	d2,seq_lapsLeft
+		mulu	#seq_wrapX-16,d2
+		add.w	d2,d1
+		move.w	d1,seq_dTotal
+		move.w	obj_xc(a0),seq_lastX
+.lapGo:
+		; round from the right?
+		move.w	obj_xc(a0),d0
+		move.w	seq_lastX,d1
+		move.w	d0,seq_lastX
+		sub.w	d0,d1
+		cmp.w	#200,d1
+		ble.s	.noWrap
+		subq.w	#1,seq_lapsLeft
+		bpl.s	.noWrap
+		move.w	#SR_APPROACH,seq_phase	; that was the last time round
+		bra		.approach
+.noWrap:
+		; the way still to go, to seq_finalX on the last crossing
+		move.w	#seq_wrapX,d3
+		sub.w	obj_xc(a0),d3
+		add.w	#seq_finalX-16,d3
+		move.w	seq_lapsLeft,d0
+		mulu	#seq_wrapX-16,d0
+		add.w	d0,d3					; d3 = the way to go
+		; the height there, 48 px on: straight down the line from where it
+		; started to the row
+		move.w	d3,d1
+		sub.w	#48,d1
+		bpl.s	.dr
+		moveq	#0,d1
+.dr:
+		move.w	#seq_rowY,d0
+		sub.w	seq_y0,d0				; how far it comes down in all
+		muls	d1,d0
+		move.w	seq_dTotal,d2
+		bne.s	.dt
+		moveq	#1,d2
+.dt:
+		divs	d2,d0
+		move.w	#seq_rowY,d1
+		sub.w	d0,d1					; the height to steer at
+		; the pace: there just as the message stops on screen
+		move.w	#seq_vcruise,d2
+		bsr		seq_frontEst
+		tst.w	d0
+		bmi.s	.go
+		sub.w	#msgHaltX0,d0			; frames until it stands
+		ble.s	.fastest
+		mulu	#128,d3
+		divu	d0,d3
+		bvs.s	.fastest
+		move.w	d3,d2
+		cmp.w	#seq_vmin,d2
+		bge.s	.v0
+		move.w	#seq_vmin,d2
+.v0:
+		cmp.w	#seq_vfast,d2
+		ble.s	.go
+.fastest:
+		move.w	#seq_vfast,d2
+.go:
+		move.w	obj_xc(a0),d0
+		add.w	#48,d0
+		bra		seq_fly
+
+		; --- the last crossing: on the row from the left, at the words
+.approach:
+		move.w	seq_wob,d0
+		addq.w	#seq_wavestep,d0
+		cmp.w	#360,d0
+		blo.s	.wOk
+		sub.w	#360,d0
+.wOk:
+		move.w	d0,seq_wob
+		lsl.w	#2,d0
+		lea		sctab(pc),a3
+		move.w	(a3,d0.w),d1
+		muls	#seq_wave,d1
+		swap	d1
+		add.w	d1,d1
+		add.w	#seq_rowY,d1
+		move.w	obj_xc(a0),d0
+		add.w	#48,d0
+		move.w	#seq_vcruise,d2		; (a little slower while it waits for
+		tst.b	msgHalted			; the message to stand)
+		bne.s	.appV
+		move.w	#seq_vmin,d2
+.appV:
+		bsr		seq_fly
+		; --- fire? the message standing, all of it on show, the ship in
+		;     the first quarter of the screen, on the row, nose to the right
+		jsr		msgLeftX
+		tst.w	d0
+		bmi		.noFire
+		move.w	obj_xc(a0),d0
+		cmp.w	#seq_fireX1,d0
+		bhi.s	.lateFire			; (the last chance)
+		cmp.w	#seq_fireX0,d0
+		blo		.noFire
+		tst.b	msgHalted
+		beq		.noFire
+		move.w	obj_yc(a0),d0
+		sub.w	#seq_rowY,d0
+		bpl.s	.ay
+		neg.w	d0
+.ay:
+		cmp.w	#seq_wave+1,d0
+		bhi		.noFire
+		move.w	obj_angle(a0),d0
+		sub.w	#ai_enterangle,d0
+		bpl.s	.aa
+		neg.w	d0
+.aa:
+		cmp.w	#8,d0
+		bhi		.noFire
+		bra.s	.fire
+.lateFire:
+		addq.w	#1,seq_lateFires	; (testing: should stay 0)
+.fire:
+		move.w	obj_xc(a0),d0
+		addq.w	#6,d0
+		move.w	d0,seq_fireAtX		; (testing)
+		jsr		msgLeftX
+		move.w	d0,seq_fireMsgX
+		move.w	obj_xc(a0),d0
+		addq.w	#6,d0
+		move.w	obj_yc(a0),d1
+		move.w	obj_xvelo(a0),d2
+		jsr		launchTorpedo
+		sub.w	#seq_recoil,obj_xvelo(a0)	; the kick
+		move.w	#SR_BREAK,seq_phase
+.noFire:
+		rts
+		; --- the break: up and away from where it all goes off
+.break:
+		move.w	obj_xc(a0),d0
+		add.w	#seq_breakdx,d0
+		moveq	#seq_breakY,d1
+		move.w	#seq_breakv,d2
+		bsr		seq_fly
+		cmp.w	#seq_breakdone,obj_yc(a0)
+		bgt.s	.bDone
+		move.w	#SR_ROAM,seq_phase
+		bsr		seq_newWay
+.bDone:
+		rts
+
+		; --- roaming about, never still
+.roam:
+		movem.w	seq_ax,d0/d1
+		move.w	#seq_roamfly,d2
+		bsr		seq_fly
+		movem.w	seq_ax,d0/d1		; there? the next spot
+		sub.w	obj_xc(a0),d0
+		bpl.s	.rx
+		neg.w	d0
+.rx:
+		sub.w	obj_yc(a0),d1
+		bpl.s	.ry
+		neg.w	d1
+.ry:
+		add.w	d1,d0
+		cmp.w	#seq_arrive*3,d0
+		bhi.s	.rOn
+		bsr		seq_newWay
+.rOn:
+		; the end of it all: the text gone, then the TV goes off
+		tst.b	tvGo
+		bne.s	.rDone
+		tst.b	torpOn
+		bne.s	.rDone
+		tst.b	wakeOn
+		bne.s	.rDone
+		tst.w	detN
+		bne.s	.rDone
+		tst.b	msgEnded
+		beq.s	.rDone
+		jsr		msgLeftX
+		tst.w	d0
+		bpl.s	.rDone
+		jsr		glitchStop
+		tst.b	scrollGone
+		beq.s	.rWait
+		addq.w	#1,seq_tvT
+		cmp.w	#seq_tvdelay,seq_tvT
+		blo.s	.rDone
+		st		tvGo				; switch the TV off
+		bra.s	.rDone
+.rWait:
+		clr.w	seq_tvT
+.rDone:
+		rts
+
+; a new spot to roam to: over the bar, left half and right half in turn
+seq_newWay:
+		jsr		getRandomNumber
+		moveq	#127,d1
+		and.w	d0,d1
+		add.w	#48,d1
+		addq.w	#1,seq_wp
+		btst	#0,seq_wp+1
+		beq.s	.x
+		add.w	#140,d1
+.x:
+		move.w	d1,seq_ax
+		swap	d0
+		and.w	#63,d0
+		add.w	#36,d0				; y 36..99: over the logo, its bottom
+		move.w	d0,seq_ay
+		rts
+
+; -> d0 = where the first letter of the message is (screen x), on screen
+; or still to come in; -1 if it has not started yet
+seq_frontEst:
+		jsr		msgLeftX			; on the row?
+		tst.w	d0
+		bpl.s	.out
+		tst.b	msgEnded			; (all of it gone already: none)
+		bne.s	.none
+		move.w	msgStartAbs,d0		; still coming in: where it was put ...
+		tst.b	msgStarted
+		bne.s	.est
+		tst.b	msgCue				; ... or where it will be (from the cue
+		beq.s	.none				; on, scroller.s knows that)
+		move.w	msgPredAbs,d0
+.est:
+		sub.w	scrollSteps,d0
+		rts
+.none:
+		moveq	#-1,d0
+.out:
+		rts
+
+; fly towards d0/d1 at speed d2 (1/128 px a frame) the way a craft flies:
+; the velocity swings round towards the target at seq_flyacc a frame at
+; most, so it curves rather than turns, and it never stops; the nose along
+; the way it goes
+seq_fly:
+		sub.w	obj_xc(a0),d0
+		sub.w	obj_yc(a0),d1
+		move.w	d0,d4
+		bpl.s	.ax
+		neg.w	d4
+.ax:
+		move.w	d1,d5
+		bpl.s	.ay
+		neg.w	d5
+.ay:
+		cmp.w	d5,d4
+		bhs.s	.big
+		exg		d4,d5
+.big:
+		lsr.w	#1,d5
+		add.w	d5,d4				; length, ~ max + min/2
+		bne.s	.len
+		moveq	#1,d4
+.len:
+		muls	d2,d0				; the velocity wanted
+		divs	d4,d0
+		muls	d2,d1
+		divs	d4,d1
+		sub.w	obj_xvelo(a0),d0
+		move.w	#seq_flyacc,d6
+		bsr.s	.clamp
+		add.w	d0,obj_xvelo(a0)
+		move.w	d1,d0
+		sub.w	obj_yvelo(a0),d0
+		bsr.s	.clamp
+		add.w	d0,obj_yvelo(a0)
+		; never slower than seq_flymin: turning back it swings round in an
+		; arc at that speed instead of braking through a standstill
+		move.w	obj_xvelo(a0),d0
+		move.w	obj_yvelo(a0),d1
+		move.w	d0,d4
+		bpl.s	.mx
+		neg.w	d4
+.mx:
+		move.w	d1,d5
+		bpl.s	.my
+		neg.w	d5
+.my:
+		cmp.w	d5,d4
+		bhs.s	.mbig
+		exg		d4,d5
+.mbig:
+		lsr.w	#1,d5
+		add.w	d5,d4				; ~ its speed
+		cmp.w	#seq_flymin,d4
+		bhs.s	.fast
+		tst.w	d4
+		bne.s	.scale
+		move.w	#seq_flymin,obj_xvelo(a0)	; (dead still: off to the right)
+		bra.s	.fast
+.scale:
+		muls	#seq_flymin,d0
+		divs	d4,d0
+		move.w	d0,obj_xvelo(a0)
+		muls	#seq_flymin,d1
+		divs	d4,d1
+		move.w	d1,obj_yvelo(a0)
+.fast:
+		move.w	obj_xvelo(a0),d0	; the nose along the way it flies
+		move.w	obj_yvelo(a0),d1
+		move.w	d0,d2
+		or.w	d1,d2
+		beq.s	.out
+		bra		seq_faceMove
+.clamp:
+		cmp.w	d6,d0
+		ble.s	.c0
+		move.w	d6,d0
+.c0:
+		neg.w	d6
+		cmp.w	d6,d0
+		bge.s	.c1
+		move.w	d6,d0
+.c1:
+		neg.w	d6
+.out:
+		rts
+
+; turn the nose towards the way d0/d1 (the velocity): up to 10 degrees a
+; frame, 2 when nearly there
+seq_faceMove:
+		bsr		ai_crossdot			; d2 cross, d3 dot
+		moveq	#10,d1
+		tst.l	d3
+		ble.s	.turn
+		move.l	d2,d4
+		bpl.s	.p
+		neg.l	d4
+.p:
+		move.l	d4,d5
+		lsl.l	#2,d5				; off by more than ~14 degrees: fast
+		cmp.l	d3,d5
+		bhs.s	.turn
+		moveq	#2,d1
+		lsl.l	#4,d4				; within ~4 degrees: done
+		cmp.l	d3,d4
+		bhs.s	.turn
+		rts
+.turn:
+		tst.l	d2
+		bmi		obj_subangle
+		bra		obj_addangle
+
+; every frame, from updateScroller once this frame's text is drawn: every
+; shot in the air against the text as it is shown (textShot). a shot that
+; hits is gone at once
+seqShotScan::
+		movem.l	d0-d7/a0-a6,-(a7)
+		jsr		textFrame			; held over hits, the power blast
+		tst.b	seq_shotsLive		; (the bored shots go nowhere)
+		beq		.done
+		lea		shot_structs(pc),a0
+		moveq	#15,d7
+.shot:
+		move.w	shot_con(pc),d6
+		btst	d7,d6
+		beq.s	.next
+		move.w	obj_xfloat(a0),d0
+		sub.w	obj_xvelo(a0),d0
+		lsr.w	#7,d0				; where it was last frame
+		move.w	obj_yfloat(a0),d1
+		sub.w	obj_yvelo(a0),d1
+		asr.w	#7,d1
+		move.w	obj_xc(a0),d2		; and where it is now
+		move.w	obj_yc(a0),d3
+		move.w	d2,d4
+		sub.w	d0,d4
+		bpl.s	.adx
+		neg.w	d4
+.adx:
+		cmp.w	#16,d4				; wrapped round the edge: not near any
+		bhi.s	.next				; text
+		move.w	obj_xvelo(a0),d4
+		move.w	obj_yvelo(a0),d5
+		move.w	d7,-(a7)
+		jsr		textShot
+		move.w	(a7)+,d7
+		tst.w	d0
+		beq.s	.next
+		move.w	shot_con(pc),d6		; a hit: the shot is gone
+		bclr	d7,d6
+		move.w	d6,shot_con
+.next:
+		lea		obj_len(a0),a0
+		dbf		d7,.shot
+.done:
+		movem.l	(a7)+,d0-d7/a0-a6
+		rts
 ;--- CLEAN, LEAVE, HOLD -----------------------
 seq_clean:
 		bsr		seq_hover
@@ -5360,19 +6331,29 @@ seq_glide:
 		move.w	seq_glidevNow,d6
 		bsr.s	.clamp
 		sub.w	obj_xvelo(a0),d0
-		asr.w	#3,d0				; an 8th of the way a frame: no jerks
-		move.w	#seq_glidea,d6
-		bsr.s	.clamp
+		bsr.s	.ease
 		add.w	d0,obj_xvelo(a0)
 		move.w	d1,d0
 		move.w	seq_glidevNow,d6
 		bsr.s	.clamp
 		sub.w	obj_yvelo(a0),d0
-		asr.w	#3,d0
-		move.w	#seq_glidea,d6
-		bsr.s	.clamp
+		bsr.s	.ease
 		add.w	d0,obj_yvelo(a0)
 		rts
+; d0 = how far the velocity is off -> the change this frame: an 8th of it
+; (no jerks), at least 1 so the last bit gets there too, seq_glidea at most
+.ease:
+		move.w	d0,d6
+		asr.w	#3,d0
+		bne.s	.eased
+		tst.w	d6
+		beq.s	.eased
+		moveq	#1,d0
+		tst.w	d6
+		bpl.s	.eased
+		moveq	#-1,d0
+.eased:
+		move.w	#seq_glidea,d6
 .clamp:
 		cmp.w	d6,d0
 		ble.s	.c0
@@ -5590,14 +6571,59 @@ seq_ay:			dc.w	0
 seq_wp:			dc.w	0		; search spots done
 seq_wob:		dc.w	0		; hovering swing, degrees
 seq_shots:		dc.w	0
+seq_a1n:		dc.w	0		; letters to shoot out in the first attack
 seq_gap:		dc.w	0		; frames to the next shot
 seq_aimT:		dc.w	0		; frames spent aiming
 seq_burst:		dc.w	1		; shots left in the burst
 seq_claim:		dc.w	0		; letter shot at, screen x + scrollSteps
 seq_claimT:		dc.w	0		; ... for this many more frames
-seq_runXf:		dc.l	0		; the run's place, 8.8
 seq_glidevNow:	dc.w	seq_glidev	; seq_glide's top speed
-seq_thinkA:		dc.w	0		; the nose before it started thinking
+seq_ahead:		dc.w	0		; x of the first text ahead of the ship
+seq_phase:		dc.w	0		; seq_run: SR_LAP, SR_APPROACH, SR_BREAK, SR_ROAM
+seq_lastX:		dc.w	0
+seq_tvT:		dc.w	0
+seq_y0:			dc.w	0		; the height the run up started at
+seq_dTotal:		dc.w	0		; ... and its length
+seq_lapsLeft:	dc.w	0
+seq_lateFires:	dc.w	0		; (testing)
+seq_fireAtX:	dc.w	0
+seq_fireMsgX:	dc.w	0
+seq_runInit:	dc.b	0
+finalAttackOn::	dc.b	0		; the last attack on the message (seq_run) - off
+							; for now: the message runs through, see seq_repos
+seq_wOn:		dc.b	0		; seq_wander has started
+seq_wLow:		dc.b	0		; ... in the black under the bar now
+seq_wPeeked:	dc.b	0		; ... had a look at the scroller last time
+seq_lookSide:	dc.b	0
+seq_wTight:		dc.b	0		; seq_wsteer: turning round, tight
+				even
+seq_hd:			dc.w	0		; seq_wander: heading, 1/16 degree
+seq_spd:		dc.w	0		; ... speed, 1/128 px a frame
+seq_tspd:		dc.w	0		; ... the speed it eases to
+seq_wa:			dc.w	seq_wacc	; ... by this much a frame at most
+seq_trate:		dc.w	0		; ... the most it turns a frame
+seq_wm:			dc.w	0		; ... WM_DASH, WM_LOOP, WM_ROLL, WM_SEARCH
+seq_wT:			dc.w	0		; ... frames in it, or on the way to a spot
+seq_look:		dc.w	0		; the nose off the heading, degrees
+seq_lookT:		dc.w	0		; frames left of the look
+seq_lookLen:	dc.w	0
+seq_lookAmp:	dc.w	0
+seq_lookWish:	dc.w	0		; looks to come; bit 15: at the scroller
+seq_lookWait:	dc.w	0		; frames till the next look may start
+seq_wv0x:		dc.w	0		; the drift when seq_wander took over ...
+seq_wv0y:		dc.w	0
+seq_wBlend:		dc.w	0		; ... and frames left to blend it out
+seq_diveT:		dc.w	0
+seq_p0x:		dc.w	0		; the dive's curve: start ...
+seq_p0y:		dc.w	0
+seq_cx:			dc.w	0		; ... control point (on the row) ...
+seq_p2x:		dc.w	0		; ... and end (on the row)
+seq_torp:		dc.b	0		; the torpedo has gone
+seq_shotsLive:	dc.b	0		; shots count against the text
+				even
+seq_boredT:		dc.w	0
+seq_boredT2:	dc.w	0
+				even
 seq_onTarget:	dc.b	0		; seq_aim: lined up last frame
 				even
 seq_shipY::		dc.w	0		; the ship's raster line, for glitchFrame
