@@ -143,7 +143,8 @@ stars_count		= 120
 ;----------------------------------------------------------------------
 ; autopilot - flying
 ;----------------------------------------------------------------------
-ai_turnrate		= 6			; degrees per frame (the keyboard player gets 4)
+ai_turnrate		= 8		; (6) degrees per frame (the keyboard player gets 4)
+seq_turnrate	= 6		; ... in the logo destruction (seq_pilot): as it was
 ; The engine fires only when the ship is NOT turning - rotate first, then
 ; burn in a straight line. Burning part way through a turn sweeps the
 ; thrust round in an arc and the ship just circles.
@@ -155,7 +156,7 @@ ai_turnrate		= 6			; degrees per frame (the keyboard player gets 4)
 ; sequences in ai_turn (x8, about 7 degrees, and x6, about 9.5) because
 ; |cross| is a full longword and muls.w cannot scale it.
 ai_thrust		= 8			; thrust impulse, same as the player gets
-ai_maxspeed		= 240		; |xvelo|+|yvelo| above which it brakes (300)
+ai_maxspeed		= 288		; (240) |xvelo|+|yvelo| above which it brakes (300)
 ai_slowspeed	= 110		; ... and below which it stops braking
 ai_thrustodds	= 0			; out of 256 - chance of a burst while ATTACKING.
 							; 0 means it holds position and shoots, which is
@@ -197,7 +198,7 @@ ai_boxcy		= (ai_boxy0+ai_boxy1)/2
 ; --- entrance
 ai_enterangle	= 90		; obj_angle that points due right
 ai_enterspeed	= 90	; xvelo for the fly-in (128 == 1 pixel/frame)
-ai_enterwait	= 240	; frames after the first word STARTS appearing
+ai_enterwait	= 120		; (240) frames after the first word STARTS appearing
 						; before the ship flies in. Triggering on the spawn
 						; rather than on the finished word gives it the whole
 						; zoom-in plus the read pause to reach its station,
@@ -365,7 +366,7 @@ ai_wrapy		= game_height+2*wrap_my
 ;----------------------------------------------------------------------
 ; autopilot - shooting
 ;----------------------------------------------------------------------
-ai_holdframes	= 40		; frames to admire a finished word before shooting
+ai_holdframes	= 16		; (40) frames to admire a finished word before shooting
 							; (50 == 1 second, 100 == 2 seconds)
 ai_pbholdfire	= 1
 ai_minclose		= 128		; a shot must close at least this fast (128 == 1 px
@@ -440,18 +441,18 @@ ai_dangerdist	= 56		; a letter coming this close is a threat (44) (a letter
 ai_shootthreat	= 70		; a shootable threat further away than this is
 							; shot, a nearer one dodged
 ai_evadespeed	= 176		; the velocity a dodge wants (128)
-ai_cruise		= 150		; the fastest we fly to a station (144, 184: it
+ai_cruise		= 196		; (150) the fastest we fly to a station (144, 184: it
 							; dashed about - a good player flies calmly)
 ai_stdead		= 14		; this close to the station is close enough
 ai_engage		= 100		; a target nearer than this (and not a threat)
 							; is shot from where we are - no station
 ai_engagehyst	= 32		; ... and it is left again only past this much more
-ai_drift		= 48		; ... drifting no faster than this meanwhile (96:
+ai_drift		= 72		; (48) ... drifting no faster than this meanwhile (96:
 							; it let itself drift far too often - now it
 							; brakes and shoots from a standstill)
 ; --- the start of the attack on a new word is a rush (ai_pilot)
 ai_rushtime		= 350		; frames, or until the first hit breaks it up
-ai_rushcruise	= 168		; faster than ai_cruise ... (160, 208)
+ai_rushcruise	= 224		; (168) faster than ai_cruise ... (160, 208)
 ai_rushengage	= 72		; ... and closer in before it settles to shoot
 ai_rushdx		= 80		; the way in along the row: this far out to the side
 ai_rushdg		= 56		; the way in from above: this far out and up
@@ -483,7 +484,7 @@ ai_homex1		= 336
 ai_waytop		= 24		; now and then a waypoint over the logo, y 24..55
 ai_waytoprange	= 31		; (mask)
 ai_waybottom	= 212		; mostly the black below the scroller, y 212..243
-ai_readyOn		= 1			; between the words: to a ready spot and wait there
+ai_readyOn		= 0		; (1) between the words: to a ready spot and wait there
 ai_readyX0		= 52		; ... on the left (52..67) or the right (312..327)
 ai_readyX1		= 327
 ai_readyY		= 214		; ... below the bar (214..229)
@@ -501,7 +502,7 @@ ai_wordHalf		= 120		; half a word's width at most (the row's middle
 							; is ast_x_center)
 ai_logopen		= 160		; a letter in front of the logo counts this much
 							; further away as a target
-ai_busymax		= 45		; frames there before it moves somewhere else (100)
+ai_busymax		= 24		; (45) frames there before it moves somewhere else (100)
 ai_busypen		= 300		; a station there counts this much further away (48:
 							; it kept on hanging about over the logo)
 ai_busypenS		= 48		; ... and one in front of the scroller (logo: above)
@@ -519,17 +520,18 @@ shot_frames		= 56		; a shot's life (was 80): ~130 px, and fewer shots
 							; in the air means fewer collision tests
 ai_hitslack		= 8		; px - allowed miss at the lead point (a letter's
 							; hit box is +-12)
-ai_huntgap		= 5			; frames between shots, + 0..3 (9) - about the pace
+ai_huntgap		= 4		; (5) frames between shots, + 0..3 (9) - about the pace
 							; of a player on the fire button
 ; --- the hunt after the break up, as a gunner (ai_pilot)
-ai_gunnerfar	= 90		; px - a target further than this is flown at (110:
+ai_gunnerfar	= 72		; (90) px - a target further than this is flown at (110:
 							; it drifted over far too long)
-ai_gunnerspeed	= 150		; ... until we close at this speed (112, 200)
+ai_gunnerspeed	= 192		; (150) ... until we close at this speed (112, 200)
 ai_gunnertop	= 280		; faster than this: slow down first (200 before)
-ai_gunnerslow	= 96		; in range and faster than this: it brakes, to
+ai_gunnerslow	= 128		; (96) in range and faster than this: it brakes, to
 							; shoot from (nearly) a standstill
 ai_farpen		= 150		; target choice: a letter out of range counts as
 							; this much further away (see ai_huntScan)
+ai_burstcap		= 4			; no shot while bursting letters + shots in the air reach this
 ai_maxshots		= 4			; shots in the air at once, at most - as in the
 							; arcade game
 ai_wrapslack	= 96		; px - the direct way is taken unless the way
@@ -1929,6 +1931,7 @@ ai_scanHalf:	dc.b	0		; ai_pilot: one bursting - every other look
 				even
 ai_scanLate:	dc.w	0		; looks put off for the beam (a count, for tests)
 ai_scanLine		= 88			; no look round once the beam is this far down
+ai_scanShots	= 4			; ... nor with this many shots in the air
 				even
 ai_holdFire:	dc.w	ai_holdframes
 ai_sidePicked:	dc.b	0		; side chosen for the word now on screen
@@ -1978,8 +1981,9 @@ ai_sidemode:	dc.b	0		; along-the-row attack for this word?
 
 ;---------------------------------------------
 ; the ship comes in from somewhere else every time (the seed is new at
-; every start, main.s randomize): from any of the four edges, anywhere
-; along it but away from the word row, a little slanted, at its own speed.
+; every start, main.s randomize): from the left, the right or the bottom
+; edge - never through the logo - below the word row, a little slanted,
+; at its own speed.
 ; a0 = the ship
 ai_ent_x0		= 16		; left: in the hidden band behind the border
 ai_ent_x1		= 362		; right: the same on the other side
@@ -2005,19 +2009,12 @@ ai_entrance:
 		add.w	d0,d0
 		move.w	.edges(pc,d0.w),d0
 		jmp		.edges(pc,d0.w)
-.edges:	dc.w	.left-.edges,.right-.edges,.top-.edges,.bottom-.edges
-		; --- left or right: a height above the row (30..95) or below it
-		;     (160..250) - never level with the letters
+.edges:	dc.w	.left-.edges,.right-.edges,.bottom-.edges,.bottom-.edges
+		; --- left or right: below the row (160..250) - never level with the
+		;     letters, never in the logo (above the row it was the logo)
 .side:
 		moveq	#127,d2
 		and.w	d6,d2
-		tst.b	d6
-		bmi.s	.below
-		mulu	#66,d2
-		lsr.w	#7,d2
-		add.w	#30,d2
-		rts
-.below:
 		mulu	#91,d2
 		lsr.w	#7,d2
 		add.w	#160,d2
@@ -2438,6 +2435,7 @@ dbgy:			dc.w	0
 ; a0 = ship. a6 is the draw table and must survive.
 ;---------------------------------------------
 ai_pilot:
+		move.w	#ai_turnrate,ai_turnNow
 		tst.w	ai_fireWait
 		beq.s	.nofw
 		subq.w	#1,ai_fireWait
@@ -2481,6 +2479,15 @@ ai_pilot:
 		not.b	ai_scanHalf			; word of EQUALIZER's length on screen
 		beq.s	.noScan				; leaves no room for both)
 .scan:
+		move.w	shot_con,d0			; three shots or more in the air: each is
+		move.w	d0,d1				; a collision test per letter, and the
+		and.w	#$ff,d0				; first hit on a word breaks it up in the
+		lea		bitCount,a1			; same frame - the look round waits (the
+		move.b	(a1,d0.w),d0		; target is being shot at anyway)
+		lsr.w	#8,d1
+		add.b	(a1,d1.w),d0
+		cmp.b	#ai_scanShots,d0
+		bhs.s	.late
 		btst	#0,$dff005			; and only while the frame has room for it:
 		bne.s	.late				; the beam already past line ai_scanLine
 		cmp.b	#ai_scanLine,$dff006	; (a word as long as EQUALIZER, the
@@ -2532,6 +2539,7 @@ ai_pilot:
 		move.w	#ai_waitCorr0,ai_corrStartNow
 		move.w	#ai_waitCorr1,ai_corrStopNow
 .notWaiting:
+		bsr		ai_onScreen			; logo and screen edges: -> ai_logoEsc
 
 		; --- the word is broken up: hunt like a gunner. the nose goes from
 		;     target to target and nowhere else - no turning away to steer.
@@ -2543,6 +2551,8 @@ ai_pilot:
 		tst.w	ai_target			; (none left - the word is gone: no gunner,
 		bmi.s	.steerMode			; the pilot flies on to its ready spot. it
 									; used to drift on, unsteered, for seconds)
+		tst.b	ai_logoEsc			; heading into the logo or off the screen:
+		bne.s	.steerMode			; the steering sees to that first
 		tst.b	ai_evading
 		bne.s	.steerMode
 		bsr		ai_speed
@@ -2555,6 +2565,35 @@ ai_pilot:
 .slowOk:
 		cmp.w	#ai_busymax,ai_busyTime	; too long in front of the logo or
 		bhs.s	.steerMode			; the scroller: that moves it away
+		; a target up in the logo and out of reach: under it, quickly, and
+		; shot from below - it does not wait for it to come down again
+		cmp.w	#ai_huntrange,ai_aimDist
+		blo.s	.gun
+		move.w	ai_target,d7
+		bsr		ai_ptr
+		cmp.w	#ai_logoy,obj_yc(a1)
+		bhs.s	.gun
+		move.w	obj_xc(a1),d0
+		sub.w	obj_xc(a0),d0
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		move.w	#ai_underY,d1
+		sub.w	d4,d1
+		add.w	d0,d0				; there in about 32 frames, at cruise
+		add.w	d1,d1				; at most (as ai_wantVelo)
+		add.w	d0,d0
+		add.w	d1,d1
+		bsr		ai_manhattan
+		cmp.w	#ai_cruise,d5
+		bls.s	.under
+		move.w	#ai_cruise,d2
+		bsr		ai_scaleTo
+.under:
+		move.w	d0,ai_vdx
+		move.w	d1,ai_vdy
+		bsr		ai_onScreen
+		bra		.steerMode
+.gun:
 		sf		ai_mode
 		tst.w	ai_target
 		bmi		.fire
@@ -2589,6 +2628,13 @@ ai_pilot:
 		bsr		ai_manhattan		; d5
 		tst.b	ai_evading
 		bne.s	.evade
+		tst.b	ai_logoEsc			; into the logo or off the screen: corrected
+		beq.s	.noEsc				; now, no aiming pause, no giving up
+		cmp.w	ai_corrStopNow,d5
+		blo		.aim
+		st		ai_mode
+		bra		.steer
+.noEsc:
 		tst.w	ai_aimHold			; gave up on a correction a moment ago
 		beq.s	.noHold
 		subq.w	#1,ai_aimHold
@@ -2726,6 +2772,148 @@ ai_pilot:
 		bsr		ai_huntTurn
 .fire:
 		bra		ai_huntFire
+
+;---------------------------------------------
+; the ship stays on the screen, and in front of the logo only now and
+; then and briefly: the velocity it wants (ai_vdx/vdy, from ai_wantVelo)
+; never goes up while it is just below the logo; near the left, right or
+; bottom edge a wish to go out over it (the short way round the wrapped
+; screen) is turned round - the other way, across the screen, gets there
+; too, and it stays in sight; once it has been in the logo
+; ai_logomax frames it wants out, downwards, whatever it was after. while
+; it still moves the wrong way there ai_logoEsc hands it to the steering
+; (no gunner run) - a letter up there is shot from below
+ai_logoGap		= 14		; px under the logo: no flying further up
+ai_logomax		= 10		; frames in the logo before it gets out
+ai_logoOut		= 160		; ... at this speed, downwards
+ai_underY		= ai_logoy+ai_logoGap+20	; under a letter up in the logo: there
+ai_tripT		= 50		; frames a turned round trip stays turned round
+ai_edgeTrip		= 96		; a wish out over an edge faster than this is a trip
+						; round it: turned round; a slower one just stops
+ai_edgeX0		= 36		; near the edge (where it is, or will be in 32
+ai_edgeX1		= 348		; frames): x < this, x > ai_edgeX1, y > ai_edgeY1 -
+ai_edgeY1		= 250		; no further out (round the bottom edge it came out
+						; in the logo)
+ai_onScreen:
+		sf		ai_logoEsc
+		move.w	obj_yc(a0),d4
+		bsr		ai_signedCoord
+		move.w	obj_yvelo(a0),d0	; where it will be in 32 frames (1/128 px
+		asr.w	#2,d0				; a frame * 32)
+		add.w	d4,d0
+		cmp.w	#ai_logoy+ai_logoGap,d4
+		blt.s	.inGap
+		cmp.w	#ai_logoy+ai_logoGap,d0
+		bge.s	.belowLogo
+		tst.w	obj_yvelo(a0)		; on its way up into it: not
+		bpl.s	.belowLogo
+		st		ai_logoEsc
+.inGap:
+		tst.w	ai_vdy				; just below it, or in it: no further up
+		bpl.s	.noUp
+		clr.w	ai_vdy
+.noUp:
+		cmp.w	#ai_logoy,d4
+		bge.s	.near
+		addq.w	#1,ai_logoT
+		cmp.w	#ai_logomax,ai_logoT
+		blo.s	.near
+		move.w	#ai_logoOut,ai_vdy
+		st		ai_logoEsc
+.near:
+		tst.w	obj_yvelo(a0)		; still going up there
+		bpl.s	.edges
+		st		ai_logoEsc
+		bra.s	.edges
+.belowLogo:
+		clr.w	ai_logoT
+		cmp.w	#ai_edgeY1,d0		; (will be) near the bottom edge
+		blt.s	.edges
+		move.w	ai_vdy,d1
+		ble.s	.dOk
+		lea		ai_tripY,a1
+		moveq	#1,d2
+		bsr.s	.trip
+		move.w	d1,ai_vdy
+.dOk:
+		tst.w	obj_yvelo(a0)
+		ble.s	.edges
+		st		ai_logoEsc
+.edges:
+		move.w	obj_xvelo(a0),d4
+		asr.w	#2,d4
+		add.w	obj_xc(a0),d4
+		cmp.w	#ai_edgeX0,d4
+		bge.s	.notL
+		move.w	ai_vdx,d1
+		bpl.s	.lOk
+		lea		ai_tripX,a1
+		moveq	#-1,d2
+		bsr.s	.trip
+		move.w	d1,ai_vdx
+.lOk:
+		tst.w	obj_xvelo(a0)
+		bpl.s	.held
+		st		ai_logoEsc
+		bra.s	.held
+.notL:
+		cmp.w	#ai_edgeX1,d4
+		ble.s	.held
+		move.w	ai_vdx,d1
+		ble.s	.rOk
+		lea		ai_tripX,a1
+		moveq	#1,d2
+		bsr.s	.trip
+		move.w	d1,ai_vdx
+.rOk:
+		tst.w	obj_xvelo(a0)
+		ble.s	.held
+		st		ai_logoEsc
+		; --- a trip once turned round stays turned round a while (else it
+		;     turns to and fro on the edge, the nose swinging, and drifts
+		;     out over it all the same)
+.held:
+		tst.w	ai_tripX+2
+		beq.s	.hy
+		subq.w	#1,ai_tripX+2
+		move.w	ai_tripX,d1
+		move.w	ai_vdx,d3
+		eor.w	d3,d1				; the way it may not go now?
+		bmi.s	.hy
+		neg.w	ai_vdx
+.hy:
+		tst.w	ai_tripY+2
+		beq.s	.hOut
+		subq.w	#1,ai_tripY+2
+		move.w	ai_tripY,d1
+		move.w	ai_vdy,d3
+		eor.w	d3,d1
+		bmi.s	.hOut
+		neg.w	ai_vdy
+.hOut:
+		rts
+; d1 = a wish out over the edge, d2 = its way (1/-1), a1 = ai_tripX/Y ->
+; d1 turned round if it is a trip round the edge (and held so), else 0
+.trip:
+		move.w	d1,d3
+		bpl.s	.tPos
+		neg.w	d3
+.tPos:
+		cmp.w	#ai_edgeTrip,d3
+		bls.s	.tStop
+		neg.w	d1
+		move.w	d2,(a1)
+		move.w	#ai_tripT,2(a1)
+		rts
+.tStop:
+		moveq	#0,d1
+		rts
+ai_tripX:		dc.w	0,0		; a way not to go across (1/-1), frames left
+ai_tripY:		dc.w	0,0		; ... and down
+ai_turnNow:		dc.w	ai_turnrate	; ai_turn's rate now
+ai_logoT:		dc.w	0		; frames in front of the logo, in a row
+ai_logoEsc:		dc.b	0		; ai_onScreen: the steering takes over
+				even
 
 ;---------------------------------------------
 ; the lead point of the target -> ai_aimcross/ai_aimdot, ai_aimDist, and
@@ -3060,7 +3248,32 @@ ai_wantVelo:
 		st		ai_waiting
 		bra.s	.toWay
 .notAtReady:
-		bra.s	.newWay				; reached
+		tst.w	ai_holdFire			; reached where the rush starts while the
+		beq.s	.newWay				; word still forms: it does not stand there,
+		tst.w	ai_rushIdx			; it sways round it (a new spot nearby)
+		bmi.s	.newWay
+		move.w	#ai_waytime,ai_wayTick
+		bsr		ai_stagePoint
+		jsr		getRandomNumber
+		moveq	#63,d1
+		and.w	d0,d1
+		sub.w	#32,d1
+		add.w	d1,ai_wayx
+		lsr.w	#8,d0
+		moveq	#31,d1
+		and.w	d0,d1
+		sub.w	#16,d1
+		add.w	d1,ai_wayy
+		cmp.w	#ai_homex0,ai_wayx	; (on the screen)
+		bge.s	.swL
+		move.w	#ai_homex0,ai_wayx
+.swL:
+		cmp.w	#ai_homex1,ai_wayx
+		ble.s	.swR
+		move.w	#ai_homex1,ai_wayx
+.swR:
+		bsr		.wayDelta
+		bra.s	.toWay
 .leaveBusy:
 		tst.b	ai_wayTop			; on the way to the logo anyway? then
 		bne.s	.newWay				; somewhere else; else this one is fine
@@ -3840,6 +4053,9 @@ ai_huntFire:
 		add.b	(a1,d2.w),d1		; ... + high byte
 		cmp.w	#ai_maxshots,d1
 		bhs.s	.no
+		add.w	ai_zooming,d1		; letters bursting (or spinning in) and
+		cmp.w	#ai_burstcap,d1		; shots on their way to burst more: this
+		bhs.s	.no					; many at once is all a frame can draw
 		tst.w	ai_holdFire			; the read pause
 		bne.s	.no
 		tst.b	ai_targetSolid		; still appearing - a shot would go through
@@ -3883,6 +4099,10 @@ ai_huntFire:
 		subq.w	#2,ai_snapTick		; (counts every other frame)
 		bpl.s	.no
 		move.w	#ai_snapevery-1,ai_snapTick
+		btst	#0,$dff005		; (not in a long frame: the beam past
+		bne.s	.no					; ai_scanLine, as ai_huntScan)
+		cmp.b	#ai_scanLine,$dff006
+		bhs.s	.no
 		bsr.s	ai_snapScan
 		tst.w	d0
 		bne.s	.fire
@@ -4698,7 +4918,7 @@ ai_turn:
 		blt.s	.done				; near enough - stay put
 
 .turn:
-		moveq	#ai_turnrate,d1
+		move.w	ai_turnNow,d1		; (the game's rate, or the sequence's)
 		bra		ai_turnBy
 .done:
 		rts
@@ -5126,6 +5346,7 @@ SQ_DEFWORDS		= 15		; (switches.i defWords: instead of DEFFIRE)
 
 ; a0 = ship_struct, from ship_auto
 seq_pilot:
+		move.w	#seq_turnrate,ai_turnNow	; (ai_turn: as it was, the game turns faster)
 		addq.w	#1,seq_timer
 		move.w	obj_yc(a0),d0		; for glitchFrame: never tear the ship
 		add.w	#$20,d0				; (game line 0 is raster $20)
@@ -6541,6 +6762,10 @@ seq_wxShip:		dc.w	seq_defX	; the ship's x for this word
 
 ; the words are gone: Asteroids again
 seq_after:
+		cmp.w	#warpWait,seq_timer	; it has had its look round: the stars
+		bne.s	.look				; go over into depth (warp.i)
+		jsr		warpStart
+.look:
 		bsr		seq_drift
 		bra		seq_endCheck
 
@@ -6579,7 +6804,7 @@ seq_dfloat:
 ; weight (an eighth, 6/128 per px); the nose to seq_dface, turned round
 ; quickly (the reverse)
 seq_dmoveA:								; the same, the nose round the
-		move.w	#ai_turnrate,seq_dturn	; Asteroids way
+		move.w	#seq_turnrate,seq_dturn	; Asteroids way
 		bra.s	seq_dmove0
 seq_dmove:
 		move.w	#seq_dreverse,seq_dturn
@@ -7348,7 +7573,7 @@ seq_aim:
 		blo.s	.fine
 .coarse:
 		sf		seq_onTarget
-		moveq	#ai_turnrate,d1
+		moveq	#seq_turnrate,d1
 		bra.s	.turn
 .fine:
 		moveq	#1,d1
@@ -8610,6 +8835,9 @@ setupSpritelist:
 ; as if it were the ship that sped up or slowed down
 
 updateStars::
+		tst.b	warpState			; (warp.i) on their way into depth
+		bne		warpStep
+starsParallax:
 		move.w	starV,d1
 		move.w	starTarget,d0
 		sub.w	d1,d0				; how far off
@@ -9219,3 +9447,7 @@ z_coords:
 		section	"gamebss",bss
 enemy_cache:	ds.b	cache_len*32	; one line cache per enemy slot
 collList:		ds.b	coll_len*32		; shootable boxes, see updateEnemies
+
+;---------------------------------------------
+; the Elite transition (the stars into depth)
+		include	"warp.i"

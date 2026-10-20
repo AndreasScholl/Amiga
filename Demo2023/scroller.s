@@ -224,6 +224,8 @@ initScroller::
 
 		lea		spoint,a5		; (too far for (pc) now)
 		jsr		setupStarfield	; starfield
+		lea		spoint,a5
+		jsr		warpInit		; ... and its way into depth later (warp.i)
 		bsr		setupScroller
 		bsr		initPoints
 		bsr		buildDebrisRnd
@@ -5007,7 +5009,7 @@ tvState::		dc.b	0		; 0 off, 1 start, 2 collapse, 3 line, 4 shrink
 								; and dot, 5 done
 tvGo::			dc.b	0		; set by seq_pilot
 tvKeepText::	dc.b	0		; ... and the text runs on through it
-scrollerOff:	dc.b	0
+scrollerOff::	dc.b	0		; (warp.i too, once the text is all gone)
 				even
 tvTime:			dc.w	0
 tvBase:			ds.w	tvLines
@@ -7006,7 +7008,7 @@ colorFadeIn:
 
 ; the same, but each nibble one up or down towards its target
 ; d0 = current, d1 = target -> d6 = stepped. uses d2/d3/d4.
-colorStepTo:
+colorStepTo::
 			moveq	#0,d6
 			move.w	#$00f,d4			; the nibble's mask: blue, green, red
 .nib:
@@ -7490,6 +7492,7 @@ spoint:
 
 		; star colours - the original coloured set again (same as clistGame).
 		; the grey toned set was $09ab, $0678, $0223, $0345
+starColours::					; (warp.i fades these over to its ramp)
 		dc.w	$01a2,$0842		; 1
 		dc.w	$01a4,$0371		; 2
 		dc.w	$01a6,$0fff
