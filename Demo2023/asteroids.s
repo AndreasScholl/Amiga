@@ -1340,6 +1340,7 @@ obj_move:				;<calculate new object coords>
 		rts
 ;---------------------------------------------
 updateEnemies:
+		clr.w	ai_zooming			; (letters spinning in, counted below)
 		sf		ai_forming			; set again below by any letter that is
 									; still waiting or still zooming in
 		lea		collList,a4			; shootable enemies, rebuilt every frame
@@ -1368,6 +1369,7 @@ updateEnemies:
 		subq	#1,d2
 		move.w	d2,obj_appear(a0)
 		st		ai_forming			; still zooming in
+		addq.w	#1,ai_zooming
 		move.w	#appear_astep,d1
 		bsr		obj_addangle
 
@@ -1894,6 +1896,8 @@ ai_cross:		dc.l	0		; alignment against the target
 ai_dot:			dc.l	0
 ai_forming:		dc.b	0		; a letter of this word is still arriving
 				even
+ai_zooming:		dc.w	0		; letters spinning in (updateEnemies)
+				even
 ai_holdFire:	dc.w	ai_holdframes
 ai_sidePicked:	dc.b	0		; side chosen for the word now on screen
 				even			; <- without this ai_aimcross lands on an odd
@@ -2331,6 +2335,10 @@ ai_pilot:
 		;     other (ai_phase). a 25 Hz look is still quicker than any player
 		not.b	ai_phase
 		beq.s	.noScan
+		cmp.w	#2,ai_zooming		; two letters or more spinning in (each one
+		bhs.s	.noScan				; costs nearly as much as the scan): the
+									; look round waits - none of them can be
+									; shot yet, and the frame would run over
 		bsr		ai_huntScan			; -> ai_target, ai_threat...
 .noScan:
 		; --- how long have we been in front of the logo or the scroller?
@@ -4862,7 +4870,33 @@ seq_pilot:
 		move.b	seq_state,d0
 		add.w	d0,d0
 		move.w	.states(pc,d0.w),d0
+		movem.w	obj_xvelo(a0),d1/d2	; (the velocity before: did it burn?)
+		movem.w	d1/d2,seq_v0
 		jsr		.states(pc,d0.w)
+		; the thrust sound: a change of speed like a burn's, a few frames on
+		movem.w	obj_xvelo(a0),d1/d2
+		sub.w	seq_v0,d1
+		bpl.s	.tx
+		neg.w	d1
+.tx:
+		sub.w	seq_v0+2,d2
+		bpl.s	.ty
+		neg.w	d2
+.ty:
+		add.w	d2,d1
+		cmp.w	#seq_burnDv,d1
+		blo.s	.noBurn
+		move.w	#seq_burnT,seq_burnLeft
+.noBurn:
+seq_thrustSnd	= 0			; the thrust sound: 1 on (it is off - only shots
+								; and booms)
+		tst.w	seq_burnLeft
+	ifne	seq_thrustSnd
+		sne		sfxThrust			; (music.s)
+	endc
+		beq.s	.move
+		subq.w	#1,seq_burnLeft
+.move:
 		bsr		obj_move
 		rts
 .states:
@@ -5423,6 +5457,9 @@ seq_dreverse	= 15		; the reverse: degrees a frame
 seq_dfireX		= 198		; a word is shot once it is in this far (the twist
 seq_dlastX		= 190		; is at 184) - and here at the latest
 seq_dcool		= 6			; frames between a word gone and the next shot
+seq_burnDv		= 6			; a change of speed this big (|dvx|+|dvy|) is a
+seq_burnT		= 6			; burn: the thrust sounds this many frames on
+								; (if seq_thrustSnd, see seq_pilot)
 seq_dswayX		= 16		; firing: the ship moves about this far to and
 seq_dswayY		= 3			; fro, and up and down
 
@@ -5437,7 +5474,20 @@ seq_defshoot:
 		bsr		seq_tshootInit
 .on:
 		bsr		seq_tshoot
-		tst.w	d0
+		move.w	d0,-(a7)
+		move.w	hitTotal,d0			; the first glyph gone: the scroller starts
+		cmp.w	seq_tHit0,d0		; to jerk a little (scroller.s stutterStep)
+		beq.s	.noJerk
+		tst.w	glitchLevel
+		bne.s	.noJerk
+		move.w	#1,glitchLevel
+		move.w	#1,glitchTarget
+.noJerk:
+		tst.w	seq_shots			; the first shot out: somebody on the bridge
+		beq.s	.noCry				; cries out (scroller.s whatHellReq)
+		st		whatHellReq
+.noCry:
+		move.w	(a7)+,d0
 		bne		seq_next			; -> DEFLAP
 		cmp.w	#1500,seq_timer		; (never for ever)
 		bhs		seq_next
@@ -6309,6 +6359,8 @@ seq_claimX:
 
 ; fire at the letter at screen x d3 (seq_aim has the nose on it)
 seq_fireAt:
+		moveq	#1,d0				; its sound (music.s sfxPlay, SFX_SHOT)
+		jsr		sfxPlay
 		addq.w	#1,seq_fired
 		move.w	d3,-(a7)			; (ai_shoot uses d0-d4)
 		bsr		ai_shoot
@@ -6681,6 +6733,8 @@ seq_lookT:		dc.w	0		; ... frames left of the look round
 seq_lookA:		dc.w	0		; ... and where the nose looks
 seq_dface:		dc.w	90		; Defender: which way the nose is
 seq_lasers:		dc.w	0		; (testing) laser shots
+seq_v0:			dc.w	0,0		; the velocity before this frame's steering
+seq_burnLeft:	dc.w	0		; frames of thrust sound still to go
 seq_tsx:		dc.w	0		; seq_tshoot: the spot it shoots from ...
 seq_tsy:		dc.w	0
 seq_tHit0:		dc.w	0		; ... and hitTotal when it began

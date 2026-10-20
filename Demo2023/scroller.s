@@ -1075,6 +1075,10 @@ colLit:
 ; the letter at buffer x d0, line d1 is blown up: all of it, and the
 ; blast on it. keeps a0/a5/a6
 blastAt:
+		move.l	d0,-(a7)
+		moveq	#2,d0					; the boom (music.s sfxPlay, SFX_BOOM)
+		jsr		sfxPlay
+		move.l	(a7)+,d0
 		move.l	screenlocScroller,a1
 		lea		yTable,a2
 		; --- which part of the text: the bottom row ...
@@ -1833,7 +1837,10 @@ launchLaser::
 		clr.w	laserWait
 		move.w	#-1,laserLast
 		st		laserOn
-		st		sfxLaser				; the zap
+		move.l	d0,-(a7)
+		moveq	#3,d0					; the zap (music.s sfxPlay, SFX_LASER)
+		jsr		sfxPlay
+		move.l	(a7)+,d0
 		move.w	(a7)+,d1
 		rts
 
@@ -1918,6 +1925,8 @@ laserStep:
 		move.b	#3,bigBlast				; (pickPower: fat, not the biggest)
 		addq.w	#1,blastsDone
 		bsr		blastAt
+		sf		fxPending				; not its sparks and rings: the Defender
+		bsr		latticeAdd				; lattice instead (debrisCx/Cy: blastAt)
 		addq.w	#1,laserHits			; (testing)
 		rts
 .wordGone:
@@ -2130,6 +2139,221 @@ drawLaser:
 .out:
 		rts
 
+;---------------------------------------------
+; THE DEFENDER EXPLOSION (the laser's letters): as in the video - the
+; thing bursts into a lattice of dots that flies apart, the lattice
+; growing as a whole: dot (i, j) at the middle + (i, j) * step * age. no
+; two alike: the step across and down, its life (5x5 - a 7x7 one would
+; not fit in the frame). white hot,
+; then under the bar orange, red, gone (the ember plane). only the
+; scroller's buffer, so it never gets up onto the logo. cheap: no state
+; per dot, the whole lattice is a centre, two steps and an age
+latMax			= 7
+				rsreset
+lat_x:			rs.w	1
+lat_line:		rs.w	1
+lat_sx:			rs.w	1			; step across a frame, 8.8
+lat_sy:			rs.w	1			; ... and down
+lat_age:		rs.w	1
+lat_life:		rs.b	1
+lat_n:			rs.b	1			; 2: 5x5, 3: 7x7
+lat_size:		rs.b	0
+
+; a lattice at debrisCx/debrisCy. keeps every register
+latticeAdd:
+		movem.l	d0-d1/a2,-(a7)
+		move.w	latCount,d1
+		cmp.w	#latMax,d1
+		bhs.s	.out
+		addq.w	#1,latCount
+		mulu	#lat_size,d1
+		lea		lattices,a2
+		add.w	d1,a2
+		move.w	debrisCx,lat_x(a2)
+		move.w	debrisCy,lat_line(a2)
+		bsr		debrisRandom
+		moveq	#0,d1
+		move.b	d0,d1
+		lsr.w	#1,d1
+		add.w	#320,d1					; 1.25 .. 1.75 px a frame across
+		move.w	d1,lat_sx(a2)
+		lsr.w	#8,d0
+		and.w	#127,d0
+		add.w	#144,d0					; 0.55 .. 1.05 down
+		move.w	d0,lat_sy(a2)
+		clr.w	lat_age(a2)
+		swap	d0
+		move.b	#2,lat_n(a2)			; 5x5 (7x7 would not fit in the frame)
+		lsr.w	#2,d0
+		and.w	#7,d0
+		add.w	#14,d0					; 14..21 frames
+		move.b	d0,lat_life(a2)
+.out:
+		movem.l	(a7)+,d0-d1/a2
+		rts
+
+; every lattice a frame on and drawn (from drawBlastFx: a0 = buffer, a1 =
+; yTable). per lattice: the columns' x once (latCols: byte, bit; -1 off
+; the screen), then row by row a bset a dot
+drawLattice:
+		move.w	latCount,d0
+		beq		.out
+		subq.w	#1,d0
+		move.w	d0,latLeft
+		lea		lattices,a2				; read
+		move.l	a2,a3					; write
+		lea		emberOffset(a0),a5		; the ember plane, same offsets
+.lat:
+		addq.w	#1,lat_age(a2)
+		moveq	#0,d0
+		move.b	lat_life(a2),d0
+		cmp.w	lat_age(a2),d0
+		bls		.drop
+		move.l	(a2)+,(a3)+				; keep it (in place, packed)
+		move.l	(a2)+,(a3)+
+		move.l	(a2)+,(a3)+
+		lea		-lat_size(a3),a4
+		; how it looks: white the first half, then orange, the last quarter
+		; red - under the bar (the ember plane), white over it
+		move.w	lat_age(a4),d5
+		add.w	d5,d5
+		moveq	#0,d6
+		cmp.w	d0,d5
+		blo.s	.col
+		moveq	#1,d6
+		add.w	d5,d5
+		move.w	d0,d4
+		add.w	d4,d4
+		add.w	d0,d4
+		cmp.w	d4,d5
+		blo.s	.col
+		moveq	#2,d6
+.col:
+		move.w	lat_sx(a4),d4			; the steps now
+		mulu	lat_age(a4),d4
+		lsr.l	#8,d4
+		move.w	lat_sy(a4),d5
+		mulu	lat_age(a4),d5
+		lsr.l	#8,d5
+		moveq	#0,d3
+		move.b	lat_n(a4),d3			; n
+		; --- the columns
+		lea		latCols,a6
+		move.w	d4,d0
+		mulu	d3,d0
+		neg.w	d0
+		add.w	lat_x(a4),d0			; x of the first
+		move.w	d3,d1
+		add.w	d1,d1					; 2n+1 of them
+.cols:
+		cmp.w	#game_width,d0
+		bhs.s	.cOff
+		cmp.w	#borderX,d0
+		blo.s	.cOff
+		move.w	d0,d2
+		lsr.w	#3,d2
+		move.w	d2,(a6)+
+		move.w	d0,d2
+		not.w	d2
+		move.w	d2,(a6)+
+		bra.s	.cNext
+.cOff:
+		move.l	#-1,(a6)+
+.cNext:
+		add.w	d4,d0
+		dbf		d1,.cols
+		; --- the rows
+		move.w	d5,d0
+		mulu	d3,d0
+		neg.w	d0
+		add.w	lat_line(a4),d0			; line of the first
+		move.w	d3,d1
+		add.w	d1,d1					; 2n+1 of them
+.row:
+		cmp.w	#screenHeight,d0
+		bhs		.rNext
+		move.w	d0,d2
+		add.w	d2,d2
+		move.w	(a1,d2.w),d2			; y * li
+		lea		(a0,d2.w),a4			; plane 1's line
+		lea		(a5,d2.w),a6			; (a6 is free again for the ember's)
+		move.l	a6,latEmber
+		lea		latCols,a6
+		cmp.w	d3,d1					; the middle row: not the middle dot
+		bne.s	.notMid
+		move.w	d3,d2
+		lsl.w	#2,d2
+		move.l	(a6,d2.w),-(a7)
+		move.l	#-1,(a6,d2.w)
+.notMid:
+		move.w	d3,d4
+		add.w	d4,d4					; 2n+1 dots
+		tst.w	d6
+		beq.s	.white
+		cmp.w	#emberTop,d0
+		blo.s	.white
+		move.l	latEmber,a6				; a6 the ember plane's line, a4 the
+		lea		latCols,a4				; columns
+		cmp.w	#1,d6
+		beq.s	.orange
+		; --- red: the ember plane only
+.red:
+		move.w	(a4)+,d2
+		move.w	(a4)+,d7
+		tst.w	d2
+		bmi.s	.rd
+		bset	d7,(a6,d2.w)
+.rd:
+		dbf		d4,.red
+		bra.s	.rowDone
+		; --- orange: both planes
+.orange:
+		move.l	a0,-(a7)
+		move.w	d0,-(a7)
+		move.w	d0,d7
+		add.w	d7,d7
+		move.w	(a1,d7.w),d7
+		lea		(a0,d7.w),a0			; plane 1's line
+		move.w	(a7)+,d0
+.or:
+		move.w	(a4)+,d2
+		move.w	(a4)+,d7
+		tst.w	d2
+		bmi.s	.od
+		bset	d7,(a6,d2.w)
+		bset	d7,(a0,d2.w)
+.od:
+		dbf		d4,.or
+		move.l	(a7)+,a0
+		bra.s	.rowDone
+		; --- white: plane 1
+.white:
+		move.w	(a6)+,d2
+		move.w	(a6)+,d7
+		tst.w	d2
+		bmi.s	.wd
+		bset	d7,(a4,d2.w)
+.wd:
+		dbf		d4,.white
+.rowDone:
+		cmp.w	d3,d1					; (the middle dot back)
+		bne.s	.rNext
+		lea		latCols,a6
+		move.w	d3,d2
+		lsl.w	#2,d2
+		move.l	(a7)+,(a6,d2.w)
+.rNext:
+		add.w	d5,d0
+		dbf		d1,.row
+		bra.s	.next
+.drop:
+		lea		lat_size(a2),a2			; gone: not written back
+		subq.w	#1,latCount
+.next:
+		subq.w	#1,latLeft
+		bpl		.lat
+.out:
+		rts
 ; colour 1 of the lines the beam can be on, as the text has it (tvList)
 laserColsBack:
 		lea		tvBeamTab,a3
@@ -2868,6 +3092,7 @@ drawBlastFx:
 .noRings:
 		bsr		drawTorpedo
 		bsr		drawLaser
+		bsr		drawLattice
 		lea		$dff000,a6
 		rts
 
@@ -3330,7 +3555,9 @@ feedNext:
 		bra		.cmd
 .notTail:
 		cmp.w	#FS_TESTLOOP,d1
-		bne.s	.notLoop
+		bne		.notLoop
+		move.l	insPtr,d0				; the cry from the bridge, put in
+		bne.s	.ins
 		tst.b	seq_defReady			; the ship is ready: on to the message
 		bne		.next6
 		move.l	2(a0),a1
@@ -3343,7 +3570,25 @@ feedNext:
 		move.b	(a1),d0
 .loopChar:
 		addq.w	#1,feedPos
+		cmp.b	#' ',d0					; the ship has opened fire (seq_defshoot):
+		bne		.plain					; at the next gap between words the cry
+		tst.b	whatHellReq				; comes in, once
+		beq		.space
+		tst.b	whatHellDone
+		bne		.space
+		st		whatHellDone
+		move.l	#whatHellText,insPtr
+		bra		.space
+.ins:
+		move.l	d0,a1
+		moveq	#0,d0
+		move.b	(a1)+,d0
+		beq.s	.insEnd
+		move.l	a1,insPtr
 		bra		.plain
+.insEnd:
+		clr.l	insPtr					; the loop goes on where it was
+		bra		.cmd
 .notLoop:
 		cmp.w	#FS_SPACES,d1
 		bne.s	.notSpaces
@@ -3636,6 +3881,17 @@ glitchFrame:
 		move.w	2(a0),d1
 		and.w	#$fff0,d1
 		or.w	d4,d1
+		move.w	d1,d0					; the shadow (playfield 2) with it, as
+		and.w	#$00f0,d0				; far as its own delay still goes - else
+		lsl.w	#4,d4					; the torn text keeps a whole shadow
+		add.w	d4,d0
+		lsr.w	#4,d4
+		cmp.w	#$00f0,d0
+		bls.s	.pf2
+		move.w	#$00f0,d0
+.pf2:
+		and.w	#$ff0f,d1
+		or.w	d0,d1
 		move.w	d1,2(a0)
 .skipShip:
 		addq.w	#1,d2
@@ -3713,10 +3969,11 @@ feedScript:
 		dc.w	FS_CALM					; mended: from here it runs clean - a
 		dc.w	FS_TEXT					; glyph test of the display
 		dc.l	glyphTest1
-		dc.w	FS_CUE					; the end is set up (seq_defgo): it goes
-		dc.w	FS_LEVEL,1				; on testing, with little jerks, ...
+		dc.w	FS_CUE					; the end is set up (seq_defshoot): it goes
+										; on testing - the little jerks only from
+										; the first glyph shot out (seq_tshoot) ...
 		dc.w	FS_TESTLOOP
-		dc.l	glyphTest2
+		dc.l	crewText
 		dc.w	FS_CALM					; ... till the ship is ready for the
 		dc.w	FS_TEXT					; message: a few question marks, and
 		dc.l	whatText				; a pause, then it
@@ -3750,10 +4007,21 @@ testText3:
 glyphTest1:
 		dc.b	"   #    ##    ###    ####      A   B   C   D   E   F      "
 		dc.b	"1   2   3   4   5      MMM   III   WWW      ",0
-; ... and this round and round till the ship is ready for the message
-glyphTest2:
-		dc.b	"<>    [ ]    0O0O    ( )    .  :  .  :    ##    +   -   *    "
-		dc.b	"8888    @   #   \\    MMM    o  o  o    WWW    ?   !    ",0
+; ... and then this round and round till the ship is ready for the message:
+; the crews, and a few words from Thrust's Ottifant intro (1988)
+crewText:
+		dc.b	"   DISPLAY OK.   THRUST + QUADLITE ON THE BRIDGE AGAIN !!!    "
+		dc.b	"STAY CLEAN AND NEVER TRUST A FROG ... TRUST THRUST !!!    "
+		dc.b	"HELLO ZERONINE OF QUADLITE - COOL BLITTERROUTINE. WONT YOU "
+		dc.b	"SEND US THE SOURCECODE ??    "
+		dc.b	"IF THE SCROLLER IS TOO FAST ... NOT A BUG !!    "
+		dc.b	"THIS IS NOT THE LARGEST SCROLLER IN THE WORLD - BUT THE ONE "
+		dc.b	"WITH THE MOST HOLES IN IT !!    "
+		dc.b	"THE REALLY LEADING TWO ARE: THRUST -- QUADLITE    "
+		dc.b	"PREPARE FOR A LONG ENTERTAINING TEXT !!!    ",0
+; put into it at the first shot of the ship (whatHellReq, seq_defshoot)
+whatHellText:
+		dc.b	"   ??? WHAT THE HELL ???      ",0
 whatText:
 		dc.b	"   ?    ??   ???",0
 testText4:
@@ -3827,6 +4095,8 @@ tvUpdate:
 
 ; --- first frame: the copper goes through tvList from now on
 tvStart:
+		moveq	#5,d0					; the zap of the set going off (music.s
+		jsr		sfxPlay					; sfxPlay, SFX_ZAP)
 		bsr		barFlickStop			; the bar's own colours again first
 		tst.b	tvKeepText				; (the monitor goes off, the text runs
 		bne.s	.keep					; on - the Defender ending)
@@ -4122,6 +4392,12 @@ laserLast:		dc.w	0		; the last letter's end, + scrollSteps
 laserWait::		dc.w	0		; frames till the next letter
 laserCol:		dc.b	0		; the beam's colours are on (tvBeam0..3)
 				even
+latCount:		dc.w	0		; Defender explosions going on ...
+lattices:		ds.b	lat_size*latMax		; ... drawLattice
+latLeft:		dc.w	0
+latEmber:		dc.l	0
+latCols:		ds.l	7		; drawLattice: the columns, byte and bit
+				even
 laserHits:		dc.w	0		; (testing) letters it took ...
 laserWords:		dc.w	0		; ... and words
 flickT:			dc.w	0		; barFlicker: frames on ...
@@ -4152,8 +4428,11 @@ msgPredAbs::	dc.w	0		; ... and where it will be, from the cue on
 msgEndAbs:		dc.w	0		; ... and of its end
 feedPtr:		dc.l	0		; feedScript command now
 feedPos:		dc.w	0
+insPtr:			dc.l	0		; FS_TESTLOOP: a text put in, char now (0: none)
+whatHellReq::	dc.b	0		; seq_defshoot: it has opened fire - the cry
+whatHellDone:	dc.b	0		; ... is in
 glitchLevel::	dc.w	0		; how broken the scroller is, 0..16
-glitchTarget:	dc.w	0
+glitchTarget::	dc.w	0
 rampCount:		dc.w	0
 hangCount:		dc.w	0
 stutterHold:	dc.w	0
