@@ -420,6 +420,7 @@ updateScroller::
 		bsr		checkScrollGone
 .noScroller:
 		bsr		glitchFrame			; the scroller breaking, tearing
+		bsr		barFlicker			; the bar going wrong (the Defender ending)
 		bsr		tvUpdate			; the TV switch off, once it is started
 		lea		$dff000,a6
 
@@ -675,7 +676,7 @@ startAddY:
 ; acceleration in 16.16 pixels/frame^2.
 ; 1<<9 is exactly the old "1" in 9.7 units (1/128 pixel per frame).
 ; later this can be fed from a time table without touching drawPoints.
-accelX:
+accelX::						; (set every frame by updateStars, asteroids.s)
 		dc.l	3<<9
 accelY:
 		dc.l	1<<9
@@ -1790,11 +1791,506 @@ torpShape2:
 		dc.b	-4,-9,-14,-18,-20,-18,-14,-9,-4
 		even
 
+;---------------------------------------------
+; THE DEFENDER LASER (seq_deffire, asteroids.s): from the ship's nose
+; along the bottom text row, the way Defender's goes - a white streak that
+; shoots out (laserSpeed a frame), solid at its head and broken up behind
+; it, shedding white dots that sink out of the bar and glow out like the
+; letters' crumbs. where it meets the message the word goes up, letter by
+; letter as fast as the blasts allow (one a frame, their sparks the frame
+; after), with the blasts as ever; then the streak pulls away from the
+; ship after its head (laserFade a frame) and is gone. one word a shot: a
+; gap of laserWordGap px or more ends the word. a letter still coming in
+; over the right edge waits till all of it is in. each shot is a zap
+; (music.s sfxLaser)
+laserSpeed		= 32
+laserFade		= 40
+laserWordGap	= 7
+laserSolid		= 28			; px of solid streak at its head
+laserEmberGap	= 3				; a dot shed every this many frames
+laserPace		= 3				; frames a letter
+
+; d0/d1 = the nose (game coordinates). keeps every register
+launchLaser::
+		move.w	d1,-(a7)
+		move.w	d0,laserNose
+		move.w	d0,laserTail
+		move.w	d0,laserFront
+		sub.w	#topLines,d1
+		move.w	d1,laserLine
+		clr.w	laserPhase
+		clr.w	laserAge
+		clr.w	laserWait
+		move.w	#-1,laserLast
+		st		laserOn
+		st		sfxLaser				; the zap
+		move.w	(a7)+,d1
+		rts
+
+; every frame, from textFrame (after postEffect, the text as it is shown)
+laserStep:
+		tst.b	laserOn
+		beq		.out
+		addq.w	#1,laserAge
+		move.w	laserPhase,d0
+		beq.s	.shoot
+		subq.w	#1,d0
+		beq.s	.burn
+		; --- the word is gone: the streak pulls away after its head
+		add.w	#laserFade,laserTail
+		move.w	laserTail,d0
+		cmp.w	laserFront,d0
+		blt		.out
+		sf		laserOn
+		rts
+		; --- out it shoots, till it meets the message
+.shoot:
+		move.w	laserFront,d0
+		add.w	#laserSpeed,d0
+		cmp.w	#game_width,d0
+		blt.s	.f
+		move.w	#game_width,d0
+.f:
+		move.w	d0,laserFront
+		bsr		laserAhead
+		bmi.s	.miss
+		cmp.w	laserFront,d0
+		bgt.s	.miss					; not there yet
+		move.w	d0,laserFront
+		move.w	#1,laserPhase
+		bra.s	.burn
+.miss:
+		cmp.w	#game_width,laserFront
+		blt		.out
+		move.w	#2,laserPhase			; (nothing in its way)
+		rts
+		; --- the word, a letter at a time
+.burn:
+		bsr		laserAhead				; the next letter
+		bmi.s	.wordGone
+		move.w	laserLast,d1			; still the same word? the gap after
+		bmi.s	.same					; the last letter gone
+		sub.w	scrollSteps,d1
+		move.w	d0,d2
+		sub.w	d1,d2
+		cmp.w	#laserWordGap,d2
+		bge.s	.wordGone
+.same:
+		move.w	d0,laserFront
+		tst.w	laserWait				; a letter every laserPace frames: the
+		beq.s	.due					; blast, its sparks, and a frame free
+		subq.w	#1,laserWait
+		rts
+.due:
+		tst.b	fxPending				; one blast a frame
+		bne		.out
+		tst.w	blastsDone
+		bne		.out
+		move.l	screenlocScroller,a1	; its last column - all of it in?
+		lea		yTable,a2
+		moveq	#rightLine,d6
+		move.w	d0,d4
+.end:
+		cmp.w	#game_width-1,d4
+		bhs		.out					; still coming in: wait
+		move.w	d4,d0
+		addq.w	#1,d0
+		bsr		colLit
+		beq.s	.ended
+		addq.w	#1,d4
+		bra.s	.end
+.ended:
+		move.w	d4,d0
+		move.w	#rightLine+hitRows/2,d1
+		add.w	scrollSteps,d4			; (blastAt has d4 for its own)
+		move.w	d4,laserLast
+		move.w	#laserPace-1,laserWait
+		move.b	#3,bigBlast				; (pickPower: fat, not the biggest)
+		addq.w	#1,blastsDone
+		bsr		blastAt
+		addq.w	#1,laserHits			; (testing)
+		rts
+.wordGone:
+		move.w	#2,laserPhase
+		addq.w	#1,laserWords			; (testing)
+.out:
+		rts
+
+; -> d0 = the first lit column of the message on the row, to the pixel,
+; -1 (N set) if none. msgFrom finds it a byte at a time in the source;
+; from a byte before that firstLitCol finds the column in the picture, but
+; never left of where the message starts
+laserAhead:
+		move.l	d1,-(a7)
+		move.w	laserNose,d0
+		bsr		msgFrom
+		tst.w	d0
+		bmi.s	.out
+		subq.w	#8,d0
+		move.w	msgStartAbs,d1
+		sub.w	scrollSteps,d1
+		cmp.w	d1,d0
+		bge.s	.from
+		move.w	d1,d0
+.from:
+		bsr		firstLitCol
+.out:
+		move.l	(a7)+,d1
+		tst.w	d0
+		rts
+
+; the streak, from drawBlastFx (a0 = buffer, a1 = yTable): two lines,
+; solid for laserSolid px at its head, broken up behind it in a pattern
+; that runs along it; and the dots it sheds
+drawLaser:
+		tst.b	laserOn
+		beq		.out
+		move.w	laserTail,d4
+		move.w	laserFront,d5
+		cmp.w	#borderX,d4
+		bge.s	.t
+		moveq	#borderX,d4
+.t:
+		cmp.w	#game_width-1,d5
+		ble.s	.fr
+		move.w	#game_width-1,d5
+.fr:
+		cmp.w	d4,d5
+		ble		.out
+		move.w	d5,d2					; the head: solid
+		sub.w	#laserSolid,d2
+		cmp.w	d4,d2
+		bge.s	.h
+		move.w	d4,d2
+.h:
+		movem.w	d2/d4/d5,-(a7)
+		move.w	d2,d4
+		move.w	laserLine,d3
+		st		d1
+		bsr		laserSpan
+		addq.w	#1,d3
+		bsr		laserSpan
+		movem.w	(a7),d2/d4/d5
+		; the rest of it: broken up, the gaps running along
+		move.w	d2,d5
+		subq.w	#1,d5
+		cmp.w	d4,d5
+		blt.s	.embers
+		move.w	laserAge,d0
+		and.w	#7,d0
+		move.b	#$f3,d1
+		rol.b	d0,d1
+		move.w	laserLine,d3
+		bsr		laserSpan
+		ror.b	#3,d1
+		addq.w	#1,d3
+		bsr		laserSpan
+.embers:
+		movem.w	(a7)+,d2/d4/d5
+		cmp.w	#2,laserPhase			; (shedding while it is out)
+		beq.s	.out
+		move.w	laserAge,d0
+		ext.l	d0
+		divu	#laserEmberGap,d0
+		swap	d0
+		tst.w	d0
+		bne.s	.out
+		move.l	#laserPower,blastPow
+		move.w	d5,d2
+		sub.w	d4,d2					; its length
+		moveq	#1-1,d7
+.e:
+		bsr		debrisRandom
+		mulu	d2,d0
+		swap	d0
+		add.w	d4,d0
+		move.w	d0,d3					; somewhere along it ...
+		move.w	d0,debrisCx
+		move.w	laserLine,d6
+		move.w	d6,d0
+		subq.w	#3,d0					; ... sinking
+		move.w	d0,debrisCy
+		bsr		addDebris
+		dbf		d7,.e
+.out:
+		rts
+
+; one line d3 of the streak from x d4 to d5, d1.b the bits of each byte
+; that are lit. keeps d1-d5
+laserSpan:
+		movem.w	d4-d5,-(a7)
+		cmp.w	#screenHeight,d3
+		bhs.s	.out
+		move.w	d3,d0
+		add.w	d0,d0
+		move.w	(a1,d0.w),d0
+		lea		(a0,d0.w),a4			; the line
+		moveq	#7,d6
+		and.w	d4,d6
+		move.b	laserLMask(pc,d6.w),d6	; first byte's bits
+		moveq	#7,d7
+		and.w	d5,d7
+		move.b	laserRMask(pc,d7.w),d7	; last byte's
+		lsr.w	#3,d4
+		lsr.w	#3,d5
+		cmp.w	d4,d5
+		beq.s	.one
+		and.b	d1,d6
+		or.b	d6,(a4,d4.w)
+		move.w	d5,d0					; the bytes between
+		sub.w	d4,d0
+		subq.w	#2,d0
+		bmi.s	.last
+		lea		1(a4,d4.w),a5
+.mid:
+		or.b	d1,(a5)+
+		dbf		d0,.mid
+.last:
+		and.b	d1,d7
+		or.b	d7,(a4,d5.w)
+		bra.s	.out
+.one:
+		and.b	d7,d6
+		and.b	d1,d6
+		or.b	d6,(a4,d5.w)
+.out:
+		movem.w	(a7)+,d4-d5
+		rts
+laserLMask:	dc.b	$ff,$7f,$3f,$1f,$0f,$07,$03,$01
+laserRMask:	dc.b	$80,$c0,$e0,$f0,$f8,$fc,$fe,$ff
+; the dots it sheds: no sparks, no ring, a gentle sinking (blastPowers'
+; layout)
+laserPower:
+		dc.b	0,0,0,0,0,1
+		dc.w	$0400,$0c00
+
+;---------------------------------------------
+; THE BAR GOES WRONG (the Defender ending: seq_defgo sets barFlickOn). the
+; bar's background colours - every $0180 move of the bar, barColorAddr -
+; are put back from barColorsTarget every frame through a fault: brighter
+; and darker in fits, now and then a dropout or a flash, and every so often
+; the colour itself goes: red and blue swapped, the guns turned round,
+; the colour lost (green only), no green, a negative, noise on each line.
+; it builds up over barFlickRamp frames, and tvStart puts it all back
+barFlickRamp	= 150
+barFlickOdds	= 20			; dropouts and flashes: out of 256, at the worst
+
+barFlicker:
+		tst.b	barFlickOn
+		beq		.out
+		tst.b	tvState
+		bne		.out
+		tst.w	blastsDone				; a frame with a blast or its sparks and
+		bne		.out					; rings is heavy: it holds its colours then
+		addq.w	#1,flickT
+		; --- how bad it is by now: 0..256
+		move.w	flickT,d6
+		cmp.w	#barFlickRamp,d6
+		blo.s	.r
+		move.w	#barFlickRamp,d6
+.r:
+		lsl.w	#8,d6
+		ext.l	d6
+		divu	#barFlickRamp,d6
+		; --- the brightness, 16 = as it is: a swell 12..19, a jitter on
+		;     it - and dropouts and flashes, a frame or two
+		move.w	flickT,d5
+		lsr.w	#2,d5
+		and.w	#15,d5
+		cmp.w	#8,d5
+		blo.s	.sw
+		neg.w	d5
+		add.w	#15,d5
+.sw:
+		add.w	#12,d5
+		bsr		debrisRandom
+		move.w	d0,d1
+		and.w	#7,d1
+		subq.w	#3,d1
+		add.w	d1,d1
+		muls	d6,d1
+		asr.l	#8,d1
+		add.w	d1,d5
+		tst.w	flickHold
+		beq.s	.free
+		subq.w	#1,flickHold
+		move.w	flickHoldB,d5
+		bra.s	.bright
+.free:
+		move.w	d0,d1
+		lsr.w	#8,d1
+		move.w	d6,d2
+		mulu	#barFlickOdds,d2
+		lsr.w	#8,d2
+		cmp.w	d2,d1
+		bhs.s	.bright
+		move.w	#3,flickHoldB			; a dropout ...
+		btst	#4,d0
+		beq.s	.drop
+		move.w	#30,flickHoldB			; ... or a flash
+.drop:
+		move.w	#1,flickHold
+		move.w	flickHoldB,d5
+.bright:
+		tst.w	d5
+		bpl.s	.b0
+		moveq	#0,d5
+.b0:
+		; --- the colour fault: another one every 20..83 frames, once it is
+		;     bad enough
+		subq.w	#1,flickModeT
+		bpl.s	.mode
+		swap	d0
+		move.w	d0,d1
+		and.w	#63,d1
+		add.w	#20,d1
+		move.w	d1,flickModeT
+		lsr.w	#6,d0
+		and.w	#7,d0
+		cmp.w	#7,d0
+		blo.s	.m
+		moveq	#0,d0
+.m:
+		cmp.w	#100,d6
+		bhs.s	.setMode
+		moveq	#0,d0
+.setMode:
+		move.w	d0,flickMode
+.mode:
+		; --- the brightness as a table, 0..15 -> * d5/16, 0..15
+		lea		flickLut,a3
+		moveq	#0,d1
+		moveq	#16-1,d2
+.lut:
+		move.w	d1,d0
+		mulu	d5,d0
+		lsr.w	#4,d0
+		cmp.w	#15,d0
+		bls.s	.l0
+		moveq	#15,d0
+.l0:
+		move.b	d0,(a3)+
+		addq.w	#1,d1
+		dbf		d2,.lut
+		lea		flickLut,a3
+		; --- every colour of the bar through it (black stays black: the
+		;     last one is the black under the bar)
+		move.w	barColorCount,d7
+		beq		.out
+		subq.w	#1,d7
+		lea		barColorAddr,a1
+		lea		barColorsTarget,a2
+		move.w	flickMode,d4
+.c:
+		move.l	(a1)+,a0
+		move.w	(a2)+,d0
+		beq.s	.set
+		moveq	#15,d3					; b
+		and.w	d0,d3
+		lsr.w	#4,d0
+		moveq	#15,d2					; g
+		and.w	d0,d2
+		lsr.w	#4,d0
+		moveq	#15,d1					; r
+		and.w	d0,d1
+		add.w	d4,d4
+		move.w	.fault(pc,d4.w),d0
+		lsr.w	#1,d4
+		jmp		.fault(pc,d0.w)
+.fault:
+		dc.w	.lit-.fault,.f1-.fault,.f2-.fault,.f3-.fault
+		dc.w	.f4-.fault,.f5-.fault,.f6-.fault
+.f1:
+		exg		d1,d3					; red and blue swapped
+		bra.s	.lit
+.f2:
+		move.w	d1,d0					; the guns turned round
+		move.w	d2,d1
+		move.w	d3,d2
+		move.w	d0,d3
+		bra.s	.lit
+.f3:
+		cmp.w	d1,d2					; the colour lost: green only
+		bhs.s	.g1
+		move.w	d1,d2
+.g1:
+		cmp.w	d3,d2
+		bhs.s	.g2
+		move.w	d3,d2
+.g2:
+		moveq	#0,d1
+		moveq	#0,d3
+		bra.s	.lit
+.f4:
+		moveq	#0,d2					; no green
+		bra.s	.lit
+.f5:
+		eor.w	#15,d1					; a negative, dim
+		lsr.w	#1,d1
+		eor.w	#15,d2
+		lsr.w	#1,d2
+		eor.w	#15,d3
+		lsr.w	#1,d3
+		bra.s	.lit
+.f6:
+		bsr		debrisRandom			; noise on the line
+		moveq	#1,d6
+		and.w	d0,d6
+		add.w	d6,d1
+		lsr.w	#3,d0
+		moveq	#1,d6
+		and.w	d0,d6
+		add.w	d6,d2
+		lsr.w	#3,d0
+		moveq	#1,d6
+		and.w	d0,d6
+		add.w	d6,d3
+		cmp.w	#15,d1
+		bls.s	.n1
+		moveq	#15,d1
+.n1:
+		cmp.w	#15,d2
+		bls.s	.n2
+		moveq	#15,d2
+.n2:
+		cmp.w	#15,d3
+		bls.s	.lit
+		moveq	#15,d3
+.lit:
+		moveq	#0,d0					; the brightness, and back together
+		move.b	(a3,d1.w),d0
+		lsl.w	#4,d0
+		or.b	(a3,d2.w),d0
+		lsl.w	#4,d0
+		or.b	(a3,d3.w),d0
+.set:
+		move.w	d0,2(a0)
+		dbf		d7,.c
+.out:
+		rts
+; the bar's colours as they should be, and the flicker off (tvStart)
+barFlickStop:
+		tst.b	barFlickOn
+		beq.s	.out
+		sf		barFlickOn
+		move.w	barColorCount,d7
+		beq.s	.out
+		subq.w	#1,d7
+		lea		barColorAddr,a1
+		lea		barColorsTarget,a2
+.c:
+		move.l	(a1)+,a0
+		move.w	(a2)+,2(a0)
+		dbf		d7,.c
+.out:
+		rts
+
 ; once a frame, after postEffect (seqShotScan): held over hits, the blast,
-; the letters it set off
+; the letters it set off, the laser
 textFrame::
 		bsr		textShotBegin
 		bsr		torpedoStep
+		bsr		laserStep
 		bra		detStep
 
 ; the muzzle flash, and the blasts of the letters the power blast takes:
@@ -1810,8 +2306,17 @@ chainPower:
 ; debrisEvery, blastPow set from it. uses d0
 pickPower:
 		move.b	bigBlast,d0				; the power blast's letters (1): one of
-		beq.s	.normal					; the three fat ones, at random
-		sf		bigBlast
+		beq.s	.normal					; the three fat ones, at random - the
+		sf		bigBlast				; laser's (3): the two lighter ones
+		cmp.b	#3,d0
+		bne.s	.fat
+		bsr		debrisRandom
+		lea		chainPower,a3
+		and.w	#3,d0					; (1 in 4 medium)
+		bne.s	.set
+		lea		blastPowers+bp_len,a3
+		bra.s	.set
+.fat:
 		bsr		debrisRandom
 		lea		chainPower,a3
 		and.w	#3,d0
@@ -2225,6 +2730,7 @@ drawBlastFx:
 		move.w	d0,ringCount
 .noRings:
 		bsr		drawTorpedo
+		bsr		drawLaser
 		lea		$dff000,a6
 		rts
 
@@ -2396,6 +2902,142 @@ findText::
 		movem.l	(a7)+,d1/d3/a0
 		rts
 
+;-------
+; like findText, but only a glyph with some body to it counts - at least
+; solidMin lit pixels in a byte column of the source - a glyph that has
+; scrolled across two bytes still has that on one side (a shot meets it, where it would
+; pass between the specks of a dot, a colon or a dash). for the ship's
+; shots at the glyph test. -> d0 = x of the middle of that byte, -1 if none.
+; keeps the rest
+solidMin		= 5
+solidW			= 4				; ... and at least this wide
+findSolid::
+		movem.l	d1-d5/a0-a1,-(a7)
+		cmp.w	#hitRightX,d0
+		bge.s	.lo
+		move.w	#hitRightX,d0
+.lo:
+		tst.w	d1
+		bmi.s	.none
+		lsr.w	#3,d0
+		lsr.w	#3,d1
+		cmp.w	#src_line-1-3,d1
+		ble.s	.hi
+		moveq	#src_line-1-3,d1
+.hi:
+		cmp.w	d1,d0
+		bgt.s	.none
+		lea		src_adr+3,a0
+		add.w	d0,a0
+		lea		popTab,a1
+.col:
+		moveq	#0,d3
+		moveq	#0,d4
+		move.b	(a0),d3
+		move.b	(a1,d3.w),d4
+		move.b	1*src_line(a0),d3
+		add.b	(a1,d3.w),d4
+		move.b	2*src_line(a0),d3
+		add.b	(a1,d3.w),d4
+		move.b	3*src_line(a0),d3
+		add.b	(a1,d3.w),d4
+		move.b	4*src_line(a0),d3
+		add.b	(a1,d3.w),d4
+		move.b	5*src_line(a0),d3
+		add.b	(a1,d3.w),d4
+		move.b	6*src_line(a0),d3
+		add.b	(a1,d3.w),d4
+		cmp.b	#solidMin,d4
+		blo.s	.next
+		bsr.s	.centre					; and wide enough?
+		cmp.w	#solidW,d4
+		bhs.s	.found
+.next:
+		addq.l	#1,a0
+		addq.w	#1,d0
+		cmp.w	d1,d0
+		ble.s	.col
+.none:
+		moveq	#-1,d0
+		bra.s	.out
+.found:
+		move.w	d3,d0
+.out:
+		movem.l	(a7)+,d1-d5/a0-a1
+		rts
+; to the pixel: the glyph's columns round the byte found (the source
+; scrolls a pixel at a time, a glyph sits across two bytes - and the byte
+; found may be its second half: from the byte before it)
+; a0/d0 = the byte -> d3 = the glyph's middle (screen x), d4 its width.
+; keeps d0/d1/a0/a1
+.centre:
+		move.l	a0,-(a7)
+		subq.l	#1,a0
+		bsr.s	.cols
+		moveq	#0,d2
+		move.b	d5,d2
+		lsl.l	#8,d2
+		addq.l	#1,a0
+		bsr.s	.cols
+		move.b	d5,d2
+		lsl.l	#8,d2
+		addq.l	#1,a0
+		bsr.s	.cols
+		move.b	d5,d2
+		lsl.l	#8,d2					; bits 31..8: the three bytes
+		move.l	(a7)+,a0
+		move.w	d0,d3
+		subq.w	#1,d3
+		lsl.w	#3,d3
+		moveq	#0,d4
+		tst.l	d2
+		beq.s	.cOut
+.first:
+		tst.l	d2
+		bmi.s	.lit
+		add.l	d2,d2
+		addq.w	#1,d3
+		bra.s	.first
+.lit:
+		tst.l	d2
+		bpl.s	.half
+		addq.w	#1,d4
+		add.l	d2,d2
+		bra.s	.lit
+.half:
+		move.w	d4,d5
+		lsr.w	#1,d5
+		add.w	d5,d3
+.cOut:
+		rts
+; d5.b = the 7 rows of the source byte at a0 or-ed together
+.cols:
+		move.b	(a0),d5
+		or.b	1*src_line(a0),d5
+		or.b	2*src_line(a0),d5
+		or.b	3*src_line(a0),d5
+		or.b	4*src_line(a0),d5
+		or.b	5*src_line(a0),d5
+		or.b	6*src_line(a0),d5
+		rts
+; lit bits in a byte
+popTab:
+		dc.b	0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4
+		dc.b	1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5
+		dc.b	1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5
+		dc.b	2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6
+		dc.b	1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5
+		dc.b	2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6
+		dc.b	2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6
+		dc.b	3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7
+		dc.b	1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5
+		dc.b	2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6
+		dc.b	2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6
+		dc.b	3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7
+		dc.b	2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6
+		dc.b	3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7
+		dc.b	3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7
+		dc.b	4,5,5,6,5,6,6,7,5,6,6,7,6,7,7,8
 ; -> d0 = x of the first lit column of the captain's message, -1 if none
 ; of it is on the right block (yet, or any more). keeps the rest
 msgLeftX::
@@ -2459,6 +3101,10 @@ FS_DOTS			= 5
 FS_MSG			= 6
 FS_CALM			= 7				; all well again at once: glitchLevel 0
 FS_CUE			= 8				; tells the ship the message is coming (msgCue)
+FS_TESTLOOP		= 9				; a text over and over till the ship is ready
+								; for the message (seq_defReady), then on
+FS_TAIL			= 10			; with finalAttackOn: on with feedTailAttack
+msgGap			= 4				; spaces from the ship being ready to the message
 cuePause		= 20			; spaces between the dashes and the message
 glitchRampChars	= 2				; chars per glitchLevel step down
 stutterPerLevel	= 7				; hang odds (out of 256) per level ...
@@ -2487,9 +3133,9 @@ startGlitch::
 		move.b	#FEED_SCRIPT,feedMode
 		move.l	#feedScript,feedPtr
 		clr.w	feedPos
-		clr.w	glitchLevel
-		clr.w	glitchTarget
-		clr.w	rampCount
+		move.w	#16,glitchLevel			; broken at once, the moment the last
+		move.w	#16,glitchTarget		; letter is gone (feedScript goes on
+		clr.w	rampCount				; from there)
 		st		stutterOn
 		bra		glitchInit
 
@@ -2538,6 +3184,30 @@ feedNext:
 		addq.l	#2,feedPtr
 		bra		.cmd
 .notCue:
+		cmp.w	#FS_TAIL,d1
+		bne.s	.notTail
+		addq.l	#2,feedPtr
+		tst.b	finalAttackOn
+		beq		.cmd
+		move.l	#feedTailAttack,feedPtr
+		bra		.cmd
+.notTail:
+		cmp.w	#FS_TESTLOOP,d1
+		bne.s	.notLoop
+		tst.b	seq_defReady			; the ship is ready: on to the message
+		bne		.next6
+		move.l	2(a0),a1
+		add.w	feedPos,a1
+		moveq	#0,d0
+		move.b	(a1),d0
+		bne.s	.loopChar
+		clr.w	feedPos					; round again
+		move.l	2(a0),a1
+		move.b	(a1),d0
+.loopChar:
+		addq.w	#1,feedPos
+		bra		.plain
+.notLoop:
 		cmp.w	#FS_SPACES,d1
 		bne.s	.notSpaces
 		move.w	feedPos,d0
@@ -2886,8 +3556,7 @@ glitchStop::
 
 ; what happens to the scroller after the first attack
 feedScript:
-		dc.w	FS_SPACES,6				; a moment of silence
-		dc.w	FS_LEVEL,16				; then it all goes wrong
+		dc.w	FS_LEVEL,16				; it all goes wrong at once
 		dc.w	FS_SALAD
 		dc.l	saladText
 		dc.w	FS_LEVEL,8				; mending, slowly: a dot now and then
@@ -2903,11 +3572,27 @@ feedScript:
 		dc.w	FS_LEVEL,2
 		dc.w	FS_TEXT
 		dc.l	testText3
-		dc.w	FS_CALM					; mended: from the dashes on it runs
-		dc.w	FS_CUE					; clean, and the ship gets ready
+		dc.w	FS_TAIL					; (the old way, with finalAttackOn)
+		dc.w	FS_CALM					; mended: from here it runs clean - a
+		dc.w	FS_TEXT					; glyph test of the display
+		dc.l	glyphTest1
+		dc.w	FS_CUE					; the end is set up (seq_defgo): it goes
+		dc.w	FS_LEVEL,1				; on testing, with little jerks, ...
+		dc.w	FS_TESTLOOP
+		dc.l	glyphTest2
+		dc.w	FS_CALM					; ... till the ship is ready for the
+		dc.w	FS_SPACES,msgGap		; message
+		dc.w	FS_MSG
+		dc.l	msgText
+		dc.w	FS_END
+; the old ending: the message after the dashes and a long pause, for the
+; power blast (seq_run)
+feedTailAttack:
+		dc.w	FS_CALM
+		dc.w	FS_CUE
 		dc.w	FS_TEXT
 		dc.l	testText4
-		dc.w	FS_SPACES,cuePause		; a long pause - all quiet?
+		dc.w	FS_SPACES,cuePause
 		dc.w	FS_MSG
 		dc.l	msgText
 		dc.w	FS_END
@@ -2920,6 +3605,16 @@ testText2:
 		dc.b	"TEST  TEST  TEST 1 2 3...  ",0
 testText3:
 		dc.b	"DISPLAY ONLINE AGAIN.    ",0
+; the display test, not words: glyph by glyph, with room round each - a
+; ramp of blocks, the letters and the figures in steps, the wide ones and
+; the narrow ones side by side, the signs in pairs, the ring to close
+glyphTest1:
+		dc.b	"   #    ##    ###    ####      A   B   C   D   E   F      "
+		dc.b	"1   2   3   4   5      MMM   III   WWW      ",0
+; ... and this round and round till the ship is ready for the message
+glyphTest2:
+		dc.b	"<>    [ ]    0O0O    ( )    .  :  .  :    ##    +   -   *    "
+		dc.b	"8888    @   #   \\    MMM    o  o  o    WWW    ?   !    ",0
 testText4:
 		dc.b	"-      -   -    -          -- - - -    ---"
 testText4End:
@@ -2991,7 +3686,11 @@ tvUpdate:
 
 ; --- first frame: the copper goes through tvList from now on
 tvStart:
+		bsr		barFlickStop			; the bar's own colours again first
+		tst.b	tvKeepText				; (the monitor goes off, the text runs
+		bne.s	.keep					; on - the Defender ending)
 		st		scrollerOff
+.keep:
 		; colour 0 of every bar line as it is now, the base the collapse
 		; squeezes. barc1 is $cf, barc2 holds from $d0 to $dd, barc3..19
 		; are $de..$ee, $ef is black
@@ -3057,6 +3756,21 @@ tvStart:
 ; --- d0 = vertical stretch 8.8 (256 = as it is), d1 = how far to white
 ;     (0..16). every line takes its colour from line mid+(line-mid)*d0/256
 tvPaint:
+		tst.w	d1						; the way to white as a table, 0..15
+		beq.s	.noLut					; -> n + (15-n)*d1/16, once a frame
+		lea		tvWLut,a1
+		moveq	#0,d3
+.lut:
+		moveq	#15,d2
+		sub.w	d3,d2
+		mulu	d1,d2
+		lsr.w	#4,d2
+		add.w	d3,d2
+		move.b	d2,(a1)+
+		addq.w	#1,d3
+		cmp.w	#16,d3
+		blo.s	.lut
+.noLut:
 		lea		tvColAddr,a1
 		lea		tvBase,a2
 		moveq	#0,d5					; line index
@@ -3091,26 +3805,28 @@ tvPaint:
 		move.w	d3,tvH1c2
 		rts
 
-; d3 = colour, d1 = 0..16 -> d3 that far on the way to white. uses d4/d6
+; d3 = colour -> d3 that far on the way to white (tvWLut, see tvPaint).
+; uses d4/d6
 tvWhiten:
-		movem.w	d0/d2,-(a7)
+		move.l	a3,-(a7)
+		lea		tvWLut,a3
+		moveq	#15,d4
+		and.w	d3,d4
 		moveq	#0,d6
-		moveq	#3-1,d4
-.nib:
-		lsl.w	#4,d6
-		move.w	d3,d0
-		lsr.w	#8,d0					; the top nibble: r, then g, then b
-		and.w	#$f,d0
-		moveq	#15,d2
-		sub.w	d0,d2
-		mulu	d1,d2
-		lsr.w	#4,d2
-		add.w	d0,d2					; n + (15-n)*d1/16
-		or.w	d2,d6
-		lsl.w	#4,d3
-		dbf		d4,.nib
+		move.b	(a3,d4.w),d6			; b
+		lsr.w	#4,d3
+		moveq	#15,d4
+		and.w	d3,d4
+		move.b	(a3,d4.w),d4			; g
+		lsl.w	#4,d4
+		or.w	d4,d6
+		lsr.w	#4,d3
+		and.w	#15,d3
+		move.b	(a3,d3.w),d4			; r
+		lsl.w	#8,d4
+		or.w	d4,d6
 		move.w	d6,d3
-		movem.w	(a7)+,d0/d2
+		move.l	(a7)+,a3
 		rts
 tvCollapse:
 		move.w	tvTime,d2
@@ -3219,14 +3935,16 @@ tvDotFade:
 		dc.w	$0fff,$0eef,$0ddf,$0cce,$0bbe,$0aad,$099c,$088b,$077a
 		dc.w	$0669,$0558,$0447,$0336,$0225,$0114,$0003,$0002,$0001
 
-tvState:		dc.b	0		; 0 off, 1 start, 2 collapse, 3 line, 4 shrink
+tvState::		dc.b	0		; 0 off, 1 start, 2 collapse, 3 line, 4 shrink
 								; and dot, 5 done
 tvGo::			dc.b	0		; set by seq_pilot
+tvKeepText::	dc.b	0		; ... and the text runs on through it
 scrollerOff:	dc.b	0
 				even
 tvTime:			dc.w	0
 tvBase:			ds.w	tvLines
 tvColAddr:		ds.l	tvLines
+tvWLut:			ds.b	16		; tvPaint: the way to white
 
 debrisCx:		dc.w	0
 debrisCy:		dc.w	0
@@ -3236,7 +3954,7 @@ blastPow:		dc.l	blastPowers		; power of the blast now
 blastVx:		dc.w	0		; the velocity of the shot that caused it
 blastVy:		dc.w	0
 hitN:			dc.w	2		; text bytes the blast takes
-hitTotal:		dc.w	0		; blasts so far (for testing)
+hitTotal::		dc.w	0		; blasts so far (for testing)
 blastsDone:		dc.w	0		; this frame
 hitQueueN:		dc.w	0
 hitQueue:		ds.w	2*hitQueueMax	; x, line of the hits held over
@@ -3251,6 +3969,22 @@ detLog:			ds.w	2*32	; frame it went off, frames late
 whiteLost:		dc.w	0		; (testing) blast dots gone while still white
 whiteLostY:		dc.w	0		; ... of them off the top or bottom
 burntOut:		dc.w	0		; ... and burnt out as they should
+laserNose:		dc.w	0		; the laser: where it starts ...
+laserTail:		dc.w	0		; ... its tail and head now (screen x) ...
+laserFront:		dc.w	0
+laserLine:		dc.w	0		; ... the scroller line it is on
+laserPhase::	dc.w	0		; 0 out it goes, 1 the word, 2 gone through
+laserAge:		dc.w	0
+laserLast:		dc.w	0		; the last letter's end, + scrollSteps
+laserWait::		dc.w	0		; frames till the next letter
+laserHits:		dc.w	0		; (testing) letters it took ...
+laserWords:		dc.w	0		; ... and words
+flickT:			dc.w	0		; barFlicker: frames on ...
+flickHold:		dc.w	0		; ... a dropout or flash: frames left ...
+flickHoldB:		dc.w	0		; ... and its brightness
+flickModeT:		dc.w	0		; ... frames left of the colour fault ...
+flickMode:		dc.w	0		; ... and which one
+flickLut:		ds.b	16		; ... the brightness, as a table
 torpX:			dc.l	0		; 16.16
 torpVX:			dc.l	0
 torpLine:		dc.w	0
@@ -3296,9 +4030,11 @@ msgEnded::		dc.b	0
 msgCue::		dc.b	0		; FS_CUE: the message is next
 msgHalted::		dc.b	0		; the scroller stands, all of the message on show
 detWaiting:		dc.b	0
-fxPending:		dc.b	0		; blastAt's sparks and rings are due
+fxPending::		dc.b	0		; blastAt's sparks and rings are due
 bigBlast:		dc.b	0		; pickPower: 1 the chain's, 2 the torpedo's
 torpOn::		dc.b	0		; the plasma torpedo is in the air
+laserOn::		dc.b	0		; the Defender laser is out
+barFlickOn::	dc.b	0		; the bar goes wrong (barFlicker)
 wakeOn::		dc.b	0		; the blast has gone: letters coming in go off
 				even
 postest:

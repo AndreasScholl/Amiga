@@ -2,7 +2,7 @@
 ;
 ;	Light Speed Player v1.20
 ;	Fastest Amiga MOD player ever :)
-;	Written By Arnaud Carré (aka Leonard / OXYGENE)
+;	Written By Arnaud Carrï¿½ (aka Leonard / OXYGENE)
 ;	https://github.com/arnaud-carre/LSPlayer
 ;	twitter: @leonard_coder
 ;
@@ -175,6 +175,7 @@ LSP_MusicPlayTick:
 			add.w	d0,d0
 			bcc.s	.noReset
 			bset	d2,d1
+			and.b	sfxKeep,d1				; (demo: a channel kept for a sound effect, music.s)
 			move.w	d1,$96-$a0(a6)
 .noReset:	move.l	(a2)+,(a5)
 			move.w	(a2)+,4(a5)

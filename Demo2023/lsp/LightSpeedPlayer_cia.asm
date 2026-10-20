@@ -94,6 +94,7 @@ LSP_MusicDriver_CIA_Start:
 			lea		$dff0a0,a6
 			bsr		LSP_MusicPlayTick		; LSP main music driver tick
 			bsr		musicPalTick			; logo palette cues (music.s)
+			bsr		sfxTick					; the sound effects (music.s)
 
 		; check if BMP changed in the middle of the music
 			move.l	.pMusicBPM(pc),a0
