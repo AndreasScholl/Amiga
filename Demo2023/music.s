@@ -93,7 +93,7 @@ sfx_size:       rs.b    0           ; 16
 
 sfxTable:
                 dc.l    sfxLaserBuf                         ; SFX_SHOT: the laser,
-                dc.w    sfxLaserS_len/2,300,40,7,1,0        ; higher and short
+                dc.w    sfxLaserS_len/2,300,56,7,1,0        ; higher and short
                 dc.l    sfxBoomBuf                          ; SFX_BOOM
                 dc.w    sfxBoomS_len/2,443,64,15,2,0
                 dc.l    sfxLaserBuf                         ; SFX_LASER
@@ -103,7 +103,7 @@ sfxTable:
                 dc.l    sfxZapBuf                           ; SFX_ZAP: above all
                 dc.w    sfxZapS_len/2,443,64,58,4,0
                 dc.l    sfxBigBoomBuf                       ; SFX_BIGBOOM
-                dc.w    sfxBigBoomS_len/2,443,64,38,2,sfxBoomAgain
+                dc.w    sfxBigBoomS_len/2,520,64,50,2,sfxBoomAgain      ; (period 520: lower, more bass)
 sfxBoomAgain    = 9                 ; a big boom rolls on this long at least
 
 ; the channels of each effect once it is Defender (bits 0..3)

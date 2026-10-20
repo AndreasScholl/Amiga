@@ -1,5 +1,6 @@
 		INCDIR      "include"
 		INCLUDE     "hw.i"
+		INCLUDE     "switches.i"		; (the ending's switches)
 		INCLUDE     "funcdef.i"
 		INCLUDE     "exec/exec_lib.i"
 		INCLUDE     "graphics/graphics_lib.i"
@@ -199,6 +200,9 @@ clearLines		= screenHeight+screenHeight-emberTop	; 219
 		section "code",data,chip
 initScroller::
 		sf		sfxWide					; (music.s) one channel for the effects
+	ifne	tvLate
+		sf		flickPhase
+	endc
 		bsr		buildLogoPadded
 		move.l	#zeroArea,d0		; plane 2 above and below the logo
 		move.w	d0,topZero2l
@@ -916,7 +920,11 @@ textShotBegin::
 		tst.b	fxPending				; last frame's blast still owes its
 		beq.s	.noFx					; sparks and rings: they come now, and
 		sf		fxPending				; that is this frame's blast - any hit
-		bsr		blastFx					; waits in the queue
+	ifne	fwAll						; waits in the queue
+		bsr		latticeAdd				; (switches.i fwAll: a firework, as the
+	else								; laser's letters have)
+		bsr		blastFx
+	endc
 		move.w	#blastsPerFrame,blastsDone
 		rts
 .noFx:
@@ -969,6 +977,11 @@ textShot::
 		bne.s	.n1
 		moveq	#1,d6
 .n1:
+		cmp.w	#24,d6					; it went round the screen edge (the
+		bls.s	.walkOk					; play area wraps): no walk right across
+		moveq	#0,d0					; the screen - 40000 cycles for nothing
+		rts
+.walkOk:
 		ext.l	d4
 		asl.l	#8,d4
 		divs	d6,d4					; x step, 8.8
@@ -1824,6 +1837,7 @@ laserFlashT		= 8				; frames of muzzle flash
 ; d0/d1 = the nose (game coordinates). keeps every register
 launchLaser::
 		move.w	d1,-(a7)
+		sf		laserObj
 		move.w	d0,laserNose
 		move.w	d0,laserTail
 		move.w	d0,laserFront
@@ -1835,6 +1849,20 @@ launchLaser::
 		ble.s	.l1
 		move.w	#184,d1
 .l1:
+		bra.s	laserGo
+	ifne	defWords
+; the same at any height, at the game's letters (switches.i defWords,
+; asteroids.s seq_defwords): d0/d1 = the nose. keeps every register
+launchLaserAt::
+		move.w	d1,-(a7)
+		st		laserObj
+		clr.w	defWantWord				; (asteroids.s: any word, till one is hit)
+		move.w	d0,laserNose
+		move.w	d0,laserTail
+		move.w	d0,laserFront
+	endc
+laserGo:
+		move.w	d1,laserY
 		sub.w	#topLines,d1
 		move.w	d1,laserLine
 		clr.w	laserPhase
@@ -1874,6 +1902,10 @@ laserStep:
 		move.w	#game_width,d0
 .f:
 		move.w	d0,laserFront
+	ifne	defWords
+		tst.b	laserObj			; at the game's letters?
+		bne		.oShoot
+	endc
 		bsr		laserAhead
 		bmi.s	.miss
 		cmp.w	laserFront,d0
@@ -1888,6 +1920,10 @@ laserStep:
 		rts
 		; --- the word, a letter at a time
 .burn:
+	ifne	defWords
+		tst.b	laserObj
+		bne		.oBurn
+	endc
 		bsr		laserAhead				; the next letter
 		bmi.s	.wordGone
 		move.w	laserLast,d1			; still the same word? the gap after
@@ -1939,6 +1975,59 @@ laserStep:
 		addq.w	#1,laserWords			; (testing)
 .out:
 		rts
+	ifne	defWords
+		; --- the game's letters (asteroids.s defLetterAt): the first in the
+		;     beam's line ...
+.oShoot:
+		move.w	laserNose,d0
+		move.w	laserY,d1
+		move.w	laserFront,d2
+		add.w	#12,d2
+		jsr		defLetterAt
+		bmi		.miss
+		sub.w	#12,d0
+		cmp.w	laserNose,d0
+		bge.s	.oFront
+		move.w	laserNose,d0
+.oFront:
+		move.w	d0,laserFront
+		move.w	#-1,laserLast
+		clr.w	laserWait
+		move.w	#1,laserPhase
+		; ... then the rest of its word, a letter every laserPace frames
+.oBurn:
+		tst.w	laserWait
+		beq.s	.oDue
+		subq.w	#1,laserWait
+		rts
+.oDue:
+		move.w	laserLast,d0			; (-1: the first, from the head on)
+		bpl.s	.oNext
+		move.w	laserFront,d0
+		move.w	d0,d2
+		add.w	#24,d2
+		bra.s	.oFind
+.oNext:
+		move.w	d0,d2
+		add.w	#defObjGap,d2
+		addq.w	#1,d0
+.oFind:
+		move.w	laserY,d1
+		jsr		defLetterAt
+		bmi		.wordGone
+		jsr		defLetterKill			; d0/d1: where it was
+		move.w	d0,laserLast
+		move.w	d0,laserFront
+		move.w	d0,debrisCx
+		sub.w	#topLines,d1
+		move.w	d1,debrisCy
+		bsr		latticeAdd				; the firework
+		moveq	#2,d0					; the boom (music.s sfxPlay, SFX_BOOM)
+		jsr		sfxPlay
+		move.w	#laserPace-1,laserWait
+		addq.w	#1,laserHits			; (testing)
+		rts
+	endc
 
 ; -> d0 = the first lit column of the message on the row, to the pixel,
 ; -1 (N set) if none. msgFrom finds it a byte at a time in the source;
@@ -1979,7 +2068,16 @@ drawLaser:
 		;     yellow, orange, red and back, a step a frame, the outer lines
 		;     a few steps behind (the text on them burns along with it)
 		tst.b	tvState
-		beq.s	.noCol
+		beq		.noCol
+	ifne	defWords
+		tst.b	laserObj				; (at another height: none of the
+		beq.s	.colRow					; text's lines to colour)
+		move.w	laserY,d0
+		sub.w	#181,d0
+		cmp.w	#3,d0
+		bhi		.noCol
+.colRow:
+	endc
 		st		laserCol
 		bsr		laserColsBack			; (the beam may be on other lines now)
 		lea		tvBeamTab,a3			; its four lines: from the one above
@@ -2154,11 +2252,12 @@ drawLaser:
 ; never gets up onto the logo. cheap: no state per spark - where they are
 ; for every age is a table (fw.i, fwgen.py), the burst is a centre, a size,
 ; a pop and an age
-latMax			= 7
-latKick0		= 256			; the pop up: this + 0..127 (8.8 a frame)
-latGrav			= 77			; the fall, 8.8 a frame a frame (0.3 px)
-latLife0		= 13			; life: this + 0..3 frames (the drag has them out
-								; at nearly full reach by then - and fewer at once)
+latMax			= 12			; (long lives: more of them at once)
+latKick0		= 0				; the pop up: this + 0..latKickR (8.8 a frame) -
+latKickR		= 0				; none now: the table has the fall (fwgen.py)
+latGrav			= 0				; (the fall at run time, 8.8: off, see above)
+latLife0		= 40			; life: this + 0..15 frames - a fast burst, then
+								; the sparks hang glowing and sink as they burn out
 				rsreset
 lat_x:			rs.w	1
 lat_line:		rs.w	1
@@ -2188,12 +2287,12 @@ latticeAdd:
 		lsr.w	#8,d1
 		move.b	d1,lat_n(a2)
 		lsr.w	#8,d0
-		and.w	#3,d0
-		add.w	#latLife0,d0			; 13..16 frames
+		and.w	#15,d0
+		add.w	#latLife0,d0			; 40..55 frames (fwAges 56)
 		move.b	d0,lat_life(a2)
 		bsr		debrisRandom
-		and.w	#127,d0
-		add.w	#latKick0,d0			; 1 .. 1.5 px a frame up at first
+		and.w	#latKickR,d0
+		add.w	#latKick0,d0			; (none: the table falls)
 		move.w	d0,lat_kick(a2)
 .out:
 		movem.l	(a7)+,d0-d1/a2
@@ -2250,17 +2349,12 @@ drawLattice:
 		blo.s	.col
 		moveq	#2,d6
 .col:
-		; --- the centre, and the fall: g*t*t/2 (latFall) - kick*t
+		; --- the centre (the fall is in the table now, fwgen.py), x less the
+		;     border: one unsigned compare clips it, and the byte offset
+		;     gets the border's 4 bytes back in the addressing
 		move.w	lat_x(a4),d4
-		move.w	lat_age(a4),d2
-		move.w	d2,d5
-		add.w	d5,d5
-		lea		latFall,a6
-		move.w	(a6,d5.w),d5
-		mulu	lat_kick(a4),d2
-		lsr.l	#8,d2
-		sub.w	d2,d5
-		add.w	lat_line(a4),d5
+		sub.w	#borderX,d4
+		move.w	lat_line(a4),d5
 		; --- the table row: (size * fwAges + age) * fwSparks * 2
 		moveq	#0,d0
 		move.b	lat_n(a4),d0
@@ -2270,42 +2364,62 @@ drawLattice:
 		lea		fwTab,a6
 		add.w	d0,a6
 		moveq	#fwSparks-1,d7
-.dot:
+		tst.w	d6
+		bne.s	.cDot
+		; --- white hot (the first half: no twinkle, no ember plane yet)
+.wDot:
 		move.b	(a6)+,d0
 		ext.w	d0
-		add.w	d4,d0					; x
+		add.w	d4,d0					; x - borderX
 		move.b	(a6)+,d1
 		ext.w	d1
-		add.w	d5,d1					; y
-		lsr.l	#1,d3					; twinkling: this one off now?
-		bcs.s	.skip
-		cmp.w	#game_width,d0
-		bhs.s	.skip
-		cmp.w	#borderX,d0
-		blo.s	.skip
+		add.w	d5,d1					; line
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.wSkip
 		cmp.w	#screenHeight,d1
-		bhs.s	.skip
+		bhs.s	.wSkip
 		move.w	d0,d2
 		lsr.w	#3,d2					; its byte
 		not.w	d0						; its bit
+		add.w	d1,d1
+		add.w	(a1,d1.w),d2
+		bset	d0,borderX/8(a0,d2.w)
+.wSkip:
+		dbf		d7,.wDot
+		bra		.next
+		; --- orange, then red: under the bar the ember plane, and the last
+		;     third twinkling
+.cDot:
+		move.b	(a6)+,d0
+		ext.w	d0
+		add.w	d4,d0
+		move.b	(a6)+,d1
+		ext.w	d1
+		add.w	d5,d1
+		lsr.l	#1,d3					; twinkling: this one off now?
+		bcs.s	.cSkip
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.cSkip
+		cmp.w	#screenHeight,d1
+		bhs.s	.cSkip
+		move.w	d0,d2
+		lsr.w	#3,d2
+		not.w	d0
 		cmp.w	#emberTop,d1
-		bhs.s	.under
+		bhs.s	.cUnder
 		add.w	d1,d1
 		add.w	(a1,d1.w),d2
-		bset	d0,(a0,d2.w)			; over the bar: white
-		bra.s	.skip
-.under:
+		bset	d0,borderX/8(a0,d2.w)	; over the bar: white
+		bra.s	.cSkip
+.cUnder:
 		add.w	d1,d1
 		add.w	(a1,d1.w),d2
-		tst.w	d6
-		beq.s	.wh
-		bset	d0,(a5,d2.w)			; orange or red: the ember plane
+		bset	d0,borderX/8(a5,d2.w)	; the ember plane ...
 		cmp.w	#1,d6
-		bne.s	.skip					; (red: that only)
-.wh:
-		bset	d0,(a0,d2.w)
-.skip:
-		dbf		d7,.dot
+		bne.s	.cSkip					; (red: that only)
+		bset	d0,borderX/8(a0,d2.w)	; ... and orange: plane 1 too
+.cSkip:
+		dbf		d7,.cDot
 		bra.s	.next
 .drop:
 		lea		lat_size(a2),a2			; gone: not written back
@@ -2315,6 +2429,348 @@ drawLattice:
 		bpl		.lat
 .out:
 		rts
+	ifne	defWords
+	ifeq	defWordsVec
+;---------------------------------------------
+; THE LOOSE WORDS (switches.i defWords): the TV is off, the "magnetic
+; field" that held the running text on its row is gone - the words of the
+; captain's message come in at all heights, in the scroller's own font
+; (each row twice, as tall as on the bar), drifting a little, each word on
+; its own. the Defender ship goes after them (asteroids.s seq_defwords),
+; the laser takes them out (laserObj: defLetterAt, defLetterKill). they
+; are drawn every frame with drawBlastFx's buffer, moved there too
+				rsreset
+fw_x:			rs.w	1			; left edge, 1/16 px
+fw_y:			rs.w	1			; top line (game y), 1/16 px
+fw_dy:			rs.w	1			; drift, 1/16 px a frame
+fw_text:		rs.l	1
+fw_len:			rs.w	1
+fw_alive:		rs.w	1			; bit i: letter i still there
+fw_id:			rs.w	1			; the word's number (defWantWord), 0: free
+fw_size:		rs.b	0			; 16
+fwMax			= 4
+fwSpeed			= 18			; 1.125 px a frame to the left (1/16 px)
+fwLane0			= 134			; top line: game y 134 ...
+fwLaneH			= 84			; ... to 217
+fwDrift			= 1				; up or down, at most (1/16 px a frame)
+fwH				= 12			; 6 font rows, each twice
+
+; the next word of fwWordTab, at the right edge, at a random height
+defWordSpawn::
+		movem.l	d0-d2/a0-a2,-(a7)
+		move.l	fwWordPtr,a1
+		tst.b	(a1)
+		beq.s	.out
+		lea		flyWords,a0
+		moveq	#fwMax-1,d1
+.find:
+		tst.w	fw_id(a0)
+		beq.s	.free
+		lea		fw_size(a0),a0
+		dbf		d1,.find
+		bra.s	.out					; (no room: next time)
+.free:
+		move.l	a1,fw_text(a0)
+		moveq	#0,d1
+.len:
+		tst.b	(a1)+
+		beq.s	.lenDone
+		addq.w	#1,d1
+		bra.s	.len
+.lenDone:
+		move.l	a1,fwWordPtr
+		move.w	d1,fw_len(a0)
+		moveq	#1,d2
+		lsl.l	d1,d2
+		subq.w	#1,d2
+		move.w	d2,fw_alive(a0)
+		move.w	#game_width*16,fw_x(a0)
+		jsr		getRandomNumber
+		moveq	#0,d1
+		move.b	d0,d1
+		mulu	#fwLaneH,d1
+		lsr.w	#8,d1
+		add.w	#fwLane0,d1
+		lsl.w	#4,d1
+		move.w	d1,fw_y(a0)
+		lsr.w	#8,d0
+		and.w	#2*fwDrift,d0			; -1 or +1
+		subq.w	#fwDrift,d0
+		move.w	d0,fw_dy(a0)
+		addq.w	#1,fwWordNo
+		move.w	fwWordNo,fw_id(a0)
+.out:
+		movem.l	(a7)+,d0-d2/a0-a2
+		rts
+
+; -> d1 = letters still there (all words)
+defWordsLeft::
+		movem.l	d0/d2/a0,-(a7)
+		moveq	#0,d1
+		lea		flyWords,a0
+		moveq	#fwMax-1,d2
+.w:
+		tst.w	fw_id(a0)
+		beq.s	.n
+		move.w	fw_alive(a0),d0
+.b:
+		beq.s	.n
+		addq.w	#1,d1
+		move.w	d0,-(a7)
+		subq.w	#1,d0
+		and.w	(a7)+,d0				; (the lowest bit off)
+		bra.s	.b
+.n:
+		lea		fw_size(a0),a0
+		dbf		d2,.w
+		movem.l	(a7)+,d0/d2/a0
+		rts
+
+; -> Z clear while words are still to come
+defWordsMore::
+		move.l	a1,-(a7)
+		move.l	fwWordPtr,a1
+		tst.b	(a1)
+		movem.l	(a7)+,a1				; (the flags stay)
+		rts
+
+; -> d0/d1 = the middle of the leftmost letter there is, d0 = -1 (N) if
+; none; d2 non zero while its word is not all in yet
+defWordsTarget::
+		movem.l	d3-d7/a0,-(a7)
+		move.w	#$7fff,d0
+		moveq	#0,d1
+		moveq	#0,d2
+		lea		flyWords,a0
+		moveq	#fwMax-1,d7
+.w:
+		tst.w	fw_id(a0)
+		beq.s	.n
+		move.w	fw_alive(a0),d5
+		beq.s	.n
+		moveq	#0,d6					; its first letter still there
+.b:
+		btst	d6,d5
+		bne.s	.got
+		addq.w	#1,d6
+		bra.s	.b
+.got:
+		move.w	fw_x(a0),d3
+		asr.w	#4,d3
+		move.w	d6,d4
+		lsl.w	#3,d4
+		add.w	d4,d3
+		addq.w	#4,d3					; its middle
+		cmp.w	d0,d3
+		bge.s	.n
+		move.w	d3,d0
+		move.w	fw_y(a0),d1
+		asr.w	#4,d1
+		addq.w	#fwH/2,d1
+		move.w	fw_x(a0),d2				; all of the word in?
+		asr.w	#4,d2
+		move.w	fw_len(a0),d4
+		lsl.w	#3,d4
+		add.w	d4,d2
+		cmp.w	#game_width,d2
+		shi		d2
+		ext.w	d2
+.n:
+		lea		fw_size(a0),a0
+		dbf		d7,.w
+		cmp.w	#$7fff,d0
+		bne.s	.out
+		moveq	#-1,d0
+.out:
+		movem.l	(a7)+,d3-d7/a0
+		tst.w	d0
+		rts
+
+; for the laser: d0 = from x, d1 = the beam's game y, d2 = to x -> d0 =
+; the middle of the leftmost letter in there that is near the line (-1, N
+; set, if none), d1 its middle's y; defLetterKill takes it out. only the
+; word defWantWord once one is hit. keeps d2-d7/a0-a6
+defLetterAt::
+		movem.l	d2-d7/a0,-(a7)
+		move.w	#$7fff,d5				; best x
+		lea		flyWords,a0
+		moveq	#fwMax-1,d7
+.w:
+		tst.w	fw_id(a0)
+		beq		.n
+		move.w	defWantWord,d3
+		beq.s	.any
+		cmp.w	fw_id(a0),d3
+		bne		.n
+.any:
+		move.w	fw_y(a0),d3				; near the line?
+		asr.w	#4,d3
+		addq.w	#fwH/2,d3
+		sub.w	d1,d3
+		bpl.s	.ay
+		neg.w	d3
+.ay:
+		cmp.w	#defLane,d3
+		bhi.s	.n
+		move.w	fw_x(a0),d3
+		asr.w	#4,d3
+		addq.w	#4,d3					; letter 0's middle
+		move.w	fw_alive(a0),d4
+		moveq	#0,d6
+.b:
+		btst	d6,d4
+		beq.s	.nb
+		cmp.w	d0,d3
+		blt.s	.nb
+		cmp.w	d2,d3
+		bgt.s	.n						; (further right: none of these)
+		cmp.w	d5,d3
+		bge.s	.n
+		move.w	d3,d5
+		move.l	a0,fwHitWord
+		move.w	d6,fwHitLetter
+		bra.s	.n						; (the first in the word is its leftmost)
+.nb:
+		addq.w	#8,d3
+		addq.w	#1,d6
+		cmp.w	fw_len(a0),d6
+		blo.s	.b
+.n:
+		lea		fw_size(a0),a0
+		dbf		d7,.w
+		cmp.w	#$7fff,d5
+		beq.s	.none
+		move.w	d5,d0
+		move.l	fwHitWord,a0
+		move.w	fw_y(a0),d1
+		asr.w	#4,d1
+		addq.w	#fwH/2,d1
+		bra.s	.out
+.none:
+		moveq	#-1,d0
+		clr.l	fwHitWord
+.out:
+		movem.l	(a7)+,d2-d7/a0
+		tst.w	d0
+		rts
+
+; -> d0/d1 = the middle of the letter defLetterAt found; it is gone, and the
+; laser goes on along its word. keeps d2-d7/a0-a6
+defLetterKill::
+		movem.l	d2/a0,-(a7)
+		move.l	fwHitWord,a0
+		move.l	a0,d0
+		beq.s	.out
+		move.w	fwHitLetter,d2
+		move.w	fw_alive(a0),d0
+		bclr	d2,d0
+		move.w	d0,fw_alive(a0)
+		move.w	fw_id(a0),defWantWord
+		move.w	fw_x(a0),d0
+		asr.w	#4,d0
+		lsl.w	#3,d2
+		add.w	d2,d0
+		addq.w	#4,d0
+		move.w	fw_y(a0),d1
+		asr.w	#4,d1
+		addq.w	#fwH/2,d1
+		clr.l	fwHitWord
+.out:
+		movem.l	(a7)+,d2/a0
+		rts
+
+; every frame, from drawBlastFx (a0 = buffer, a1 = yTable): the words on,
+; the ones that got past the left edge gone, and drawn - a font row twice,
+; shifted into place a byte pair at a time
+drawFlyWords:
+		lea		flyWords,a2
+		moveq	#fwMax-1,d7
+.w:
+		tst.w	fw_id(a2)
+		beq		.next
+		sub.w	#fwSpeed,fw_x(a2)
+		move.w	fw_dy(a2),d0
+		add.w	d0,fw_y(a2)
+		move.w	fw_alive(a2),d5
+		bne.s	.live
+		clr.w	fw_id(a2)				; all gone: the slot is free
+		bra		.next
+.live:
+		move.w	fw_y(a2),d3				; its top as a scroller line
+		asr.w	#4,d3
+		sub.w	#topLines,d3
+		bmi		.next					; (never up there - the lanes)
+		cmp.w	#screenHeight-fwH,d3
+		bhi		.next
+		add.w	d3,d3
+		move.w	(a1,d3.w),d3			; y * li
+		lea		(a0,d3.w),a3			; its top line
+		move.w	fw_x(a2),d4
+		asr.w	#4,d4					; letter 0's x
+		move.l	fw_text(a2),a4
+		moveq	#0,d6					; letter
+.l:
+		btst	d6,d5
+		beq.s	.nextL
+		cmp.w	#8,d4					; past the left edge: gone
+		bge.s	.in
+		bclr	d6,d5
+		bra.s	.nextL
+.in:
+		cmp.w	#game_width-8,d4		; still coming in over the right edge
+		bgt.s	.nextL
+		moveq	#0,d0
+		move.b	(a4,d6.w),d0
+		lea		rchartab,a5
+		moveq	#0,d1
+		move.b	(a5,d0.w),d1			; its glyph
+		lea		char,a5
+		add.w	d1,a5
+		move.w	d4,d2
+		lsr.w	#3,d2					; byte
+		lea		(a3,d2.w),a6
+		moveq	#7,d1
+		and.w	d4,d1					; shift
+		move.w	d7,-(a7)
+		moveq	#6-1,d7
+.row:
+		moveq	#0,d0
+		move.b	(a5),d0
+		lsl.w	#8,d0
+		lsr.w	d1,d0
+		move.w	d0,d2
+		lsr.w	#8,d2
+		or.b	d2,(a6)
+		or.b	d0,1(a6)
+		or.b	d2,li(a6)
+		or.b	d0,li+1(a6)
+		lea		2*li(a6),a6
+		lea		charStride(a5),a5
+		dbf		d7,.row
+		move.w	(a7)+,d7
+.nextL:
+		addq.w	#8,d4
+		addq.w	#1,d6
+		cmp.w	fw_len(a2),d6
+		blo.s	.l
+		move.w	d5,fw_alive(a2)
+.next:
+		lea		fw_size(a2),a2
+		dbf		d7,.w
+		rts
+
+fwWordTab:
+		dc.b	"CAPTAIN,",0,"WHAT",0,"THE",0,"FUCK",0,"HAPPENS",0,"HERE",0,0
+		even
+fwWordPtr:		dc.l	fwWordTab
+fwHitWord:		dc.l	0
+fwHitLetter:	dc.w	0
+fwWordNo:		dc.w	0
+defWantWord::	dc.w	0		; the laser's word, 0: any
+flyWords:		ds.b	fw_size*fwMax
+	endc
+	endc
+
 ; colour 1 of the lines the beam can be on, as the text has it (tvList)
 laserColsBack:
 		lea		tvBeamTab,a3
@@ -2447,6 +2903,13 @@ laserPower:
 ; it builds up over barFlickRamp frames, and tvStart puts it all back
 barFlickRamp	= 150
 barFlickOdds	= 20			; dropouts and flashes: out of 256, at the worst
+; (switches.i tvLate) flickPhase 1: it dies - over barDieT frames fewer and
+; fewer changes, darker and darker, the text with it, then 2: all black.
+; 3: it has risen again - dark (a quarter), faulty, a short bright flash
+; now and then, the text barInkLift sixteenths above the bar's brightness
+barDieT			= 160
+barInkLift		= 9
+barReviveFlash	= 63			; mask: a bright frame 1 in 64
 
 barFlicker:
 		tst.b	barFlickOn
@@ -2455,6 +2918,25 @@ barFlicker:
 		bne		.out
 		tst.w	blastsDone				; a frame with a blast or its sparks and
 		bne		.out					; rings is heavy: it holds its colours then
+	ifne	tvLate
+		cmp.b	#2,flickPhase			; dead: dark, nothing to do
+		beq		.out
+		cmp.b	#1,flickPhase			; dying: fewer and fewer changes, darker
+		bne.s	.notDying				; and darker, then dark
+		addq.w	#1,flickDieT
+		move.w	flickDieT,d0
+		cmp.w	#barDieT,d0
+		blo.s	.dGo
+		bsr		barBlack
+		move.b	#2,flickPhase
+		bra		.out
+.dGo:
+		subq.w	#1,flickGapT
+		bpl		.out					; (holds what it shows)
+		lsr.w	#4,d0
+		move.w	d0,flickGapT			; 0 .. 9 frames between changes
+.notDying:
+	endc
 		addq.w	#1,flickT
 		; --- how bad it is by now: 0..256
 		move.w	flickT,d6
@@ -2509,6 +2991,32 @@ barFlicker:
 		bpl.s	.b0
 		moveq	#0,d5
 .b0:
+	ifne	tvLate
+		move.w	d5,flickInkB			; (the text's own, see .ink)
+		cmp.b	#1,flickPhase
+		bne.s	.notFade
+		move.w	#barDieT,d1				; dying: it all fades to black
+		sub.w	flickDieT,d1
+		mulu	d1,d5
+		divu	#barDieT,d5
+		move.w	d5,flickInkB
+		bra.s	.phased
+.notFade:
+		cmp.b	#3,flickPhase
+		bne.s	.phased
+		lsr.w	#2,d5					; risen again: dark, a quarter (a flash
+		move.w	d5,d1					; only 7) - the text dim but there - and
+		add.w	#barInkLift,d1			; now and then, a frame long, bright
+		move.w	d1,flickInkB
+		move.l	d0,-(a7)
+		bsr		debrisRandom
+		and.w	#barReviveFlash,d0
+		bne.s	.noFl
+		moveq	#13,d5
+.noFl:
+		move.l	(a7)+,d0
+.phased:
+	endc
 		; --- the colour fault: another one every 20..83 frames, once it is
 		;     bad enough
 		subq.w	#1,flickModeT
@@ -2639,8 +3147,91 @@ barFlicker:
 .set:
 		move.w	d0,2(a0)
 		dbf		d7,.c
+	ifne	tvLate
+		; --- the text's colour (colour 1 of the bar) with it, no fault, at its
+		;     own brightness, once it is dying (before, it is left alone)
+		tst.b	flickPhase
+		beq.s	.out
+		move.w	flickInkB,d5
+		cmp.w	#16,d5
+		bls.s	.ib
+		moveq	#16,d5
+.ib:
+		lea		flickLut,a3
+		moveq	#0,d1
+		moveq	#16-1,d2
+.ilut:
+		move.w	d1,d0
+		mulu	d5,d0
+		lsr.w	#4,d0
+		cmp.w	#15,d0
+		bls.s	.il0
+		moveq	#15,d0
+.il0:
+		move.b	d0,(a3)+
+		addq.w	#1,d1
+		dbf		d2,.ilut
+		lea		flickLut,a3
+		move.w	barInkCount,d7
+		beq.s	.out
+		subq.w	#1,d7
+		lea		barInkAddr,a1
+		lea		barInkTarget,a2
+.ic:
+		move.l	(a1)+,a0
+		move.w	(a2)+,d0
+		moveq	#15,d3
+		and.w	d0,d3
+		lsr.w	#4,d0
+		moveq	#15,d2
+		and.w	d0,d2
+		lsr.w	#4,d0
+		and.w	#15,d0
+		move.b	(a3,d0.w),d0
+		lsl.w	#4,d0
+		or.b	(a3,d2.w),d0
+		lsl.w	#4,d0
+		or.b	(a3,d3.w),d0
+		move.w	d0,2(a0)
+		dbf		d7,.ic
+	endc
 .out:
 		rts
+	ifne	tvLate
+; (asteroids.s seq_defgo) the flicker dies: slower and darker, then dark
+barDie::
+		clr.w	flickDieT
+		clr.w	flickGapT
+		move.b	#1,flickPhase
+		rts
+; (seq_defgo) ... and five seconds later it rises again
+barRevive::
+		move.w	#$0112,barShadow+2
+		move.b	#3,flickPhase
+		rts
+; the bar and its text all black: the TV is off - it seems (barFlicker)
+barBlack:
+		clr.w	barShadow+2			; (the text's shadow too)
+		move.w	barColorCount,d7
+		beq.s	.ink
+		subq.w	#1,d7
+		lea		barColorAddr,a1
+.c:
+		move.l	(a1)+,a0
+		clr.w	2(a0)
+		dbf		d7,.c
+.ink:
+		move.w	barInkCount,d7
+		beq.s	.out
+		subq.w	#1,d7
+		lea		barInkAddr,a1
+.i:
+		move.l	(a1)+,a0
+		clr.w	2(a0)
+		dbf		d7,.i
+.out:
+		rts
+	endc
 ; the bar's colours as they should be, and the flicker off (tvStart)
 barFlickStop:
 		tst.b	barFlickOn
@@ -2655,6 +3246,17 @@ barFlickStop:
 		move.l	(a1)+,a0
 		move.w	(a2)+,2(a0)
 		dbf		d7,.c
+	ifne	tvLate
+		move.w	barInkCount,d7			; (and the text's colour)
+		beq.s	.out
+		subq.w	#1,d7
+		lea		barInkAddr,a1
+		lea		barInkTarget,a2
+.i:
+		move.l	(a1)+,a0
+		move.w	(a2)+,2(a0)
+		dbf		d7,.i
+	endc
 .out:
 		rts
 
@@ -3102,6 +3704,11 @@ drawBlastFx:
 		lsr.w	#3,d0					; / ring_len
 		move.w	d0,ringCount
 .noRings:
+	ifne	defWords
+	ifeq	defWordsVec
+		bsr		drawFlyWords			; the loose words (a0/a1 stay)
+	endc
+	endc
 		bsr		drawTorpedo
 		bsr		drawLaser
 		bsr		drawLattice
@@ -3994,8 +4601,10 @@ feedMended:
 		dc.w	FS_TEXT					; message: a few question marks, and
 		dc.l	whatText				; a pause, then it
 		dc.w	FS_SPACES,msgGap
-		dc.w	FS_MSG
-		dc.l	msgText
+	ifeq	defWords				; (switches.i: with defWords the message
+		dc.w	FS_MSG					; comes as the game's letters instead,
+		dc.l	msgText					; asteroids.s seq_defwords)
+	endc
 		dc.w	FS_END
 ; the old ending: the message after the dashes and a long pause, for the
 ; power blast (seq_run)
@@ -4419,6 +5028,7 @@ burntOut:		dc.w	0		; ... and burnt out as they should
 laserNose:		dc.w	0		; the laser: where it starts ...
 laserTail:		dc.w	0		; ... its tail and head now (screen x) ...
 laserFront:		dc.w	0
+laserY:			dc.w	0		; the laser's game y ...
 laserLine:		dc.w	0		; ... the scroller line it is on
 laserPhase::	dc.w	0		; 0 out it goes, 1 the word, 2 gone through
 laserAge:		dc.w	0
@@ -4434,7 +5044,7 @@ LA		set		0
 LA		set		LA+1
 		endr
 		include	"fw.i"				; the sparks (fwgen.py)
-latCount:		dc.w	0		; Defender explosions going on ...
+latCount::		dc.w	0		; Defender explosions going on ...
 lattices:		ds.b	lat_size*latMax		; ... drawLattice
 latLeft:		dc.w	0
 latEmber:		dc.l	0
@@ -4443,6 +5053,9 @@ latCols:		ds.l	7		; drawLattice: the columns, byte and bit
 laserHits:		dc.w	0		; (testing) letters it took ...
 laserWords:		dc.w	0		; ... and words
 flickT:			dc.w	0		; barFlicker: frames on ...
+flickDieT:		dc.w	0		; ... dying (tvLate)
+flickGapT:		dc.w	0
+flickInkB:		dc.w	0		; ... the text's brightness
 flickHold:		dc.w	0		; ... a dropout or flash: frames left ...
 flickHoldB:		dc.w	0		; ... and its brightness
 flickModeT:		dc.w	0		; ... frames left of the colour fault ...
@@ -4499,8 +5112,10 @@ detWaiting:		dc.b	0
 fxPending::		dc.b	0		; blastAt's sparks and rings are due
 bigBlast:		dc.b	0		; pickPower: 1 the chain's, 2 the torpedo's
 torpOn::		dc.b	0		; the plasma torpedo is in the air
+laserObj:		dc.b	0		; ... at the game's letters (launchLaserAt)
 laserOn::		dc.b	0		; the Defender laser is out
-barFlickOn::	dc.b	0		; the bar goes wrong (barFlicker)
+barFlickOn::	dc.b	0
+flickPhase::	dc.b	0		; (tvLate) 0 flicker, 1 dying, 2 dark, 3 risen again		; the bar goes wrong (barFlicker)
 wakeOn::		dc.b	0		; the blast has gone: letters coming in go off
 				even
 postest:
@@ -7079,7 +7694,8 @@ barc1:	dc.w	$0180,$0112	; flat scrollarea anti alias line ;)
 		dc.w	$0182,$0858
 		dc.w	$010a,$ffd2		; negative odd bitplanes modulo -> repeat last line
 		dc.w	$0102,$00c0		; scroll
-		dc.w	$0192,$0112		; shadow color
+barShadow:
+		dc.w	$0192,$0112		; shadow color (barBlack: off with the bar)
 		dc.w	$d001,$fffe
 barc2:	dc.w	$0180,$0234	; flat scrollarea start
 		dc.w	$0182,$0868

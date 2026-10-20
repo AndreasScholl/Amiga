@@ -21,6 +21,7 @@
 
 		INCDIR      "include"
 		INCLUDE     "hw.i"
+		INCLUDE     "switches.i"		; (the ending's switches)
 		INCLUDE     "funcdef.i"
 		INCLUDE     "exec/exec_lib.i"
 		INCLUDE     "graphics/graphics_lib.i"
@@ -154,7 +155,7 @@ ai_turnrate		= 6			; degrees per frame (the keyboard player gets 4)
 ; sequences in ai_turn (x8, about 7 degrees, and x6, about 9.5) because
 ; |cross| is a full longword and muls.w cannot scale it.
 ai_thrust		= 8			; thrust impulse, same as the player gets
-ai_maxspeed		= 300		; |xvelo|+|yvelo| above which it brakes
+ai_maxspeed		= 240		; |xvelo|+|yvelo| above which it brakes (300)
 ai_slowspeed	= 110		; ... and below which it stops braking
 ai_thrustodds	= 0			; out of 256 - chance of a burst while ATTACKING.
 							; 0 means it holds position and shoots, which is
@@ -434,20 +435,23 @@ sc_minspeed		= 12		; |vx|+|vy| below this gets a push up or down
 ;     Nothing is fired until the word has been complete for ai_holdframes.
 ;   - no word at all: stay clear of the row the next one appears on.
 ; velocities are 1/128 pixel per frame, distances manhattan pixels.
-ai_dangerdist	= 44		; a letter coming this close is a threat (a letter
+ai_dangerdist	= 56		; a letter coming this close is a threat (44) (a letter
 							; is +-12, the ship about +-6)
 ai_shootthreat	= 70		; a shootable threat further away than this is
 							; shot, a nearer one dodged
-ai_evadespeed	= 128		; the velocity a dodge wants
-ai_cruise		= 184		; the fastest we fly to a station (144 before)
+ai_evadespeed	= 176		; the velocity a dodge wants (128)
+ai_cruise		= 150		; the fastest we fly to a station (144, 184: it
+							; dashed about - a good player flies calmly)
 ai_stdead		= 14		; this close to the station is close enough
 ai_engage		= 100		; a target nearer than this (and not a threat)
 							; is shot from where we are - no station
 ai_engagehyst	= 32		; ... and it is left again only past this much more
-ai_drift		= 96		; ... drifting no faster than this meanwhile
+ai_drift		= 48		; ... drifting no faster than this meanwhile (96:
+							; it let itself drift far too often - now it
+							; brakes and shoots from a standstill)
 ; --- the start of the attack on a new word is a rush (ai_pilot)
 ai_rushtime		= 350		; frames, or until the first hit breaks it up
-ai_rushcruise	= 208		; faster than ai_cruise ... (160 before)
+ai_rushcruise	= 168		; faster than ai_cruise ... (160, 208)
 ai_rushengage	= 72		; ... and closer in before it settles to shoot
 ai_rushdx		= 80		; the way in along the row: this far out to the side
 ai_rushdg		= 56		; the way in from above: this far out and up
@@ -464,8 +468,8 @@ ai_stclear		= 40
 ai_stkeep		= 24		; the station side we are on wins unless another
 							; is this much nearer		; a station this close to another letter is blocked
 ai_offrepick	= 60		; frames before the station is chosen again
-ai_corrstart	= 48		; velocity off by more than this: correct it
-ai_corrstop		= 12		; ... until it is off by less than this
+ai_corrstart	= 36		; velocity off by more than this: correct it (48)
+ai_corrstop		= 8			; ... until it is off by less than this (12)
 ai_burncone		= 3			; burn once |cross| * 2^(this-1) < dot: 1 is 45
 							; degrees, 2 about 26, 3 about 14
 ai_nudge		= 16		; while aiming, thrust if off by this much and
@@ -479,14 +483,24 @@ ai_homex1		= 336
 ai_waytop		= 24		; now and then a waypoint over the logo, y 24..55
 ai_waytoprange	= 31		; (mask)
 ai_waybottom	= 212		; mostly the black below the scroller, y 212..243
+ai_readyOn		= 1			; between the words: to a ready spot and wait there
+ai_readyX0		= 52		; ... on the left (52..67) or the right (312..327)
+ai_readyX1		= 327
+ai_readyY		= 214		; ... below the bar (214..229)
 ai_waybotrange	= 31		; (mask)
 ; --- where the ship is hard to see: in front of the logo (raster $20 up to
 ;     about $84) and of the scroller and its bar (raster $bc..$ee)
 ai_logoy		= 100		; y < this
 ai_scrolly0		= 156		; y in this..
 ai_scrolly1		= 206		; ..this
-ai_busymax		= 100		; frames there before it moves somewhere else
-ai_busypen		= 48		; a station there counts this much further away
+ai_wordHalf		= 120		; half a word's width at most (the row's middle
+							; is ast_x_center)
+ai_logopen		= 160		; a letter in front of the logo counts this much
+							; further away as a target
+ai_busymax		= 45		; frames there before it moves somewhere else (100)
+ai_busypen		= 300		; a station there counts this much further away (48:
+							; it kept on hanging about over the logo)
+ai_busypenS		= 48		; ... and one in front of the scroller (logo: above)
 ai_waytime		= 250		; frames before giving up on a waypoint
 ai_homedist		= 20		; that close is "reached"
 ai_rowclear		= 48		; the next word may come once the ship is on
@@ -501,13 +515,15 @@ shot_frames		= 56		; a shot's life (was 80): ~130 px, and fewer shots
 							; in the air means fewer collision tests
 ai_hitslack		= 8		; px - allowed miss at the lead point (a letter's
 							; hit box is +-12)
-ai_huntgap		= 9			; frames between shots, + 0..3 - about the pace
+ai_huntgap		= 5			; frames between shots, + 0..3 (9) - about the pace
 							; of a player on the fire button
 ; --- the hunt after the break up, as a gunner (ai_pilot)
 ai_gunnerfar	= 90		; px - a target further than this is flown at (110:
 							; it drifted over far too long)
-ai_gunnerspeed	= 200		; ... until we close at this speed (112 before)
+ai_gunnerspeed	= 150		; ... until we close at this speed (112, 200)
 ai_gunnertop	= 280		; faster than this: slow down first (200 before)
+ai_gunnerslow	= 96		; in range and faster than this: it brakes, to
+							; shoot from (nearly) a standstill
 ai_farpen		= 150		; target choice: a letter out of range counts as
 							; this much further away (see ai_huntScan)
 ai_maxshots		= 4			; shots in the air at once, at most - as in the
@@ -1345,8 +1361,8 @@ updateEnemies:
 		sf		ai_forming			; set again below by any letter that is
 									; still waiting or still zooming in
 		lea		collList,a4			; shootable enemies, rebuilt every frame
-		move.l	enemy_con(pc),d0
-		lea		enemy_structs(pc),a0
+		move.l	enemy_con,d0
+		lea		enemy_structs,a0
 		moveq	#31,d7
 .setenemys:	
 		btst	d7,d0
@@ -1458,6 +1474,12 @@ updateEnemies:
 ; d6 -> obj_flag value
 ; d7 -> dont change (obj loop counter)
 initLineExplode:
+	ifne	sfxGame
+		move.l	d0,-(a7)			; (switches.i) the letter goes up with a
+		moveq	#2,d0				; boom (music.s sfxPlay, SFX_BOOM)
+		jsr		sfxPlay
+		move.l	(a7)+,d0
+	endc
 		bclr	#0,d6				; reset hit flag
 		bset	#1,d6				; set explode flag
 		move.w	d6,obj_flag(a0)		;
@@ -1902,7 +1924,7 @@ ai_zooming:		dc.w	0		; letters spinning in or bursting (updateEnemies)
 ai_scanHalf:	dc.b	0		; ai_pilot: one bursting - every other look
 				even
 ai_scanLate:	dc.w	0		; looks put off for the beam (a count, for tests)
-ai_scanLine		= 92			; no look round once the beam is this far down
+ai_scanLine		= 88			; no look round once the beam is this far down
 				even
 ai_holdFire:	dc.w	ai_holdframes
 ai_sidePicked:	dc.b	0		; side chosen for the word now on screen
@@ -1934,6 +1956,8 @@ ai_edgeSide:	dc.w	0		; which end ai_target was picked for
 ai_launched:	dc.b	0		; the launch shove has been spent
 				even
 ai_recover:		dc.b	0		; steering back onto the screen
+ai_ready:		dc.b	0		; ai_wantVelo: its waypoint is a ready spot
+ai_idleNow:		dc.b	0		; ... and it is idle this frame
 				even
 ai_side:		dc.w	-1		; which end of the word we attack from
 ai_dry:			dc.w	0		; frames since the last shot
@@ -2505,6 +2529,11 @@ ai_pilot:
 		bsr		ai_speed
 		cmp.w	#ai_gunnertop,d0
 		bhs.s	.steerMode
+		cmp.w	#ai_gunnerslow,d0	; in range and still drifting: brake (the
+		blo.s	.slowOk				; steering below, the engaged way)
+		cmp.w	#ai_gunnerfar,ai_aimDist
+		blo.s	.steerMode
+.slowOk:
 		cmp.w	#ai_busymax,ai_busyTime	; too long in front of the logo or
 		bhs.s	.steerMode			; the scroller: that moves it away
 		sf		ai_mode
@@ -2516,6 +2545,10 @@ ai_pilot:
 		tst.b	ai_turning			; on it, and it is out of range?
 		bne		.fire
 		cmp.w	#ai_gunnerfar,ai_aimDist
+		blo		.fire
+		move.w	ai_target,d7		; (one up in front of the logo: not after it
+		bsr		ai_ptr				; up there - it is shot from below, or left
+		cmp.w	#ai_logoy,obj_yc(a1)	; till it comes down)
 		blo		.fire
 		move.w	obj_xvelo(a0),d0	; and not already closing fast enough
 		move.w	obj_yvelo(a0),d1
@@ -2636,6 +2669,20 @@ ai_pilot:
 		moveq	#ai_thrust,d2
 		bsr		obj_thrust
 .noNudge:
+	ifne	ai_readyOn
+		tst.b	ai_idleNow			; waiting at its ready spot: the nose on
+		beq.s	.notReady			; where the next word comes in, as a
+		tst.b	ai_ready			; player waits for it
+		beq.s	.notReady
+		move.w	#ast_x_center,d0
+		sub.w	obj_xc(a0),d0
+		move.w	#ast_y_start,d1
+		sub.w	obj_yc(a0),d1
+		bsr		ai_crossdot
+		bsr		ai_huntTurn
+		bra		.fire
+.notReady:
+	endc
 		tst.w	ai_holdFire			; patrolling (see ai_wantVelo): the nose
 		bne.s	.fire				; stays the way we fly, no aiming about
 		tst.w	ai_target
@@ -2703,10 +2750,9 @@ ai_rushStart:
 		blt.s	.sideSet
 		moveq	#4,d2
 .sideSet:
-		moveq	#32,d3				; along the row ...
-		cmp.w	#2,d1
-		bne.s	.way
-		moveq	#40,d3				; ... or down onto the end
+		moveq	#32,d3				; along the row (down onto the end from
+									; above meant waiting up in front of the
+									; logo: no more)
 .way:
 		add.w	d2,d3
 		move.w	d3,ai_rushIdx
@@ -2828,6 +2874,7 @@ ai_rushTarget:
 ;---------------------------------------------
 ai_wantVelo:
 		sf		ai_evading
+		sf		ai_idleNow
 		move.w	ai_threat,d7
 		bmi.s	.calm
 		tst.b	ai_threatSolid
@@ -2921,6 +2968,7 @@ ai_wantVelo:
 ;     the ship is out of the band the next word appears in and on screen,
 ;     so the word may come.
 .idle:
+		st		ai_idleNow
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d4
 		bsr		ai_signedCoord
@@ -2972,6 +3020,8 @@ ai_wantVelo:
 		AI_MANH
 		cmp.w	#ai_homedist,d5
 		bhs.s	.toWay
+		tst.b	ai_ready			; at its ready spot: it stays there, braked,
+		bne.s	.toWay				; waiting for the next word (ai_pilot aims)
 		bra.s	.newWay				; reached
 .leaveBusy:
 		tst.b	ai_wayTop			; on the way to the logo anyway? then
@@ -2989,10 +3039,35 @@ ai_wantVelo:
 		beq.s	.wayRandom			; the attack? then wait where that starts
 		tst.w	ai_rushIdx
 		bmi.s	.wayRandom
+		sf		ai_ready
 		bsr		ai_stagePoint
 		bsr		.wayDelta
 		bra		.toWay
 .wayRandom:
+	ifne	ai_readyOn
+		; --- a pilot at the controls: no aimless drifting about between the
+		;     words - over to a ready spot, below the bar on the side it is
+		;     on, braked, the nose on where the next word comes
+		jsr		getRandomNumber
+		moveq	#15,d1
+		and.w	d0,d1
+		move.w	#ai_readyX0,d2
+		cmp.w	#ast_x_center,obj_xc(a0)
+		blt.s	.rLeft
+		move.w	#ai_readyX1,d2
+		neg.w	d1
+.rLeft:
+		add.w	d1,d2
+		move.w	d2,ai_wayx
+		lsr.w	#8,d0
+		and.w	#15,d0
+		add.w	#ai_readyY,d0
+		move.w	d0,ai_wayy
+		sf		ai_wayTop
+		st		ai_ready
+		bsr		.wayDelta
+		bra		.toWay
+	endc
 		jsr		getRandomNumber
 		move.w	d0,d1
 		and.w	#255,d0				; x 40..326
@@ -3006,8 +3081,8 @@ ai_wantVelo:
 		tst.w	ai_holdFire			; never the top while a word is forming
 		bne.s	.wayBottom
 		move.w	d1,d2
-		and.w	#$e0,d2				; 1 in 8 goes over the top
-		bne.s	.wayBottom
+		and.w	#$e0,d2				; (1 in 8 went over the top - over the logo:
+		bra.s	.wayBottom			; no more)
 		st		ai_wayTop
 		lsr.w	#3,d1
 		and.w	#ai_waytoprange,d1
@@ -3043,8 +3118,8 @@ ai_wantVelo:
 		move.w	ai_wayy,d5
 		cmp.w	#ast_y_start,d5
 		blt.s	.wdDone				; (the waypoint is above it as well)
-		sub.w	#ai_wrapy,d1		; up, round the top edge
-		rts
+		bra.s	.wdSide				; (round the top edge was a trip through
+									; the logo: past the end of the word instead)
 .wdBelow:
 		tst.w	d1					; below: never up through it
 		bge.s	.wdDone
@@ -3053,6 +3128,25 @@ ai_wantVelo:
 		bge.s	.wdDone
 		add.w	#ai_wrapy,d1		; down, round the bottom edge
 .wdDone:
+		rts
+		; --- across the row past the end of the word: first out beside it
+		;     (on our side of the row), then over
+.wdSide:
+		move.w	obj_xc(a0),d5
+		sub.w	#ast_x_center,d5
+		bpl.s	.wdR
+		neg.w	d5
+		cmp.w	#ai_wordHalf,d5
+		bhs.s	.wdDone				; beside it already: straight over
+		move.w	#ast_x_center-ai_wordHalf-20,d0
+		bra.s	.wdX
+.wdR:
+		cmp.w	#ai_wordHalf,d5
+		bhs.s	.wdDone
+		move.w	#ast_x_center+ai_wordHalf+20,d0
+.wdX:
+		sub.w	obj_xc(a0),d0
+		moveq	#0,d1				; (level: out to the side)
 		rts
 
 ; --- dodge: off the threat's path, on the side we are already on - at
@@ -3191,9 +3285,14 @@ ai_pickStation:
 		AI_MANH
 		move.w	ai_shy(pc),d6		; a spot in front of the logo or the
 		add.w	d1,d6				; scroller - where the ship is hard to
-		bsr		ai_busyY			; see - counts as further away
-		beq.s	.candFree
+		cmp.w	#ai_logoy,d6		; see - counts as further away: the logo
+		bge.s	.candBar			; a lot, the scroller a bit
 		add.w	#ai_busypen,d5
+		bra.s	.candFree
+.candBar:
+		bsr		ai_busyY
+		beq.s	.candFree
+		add.w	#ai_busypenS,d5
 .candFree:
 		move.w	d5,(a4)+
 		addq.l	#2,a4
@@ -3524,6 +3623,10 @@ ai_huntScan:
 		add.w	d0,d5
 		movem.w	(a7)+,d0/d1/d4
 .scored:
+		cmp.w	#ai_logoy,obj_yc(a1)	; a letter up in front of the logo: the last
+		bhs.s	.notLogo			; one to go for - a good player keeps the
+		add.w	#ai_logopen,d5		; ship where it can be seen
+.notLogo:
 		cmp.w	ai_target(pc),d7
 		bne.s	.notCur
 		move.w	d5,ai_curDist
@@ -4726,6 +4829,12 @@ ai_pointblankNear:
 ; same shot setup the keyboard fire path uses
 ;---------------------------------------------
 ai_shoot:
+	ifne	sfxGame
+		move.l	d0,-(a7)			; (switches.i) its sound, game and ending
+		moveq	#1,d0				; alike (music.s sfxPlay, SFX_SHOT)
+		jsr		sfxPlay
+		move.l	(a7)+,d0
+	endc
 		move.w	obj_xc(a0),d0
 		move.w	obj_yc(a0),d1
 		move.w	obj_angle(a0),d2
@@ -4975,6 +5084,7 @@ SQ_DEFGO		= 11
 SQ_DEFTEST		= 12
 SQ_DEFFIRE		= 13
 SQ_AFTER		= 14
+SQ_DEFWORDS		= 15		; (switches.i defWords: instead of DEFFIRE)
 
 ; a0 = ship_struct, from ship_auto
 seq_pilot:
@@ -5035,6 +5145,9 @@ seq_thrustSnd	= 0			; the thrust sound: 1 on (it is off - only shots
 		dc.w	seq_deftest-.states
 		dc.w	seq_deffire-.states
 		dc.w	seq_after-.states
+	ifne	defWords
+		dc.w	seq_defwords-.states
+	endc
 
 ;--- SEARCH -----------------------------------
 seq_search:
@@ -5124,6 +5237,8 @@ seq_a1move:
 		blo.s	.done
 .there:
 		st		seq_hits			; from now on the shots hit the text
+		st		sfxWide				; (music.s) the sounds, with weight, from the
+									; first shot at the scroller on
 		st		seq_shotsLive
 		jsr		getRandomNumber		; 5..8 letters to shoot out
 		and.w	#3,d0
@@ -5530,8 +5645,9 @@ seq_starAccD	= 4			; ... and speed up the other way (and run down
 							; at the end)
 seq_defvmax		= 120		; the drift over, top speed
 seq_tflyV		= 208		; ... over to the spots the text is shot from
-seq_huntDx0		= 40		; the hunt's spots: 40..87 left or right of the
-seq_huntDy0		= 26		; letter, 26..57 over or under the row
+seq_huntDx0		= 64		; the hunt's spots: 64..95 left of the letter,
+seq_huntDy0		= 40		; 40..55 over or under the row (40..87 / 26..57:
+							; far too close)
 seq_huntX0		= 40		; (on the screen: x 40..330)
 seq_huntX1		= 330
 seq_holdT0		= 50		; at a spot 50..113 frames at most ...
@@ -5539,6 +5655,9 @@ seq_flyMax		= 100		; ... on the way to one 100 at most
 seq_passT		= 120		; DEFTEST: shooting at the text this long, then the
 							; message is let in - and on till it comes in
 seq_rowNear		= 36		; that near the spot on the row: there
+seq_deadT0		= 250		; (tvLate) frames the bar stays dark before it rises
+seq_darkX		= 196		; ... the ship meanwhile over the bar
+seq_darkY		= 128
 seq_rowT		= 170		; ... and this long after that over to the row (the
 							; message starts ~290 frames after it is let in)
 seq_hopHits		= 3			; a new spot after this many hits ...
@@ -5624,6 +5743,10 @@ seq_defgo:
 		bsr		seq_tshootInit
 		sf		seq_dThere
 .on:
+	ifne	tvLate
+		tst.b	seq_dying			; the flicker dying, the bar dark: the ship
+		bne.s	.dying				; drifts about
+	endc
 		tst.b	tvGo
 		bne.s	.toSpot
 		bsr		seq_tshoot
@@ -5632,6 +5755,30 @@ seq_defgo:
 		cmp.w	#1500,seq_timer
 		blo.s	.out
 .monitorOff:
+	ifne	tvLate					; (switches.i) not off yet: the flicker
+		jsr		barDie				; slows down and dies, the bar goes dark -
+		st		seq_dying			; for a while it seems off
+		clr.w	seq_deadT
+		sf		seq_shotsLive
+		move.w	#seq_defvmax,seq_vmax
+		sf		seq_corr
+		sf		seq_dOn				; (seq_drift afresh)
+		rts
+.dying:
+		move.w	#seq_darkX,d0		; up off the bar and waiting (the bar is
+		move.w	#seq_darkY,d1		; dark: in it the ship would be dark too)
+		moveq	#seq_arrive*2,d2
+		bsr		seq_steer
+		cmp.b	#2,flickPhase		; (scroller.s) dark now?
+		bne.s	.out
+		addq.w	#1,seq_deadT
+		cmp.w	#seq_deadT0,seq_deadT
+		blo.s	.out
+		jsr		barRevive			; it rises again - and on with the Defender
+		sf		seq_dying			; part, as if the TV had gone off
+		sf		seq_dThere
+		bra		seq_next			; -> DEFTEST
+	endc
 		st		tvKeepText			; the monitor goes off - the text runs on
 		st		tvGo
 		sf		seq_shotsLive
@@ -5790,19 +5937,17 @@ seq_huntHop:
 		and.w	#2,d1
 		move.b	d1,seq_corner
 		lsr.l	#8,d4
-		moveq	#47,d2
+		moveq	#31,d2
 		and.w	d4,d2
-		add.w	#seq_huntDx0,d2		; across: 40..87
+		add.w	#seq_huntDx0,d2		; across: 64..95
 		lsr.l	#8,d4
-		moveq	#31,d3
+		moveq	#15,d3
 		and.w	d4,d3
-		add.w	#seq_huntDy0,d3		; up or down: 26..57
+		add.w	#seq_huntDy0,d3		; up or down: 40..55
 		move.w	seq_hTgt,d0
 		bpl.s	.base
-		move.w	seq_hFrom,d0
-		add.w	seq_hTo,d0
-		asr.w	#1,d0
-.base:
+		move.w	seq_hFrom,d0		; (no letter yet: the first it will go for,
+.base:								; at the left of the stretch)
 		move.w	d0,d6				; (the letter)
 		btst	#0,d1
 		bne.s	.right
@@ -5831,7 +5976,7 @@ seq_huntHop:
 		beq.s	.far				; a short hop, no long trip each time
 		add.w	obj_xc(a0),d0
 		asr.w	#1,d0
-		sub.w	#30,d6				; (but still left of the letter ...
+		sub.w	#seq_huntDx0-8,d6	; (but still well left of the letter ...
 		cmp.w	d6,d0
 		ble.s	.hx
 		move.w	d6,d0
@@ -5883,6 +6028,12 @@ seq_deftest:
 .out0:
 		rts
 .goRow:
+	ifne	defWords				; (switches.i) the message comes as letters,
+		move.b	#SQ_DEFWORDS,seq_state	; at all heights: after them
+		clr.w	seq_timer
+		sf		seq_sub
+		rts
+	endc
 		sf		seq_shotsLive
 		st		seq_dThere
 		sf		seq_corr
@@ -5973,6 +6124,11 @@ seq_deffire:
 .none:
 		tst.b	msgEnded			; nothing on the row: all gone, if all of
 		beq.s	.out				; the message has come in
+	ifne	tvLate
+		tst.w	latCount			; (scroller.s) and the last firework is out:
+		bne.s	.out				; now the TV goes off, for good, with its
+		st		tvGo				; zap - the climax
+	endc
 		clr.w	starTarget			; the stars run down to a stand
 		move.w	#seq_starAccD,starAcc
 		sf		seq_shotsLive
@@ -5983,6 +6139,367 @@ seq_deffire:
 		bra		seq_next			; -> AFTER
 .out:
 		rts
+
+	ifne	defWords
+;--- DEFWORDS (switches.i defWords) -----------
+; the TV is off, so the "magnetic field" that held the text on its row is
+; gone: the captain's message comes in as the game's letters, word by word
+; from the right, each word at its own height and drifting a little. the
+; Defender ship goes up and down after them - the leftmost letter first -
+; somewhere new across for each word, swaying as ever, and lasers each
+; word at the height it flies (scroller.s launchLaserAt). a letter that
+; gets past is gone. all gone: AFTER, as with seq_deffire
+seq_wordV		= 144		; the words' speed to the left (1/128 px a frame)
+seq_wordDrift	= 8			; ... and up or down, at most (a power of 2)
+seq_lane0		= 140		; the heights they come at: game y 140 ..
+seq_laneH		= 84		; ... 224 (the laser draws below topLines only)
+	ifne	defWordsVec
+seq_wordGapT	= 24		; frames between two words at least, + 0..31 -
+seq_wordLeft	= 1			; and no more than this left of the one before
+	else
+seq_wordGapT	= 56		; (the running text's font: cheap to draw, so
+seq_wordLeft	= 99		; they may come in waves)
+	endc
+seq_wSpawnX		= 364		; they start here, behind the right border
+seq_wReach		= 270		; the laser is fired at a letter this near ...
+seq_wFireX		= 240		; ... once it is in this far
+seq_wAimY		= 4			; ... with the nose this close to its height
+seq_wX0			= 48		; the ship's x for a word: 48 .. 111
+
+seq_defwords:
+		cmp.w	#1,seq_timer
+		bne.s	.on
+		sf		seq_shotsLive
+	ifne	defWordsVec
+		move.l	#defWordTab,defWordPtr
+		clr.w	defWordNo
+	endc
+		clr.w	seq_spawnT
+		clr.w	seq_gap
+		move.w	#seq_defvmax,seq_vmax
+		bsr		.newX
+.on:
+		; --- the words come in - the next once the one before is (nearly)
+		;     all gone: a word as long as CAPTAIN is all the frame can draw
+		;     next to the laser and its fireworks
+		tst.w	seq_spawnT
+		beq.s	.spawnDue
+		subq.w	#1,seq_spawnT
+		bra.s	.spawned
+.spawnDue:
+		jsr		defWordsLeft		; d1 = letters still there
+		cmp.w	#seq_wordLeft,d1
+		bhi.s	.spawned
+.spawn:
+		jsr		defWordSpawn
+		jsr		getRandomNumber
+		and.w	#31,d0
+		add.w	#seq_wordGapT,d0
+		move.w	d0,seq_spawnT
+.spawned:
+	ifne	defWordsVec
+		bsr		defWordsEscape		; one that got past: gone
+	endc
+		; --- after the leftmost letter, up or down the Defender way
+		jsr		defWordsTarget		; d0/d1, -1 if none; d2: its word not all in
+		move.b	d2,seq_wWait
+		move.w	d0,seq_wx
+		bmi.s	.noTgt
+		move.w	d1,seq_wy
+.noTgt:
+		move.w	#90,seq_dface
+		moveq	#seq_dswayX,d2
+		moveq	#seq_dswayY,d3
+		bsr		seq_dfloat
+		add.w	seq_wxShip,d0
+		sub.w	#seq_defX,d0
+		add.w	seq_wy,d1
+		sub.w	#seq_defY,d1
+		bsr		seq_dmoveA
+		; --- fire
+		tst.b	laserOn				; (scroller.s) a shot in the air
+		bne.s	.out
+		tst.w	seq_gap
+		beq.s	.ready
+		subq.w	#1,seq_gap
+		rts
+.ready:
+		move.w	seq_wx,d0
+		bmi.s	.none
+		cmp.w	#seq_wFireX,d0		; far enough in to be read, and all of the
+		bhi.s	.out				; word: a word a shot
+		tst.b	seq_wWait
+		bne.s	.out
+		sub.w	obj_xc(a0),d0
+		cmp.w	#seq_wReach,d0		; (unsigned: behind us is too far too)
+		bhi.s	.out
+		cmp.w	#90,obj_angle(a0)
+		bne.s	.out
+		move.w	obj_yc(a0),d0
+		sub.w	seq_wy,d0
+		bpl.s	.ay
+		neg.w	d0
+.ay:
+		cmp.w	#seq_wAimY,d0
+		bhi.s	.out
+		move.w	obj_xc(a0),d0		; fire, from the nose, at this height
+		addq.w	#7,d0
+		move.w	obj_yc(a0),d1
+		jsr		launchLaserAt
+		addq.w	#1,seq_lasers
+		move.w	#seq_dcool,seq_gap
+		bra.s	.newX				; and somewhere else across for the next
+.none:
+		jsr		defWordsMore		; all of them in, and all gone?
+		bne.s	.out
+		jsr		defWordsLeft
+		tst.w	d1
+		bne.s	.out
+		clr.w	starTarget			; the stars run down to a stand
+		move.w	#seq_starAccD,starAcc
+		st		inkOff				; (scroller.s) the text's colours off
+		sf		seq_dOn				; an Asteroids ship again
+		sf		seq_dLow
+		st		seq_dFast
+		move.b	#SQ_AFTER,seq_state
+		clr.w	seq_timer
+		sf		seq_sub
+.out:
+		rts
+.newX:
+		jsr		getRandomNumber
+		and.w	#63,d0
+		add.w	#seq_wX0,d0
+		move.w	d0,seq_wxShip
+		rts
+
+	ifne	defWordsVec				; (the game's vector letters - the first try)
+; the next word of defWordTab: its letters, one after the other at the
+; right edge (each waits till the one before has moved on a letter's
+; width), at a random height, drifting a little. -> defWordPtr on
+defWordSpawn::
+		move.l	a0,-(a7)			; (the ship: enemy_init hands back a letter)
+		bsr.s	.go
+		move.l	(a7)+,a0
+		rts
+.go:
+		move.l	defWordPtr,a4
+		tst.b	(a4)
+		beq		.none
+		jsr		getRandomNumber
+		moveq	#0,d1
+		move.b	d0,d1
+		mulu	#seq_laneH,d1
+		lsr.w	#8,d1
+		add.w	#seq_lane0,d1		; the height
+		lsr.w	#8,d0
+		and.w	#2*seq_wordDrift-1,d0
+		sub.w	#seq_wordDrift,d0
+		move.w	d0,d4				; the drift
+		move.w	#seq_wSpawnX,d0
+		moveq	#0,d7				; the wait
+		addq.w	#1,defWordNo		; (which word: obj_timer, for the laser)
+		move.w	d1,d5
+		move.w	d5,defWordY0
+.loop:
+		move.b	(a4)+,d6
+		beq.s	.done
+		sub.b	#'a',d6
+		ext.w	d6
+		moveq	#letter,d5
+		add.w	d6,d5
+		move.l	enemy_con,d6		; (a slot free?)
+		not.l	d6
+		beq.s	.skip
+		move.w	#-seq_wordV,d3
+		move.w	d4,d1				; the height: as far back along its drift
+		muls	d7,d1				; as it waits, so the word is straight
+		asr.l	#7,d1				; when it moves
+		add.w	defWordY0,d1
+		movem.l	d0-d7/a1-a6,-(a7)
+		bsr		enemy_init
+		movem.l	(a7)+,d0-d7/a1-a6
+		move.w	#letter,obj_name(a0)
+		move.w	#12,obj_collsize(a0)
+		clr.w	obj_appear(a0)		; no spinning in: there it is
+		move.w	defWordNo,obj_timer(a0)
+		move.w	#64,obj_scale(a0)
+		move.w	d7,obj_wait(a0)
+.skip:
+		move.b	-1(a4),d6			; on by its width, at the words' speed
+		bsr		advanceOf
+		mulu	#128,d6
+		divu	#seq_wordV,d6
+		add.w	d6,d7
+		bra.s	.loop
+.done:
+		move.l	a4,defWordPtr
+.none:
+		rts
+
+; a letter that got past the ship (left of the screen) is gone
+defWordsEscape:
+		move.l	enemy_con,d6
+		beq.s	.out
+		lea		enemy_structs,a1
+		moveq	#31,d7
+.l:
+		btst	d7,d6
+		beq.s	.n
+		tst.w	obj_wait(a1)
+		bne.s	.n
+		cmp.w	#36,obj_xc(a1)
+		bhs.s	.n
+		bclr	d7,d6
+.n:
+		lea		obj_len(a1),a1
+		dbf		d7,.l
+		move.l	d6,enemy_con
+.out:
+		rts
+
+; -> d0/d1 = the leftmost letter in sight, d0 = -1 (N) if none; seq_wWait
+; set if a letter is still to come in
+defWordsTarget::
+		move.l	enemy_con,d6
+		lea		enemy_structs,a1
+		moveq	#31,d7
+		move.w	#$7fff,d0
+		moveq	#0,d1
+		sf		seq_wWait
+.l:
+		btst	d7,d6
+		beq.s	.n
+		tst.w	obj_wait(a1)
+		sne		seq_wWait
+		bne.s	.n
+		move.w	obj_xc(a1),d2
+		cmp.w	#game_width-8,d2
+		bhs.s	.n
+		cmp.w	d0,d2
+		bge.s	.n
+		move.w	d2,d0
+		move.w	obj_yc(a1),d1
+.n:
+		lea		obj_len(a1),a1
+		dbf		d7,.l
+		move.b	seq_wWait,d2
+		cmp.w	#$7fff,d0
+		bne.s	.got
+		moveq	#-1,d0
+.got:
+		tst.w	d0
+		rts
+
+; -> d1 = letters still there
+defWordsLeft::
+		lea		bitCount,a1
+		lea		enemy_con,a2
+		moveq	#0,d1
+		moveq	#4-1,d2
+.cnt:
+		moveq	#0,d0
+		move.b	(a2)+,d0
+		move.b	(a1,d0.w),d0
+		add.w	d0,d1
+		dbf		d2,.cnt
+		rts
+
+; -> Z clear while words are still to come
+defWordsMore::
+		move.l	defWordPtr,a1
+		tst.b	(a1)
+		rts
+
+; for the laser (scroller.s): d0 = from x, d1 = the beam's game y, d2 = to
+; x -> d0 = x of the leftmost letter in there that is within defLane of
+; the line (-1, N set, if none), d1 its y; defLetterKill then takes it out.
+; keeps d2-d7/a0-a6
+defLetterAt::
+		movem.l	d2-d7/a0,-(a7)
+		move.l	enemy_con,d6
+		lea		enemy_structs,a0
+		moveq	#31,d7
+		move.w	#$7fff,d5
+		moveq	#-1,d4
+.l:
+		btst	d7,d6
+		beq.s	.n
+		tst.w	obj_wait(a0)
+		bne.s	.n
+		move.w	obj_yc(a0),d3
+		sub.w	d1,d3
+		bpl.s	.ay
+		neg.w	d3
+.ay:
+		cmp.w	#defLane,d3
+		bhi.s	.n
+		move.w	defWantWord,d3		; (the rest of a word: that word only)
+		beq.s	.anyWord
+		cmp.w	obj_timer(a0),d3
+		bne.s	.n
+.anyWord:
+		move.w	obj_xc(a0),d3
+		cmp.w	d0,d3
+		blt.s	.n
+		cmp.w	d2,d3
+		bgt.s	.n
+		cmp.w	d5,d3
+		bge.s	.n
+		move.w	d3,d5
+		move.w	d7,d4
+		move.l	a0,defHitObj
+.n:
+		lea		obj_len(a0),a0
+		dbf		d7,.l
+		move.w	d4,defHitBit
+		bmi.s	.none
+		move.w	d5,d0
+		move.l	defHitObj,a0
+		move.w	obj_yc(a0),d1
+		bra.s	.out
+.none:
+		moveq	#-1,d0
+.out:
+		movem.l	(a7)+,d2-d7/a0
+		tst.w	d0
+		rts
+
+; -> d0/d1 = where the letter defLetterAt found was; it is gone. keeps
+; d2-d7/a0-a6
+defLetterKill::
+		movem.l	d2/a0,-(a7)
+		move.w	defHitBit,d2
+		bmi.s	.out
+		move.l	enemy_con,d0
+		bclr	d2,d0
+		move.l	d0,enemy_con
+		move.l	defHitObj,a0
+		move.w	obj_xc(a0),d0
+		move.w	obj_yc(a0),d1
+		move.w	obj_timer(a0),defWantWord	; (the laser goes on along this word)
+		move.w	#-1,defHitBit
+.out:
+		movem.l	(a7)+,d2/a0
+		rts
+
+defWordTab:
+		dc.b	"captain",0,"what",0,"the",0,"fuck",0,"happens",0,"here",0,0
+		even
+defWordPtr:		dc.l	defWordTab
+defHitObj:		dc.l	0
+defHitBit:		dc.w	-1
+defWantWord::	dc.w	0		; the laser's word (obj_timer), 0: any
+	endc
+defWordNo:		dc.w	0
+defWordY0:		dc.w	0
+seq_spawnT:		dc.w	0
+seq_wWait:		dc.b	0		; a letter still to come in
+				even
+seq_wx:			dc.w	-1		; the letter the ship is after ...
+seq_wy:			dc.w	seq_rowY	; ... and its height
+seq_wxShip:		dc.w	seq_defX	; the ship's x for this word
+	endc
 
 ; the words are gone: Asteroids again
 seq_after:
@@ -6597,8 +7114,10 @@ seq_claimX:
 
 ; fire at the letter at screen x d3 (seq_aim has the nose on it)
 seq_fireAt:
+	ifeq	sfxGame
 		moveq	#1,d0				; its sound (music.s sfxPlay, SFX_SHOT)
-		jsr		sfxPlay
+		jsr		sfxPlay				; (with sfxGame: ai_shoot)
+	endc
 		addq.w	#1,seq_fired
 		move.w	d3,-(a7)			; (ai_shoot uses d0-d4)
 		bsr		ai_shoot
@@ -6970,6 +7489,9 @@ seq_tThere:		dc.b	0		; seq_tshoot: at its spot
 seq_aimFine:	dc.b	0		; seq_aim: the lead guessed four times
 				even
 seq_dturn:		dc.w	0		; seq_dmove: degrees a frame the nose turns
+seq_deadT:		dc.w	0		; (tvLate) frames dark so far
+seq_dying:		dc.b	0		; (tvLate) the flicker dying, the bar dark
+				even
 seq_hopLeft:	dc.w	0		; seq_hunt: frames before the next spot
 seq_hopN:		dc.w	0		; ... hits there before it moves on
 seq_spotHit0:	dc.w	0		; ... hitTotal at the spot
