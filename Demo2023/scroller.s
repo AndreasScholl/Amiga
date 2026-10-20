@@ -1619,102 +1619,148 @@ msgFrom::
 		rts
 
 ;---------------------------------------------
-; THE SCROLLER BREAKS
+; THE SCROLLER BREAKS - AND MENDS
 ;---------------------------------------------
-; startGlitch (seq_pilot, after its first attack) switches the text over
-; to feedNext:
-;   a pause      glitchPause spaces
-;   the salad    saladText, every glyph broken a different way
-;                (corruptGlyph), the scroller hangs and jerks (stutterStep)
-;                and tears (glitchFrame) - from here it runs at about half
-;                speed
-;   the message  msgText, still stuttering. the ship shoots it before it
-;                gets to the twist; letters closer than stutterHoldX make
-;                the scroller hang until they are gone
-;   off          spaces. glitchStop (seq_pilot, message gone) ends the
-;                stutter and the tearing
+; startGlitch (seq_pilot, after its first attack) hands the text over to
+; feedScript, a list of commands feedNext works through a char at a time:
+;   FS_SPACES n        n spaces
+;   FS_LEVEL l         how broken the scroller is, 0..16 (glitchLevel).
+;                      up at once, down a step every glitchRampChars chars
+;   FS_SALAD text      a text with every glyph broken (corruptGlyph)
+;   FS_TEXT text       a text as it is
+;   FS_DOTS n, odds    n chars, each a lone dot with odds/256, else space
+;   FS_MSG text        the captain's message: where it starts and ends is
+;                      kept for the ship (msgFrom), and letters of it
+;                      closer than stutterHoldX make the scroller hang
+;                      until they are shot
+;   FS_END             the feed is off (seqTextOff), spaces from now on
+; glitchLevel sets how often the scroller hangs (stutterStep), how often a
+; band of the bar tears sideways and whether specks of noise get into the
+; text (glitchFrame). glitchStop (seq_pilot, message gone) ends it all.
 FEED_TEXT		= 0
-FEED_PAUSE		= 1
-FEED_SALAD		= 2
-FEED_MSG		= 3
+FEED_SCRIPT		= 1
 FEED_OFF		= 4
-glitchPause		= 8				; spaces between the old text and the salad
-stutterOdds		= 80			; out of 256: a hang after a step ...
-stutterLong		= 6				; ... out of 256 a long one
+FS_END			= 0
+FS_SPACES		= 1
+FS_LEVEL		= 2
+FS_SALAD		= 3
+FS_TEXT			= 4
+FS_DOTS			= 5
+FS_MSG			= 6
+glitchRampChars	= 2				; chars per glitchLevel step down
+stutterPerLevel	= 7				; hang odds (out of 256) per level ...
+tearPerLevel	= 5				; ... torn frame odds per level
+noiseLevel		= 12			; specks of noise from this level up
+noiseOdds		= 60			; ... with these odds (out of 256)
 stutterHoldX	= 214			; message letters left of this: hang
 stutterMaxHang	= 120			; ... but never for longer than this
-tearOdds		= 80			; out of 256: a frame with a torn band
-noiseOdds		= 60			; out of 256: a speck of noise in the salad
 tearMax			= 24
+shipClear		= 8				; raster lines round the ship never torn
 
 startGlitch::
-		move.b	#FEED_PAUSE,feedMode
-		move.w	#glitchPause,feedCount
-		rts
+		move.b	#FEED_SCRIPT,feedMode
+		move.l	#feedScript,feedPtr
+		clr.w	feedPos
+		clr.w	glitchLevel
+		clr.w	glitchTarget
+		clr.w	rampCount
+		st		stutterOn
+		bra		glitchInit
 
 ; -> d0 = the next char to put (0 = space). called from putchar
 feedNext:
-		moveq	#0,d0
-		move.b	feedMode,d0
-		cmp.b	#FEED_PAUSE,d0
-		beq.s	.pause
-		cmp.b	#FEED_SALAD,d0
-		beq.s	.salad
-		cmp.b	#FEED_MSG,d0
-		beq.s	.msg
-.space:
-		moveq	#0,d0
-		rts
-.pause:
-		subq.w	#1,feedCount
-		bne.s	.space
-		move.b	#FEED_SALAD,feedMode	; the salad, and the trouble starts
+		; the level eases down towards its target, char by char
+		move.w	glitchLevel,d0
+		cmp.w	glitchTarget,d0
+		bls.s	.cmd
+		addq.w	#1,rampCount
+		cmp.w	#glitchRampChars,rampCount
+		blo.s	.cmd
+		clr.w	rampCount
+		subq.w	#1,glitchLevel
+.cmd:
+		move.l	feedPtr,a0
+		move.w	(a0),d1
+		beq		.off
+		cmp.w	#FS_LEVEL,d1
+		bne.s	.notLevel
+		move.w	2(a0),d0
+		move.w	d0,glitchTarget
+		cmp.w	glitchLevel,d0
+		bls.s	.lvSet
+		move.w	d0,glitchLevel			; worse: at once
+.lvSet:
+		addq.l	#4,feedPtr
 		clr.w	feedPos
-		st		stutterOn
-		bsr		glitchInit
-		bra.s	.space
-.salad:
-		lea		saladText,a0
-		add.w	feedPos,a0
+		bra		.cmd
+.notLevel:
+		cmp.w	#FS_SPACES,d1
+		bne.s	.notSpaces
+		move.w	feedPos,d0
+		cmp.w	2(a0),d0
+		bhs.s	.next4
 		addq.w	#1,feedPos
-		moveq	#0,d0
-		move.b	(a0),d0
-		beq.s	.toMsg
-		st		saladChar				; putchar breaks the glyph
-		cmp.b	#' ',d0
-		bne.s	.out
-		moveq	#0,d0
-.out:
-		rts
-.toMsg:
-		move.b	#FEED_MSG,feedMode
+		bra		.space
+.next4:
+		addq.l	#4,feedPtr
 		clr.w	feedPos
-.msg:
-		lea		msgText,a0
-		add.w	feedPos,a0
+		bra		.cmd
+.notSpaces:
+		cmp.w	#FS_DOTS,d1
+		bne.s	.notDots
+		move.w	feedPos,d0
+		cmp.w	2(a0),d0
+		bhs.s	.next6
+		addq.w	#1,feedPos
+		bsr		debrisRandom
+		and.w	#$ff,d0
+		cmp.w	4(a0),d0
+		bhs		.space
+		moveq	#'.',d0
+		rts
+.next6:
+		addq.l	#6,feedPtr
+		clr.w	feedPos
+		bra		.cmd
+.notDots:
+		; FS_SALAD, FS_TEXT or FS_MSG: the text is at 2(a0)
+		move.l	2(a0),a1
+		add.w	feedPos,a1
 		moveq	#0,d0
-		move.b	(a0),d0
-		bne.s	.msgChar
-		move.b	#FEED_OFF,feedMode		; all out
-		st		seqTextOff
-		bsr.s	.slotX
+		move.b	(a1),d0
+		bne.s	.char
+		cmp.w	#FS_MSG,d1				; the end of the message
+		bne.s	.next6
+		bsr		.slotX
 		move.w	d0,msgEndAbs
 		st		msgEnded
-		bra.s	.space
-.msgChar:
+		bra.s	.next6
+.char:
+		cmp.w	#FS_MSG,d1
+		bne.s	.notStart
 		tst.w	feedPos
-		bne.s	.notFirst
-		move.w	d0,-(a7)
-		bsr.s	.slotX
+		bne.s	.notStart
+		move.w	d0,-(a7)				; its first char
+		bsr		.slotX
 		move.w	d0,msgStartAbs
 		st		msgStarted
 		move.w	(a7)+,d0
-.notFirst:
+.notStart:
 		addq.w	#1,feedPos
+		cmp.w	#FS_SALAD,d1
+		bne.s	.plain
+		st		saladChar				; putchar breaks the glyph
+.plain:
 		cmp.b	#' ',d0
 		bne.s	.out
+.space:
 		moveq	#0,d0
+.out:
 		rts
+.off:
+		move.b	#FEED_OFF,feedMode
+		st		seqTextOff
+		bra.s	.space
 ; screen x of the byte putchar is about to fill (d7 = 0 or 1), as an
 ; absolute position: + scrollSteps
 .slotX:
@@ -1779,17 +1825,22 @@ stutterStep:
 		moveq	#1,d0
 		rts
 .roll:
-		; a step now - and maybe a hang after it, 1..4 frames, or now and
-		; then a long one
+		; a step now - and maybe a hang after it, 1..4 frames, now and then
+		; a long one. how often depends on glitchLevel
+		move.w	glitchLevel,d2
+		beq.s	.go
 		bsr		debrisRandom
 		moveq	#0,d1
 		move.b	d0,d1
-		cmp.w	#stutterLong,d1
+		move.w	d2,d3
+		lsr.w	#2,d3					; long ones: level/4 out of 256
+		cmp.w	d3,d1
 		bhs.s	.short
 		move.w	#12,stutterHold
 		bra.s	.go
 .short:
-		cmp.w	#stutterOdds,d1
+		mulu	#stutterPerLevel,d2
+		cmp.w	d2,d1
 		bhs.s	.go
 		lsr.w	#8,d0
 		and.w	#3,d0
@@ -1799,21 +1850,32 @@ stutterStep:
 		moveq	#0,d0
 		rts
 
-; find the bar's BPLCON1 moves, so glitchFrame can tear the lines
+; find the bar's BPLCON1 moves, and the raster line each one comes on, so
+; glitchFrame can tear the lines
 glitchInit:
 		lea		barRegionStart,a0
 		lea		tearAddr,a1
 		lea		tearOrig,a2
+		lea		tearLine,a3
 		moveq	#0,d0
+		moveq	#0,d2					; line of the last wait
 .scan:
 		cmp.l	#barRegionEnd,a0
 		bhs.s	.done
-		cmp.w	#$0102,(a0)
+		move.w	(a0),d1
+		btst	#0,d1
+		beq.s	.move
+		lsr.w	#8,d1
+		move.w	d1,d2
+		bra.s	.next
+.move:
+		cmp.w	#$0102,d1
 		bne.s	.next
 		cmp.w	#tearMax,d0
 		bhs.s	.next
 		move.l	a0,(a1)+
 		move.w	2(a0),(a2)+
+		move.w	d2,(a3)+
 		addq.w	#1,d0
 .next:
 		addq.l	#4,a0
@@ -1824,9 +1886,10 @@ glitchInit:
 		rts
 
 ; every frame while glitchOn: put the BPLCON1 values back, then maybe tear
-; a band of 2..5 of those lines sideways (playfield 1 delay: the text,
-; the dots and the ship in it all jump), and in the salad maybe flip a
-; speck of the source text
+; a band of 2..5 of those lines sideways (playfield 1 delay: the text and
+; the dots in it jump), and at the worst levels flip a speck of the source
+; text. the lines round the ship are never torn (seq_shipY), it must not
+; so much as twitch
 glitchFrame:
 		tst.b	glitchOn
 		beq		.out
@@ -1842,8 +1905,10 @@ glitchFrame:
 		bsr		debrisRandom
 		moveq	#0,d1
 		move.b	d0,d1
-		cmp.w	#tearOdds,d1
-		bhs.s	.noTear
+		move.w	glitchLevel,d2
+		mulu	#tearPerLevel,d2
+		cmp.w	d2,d1
+		bhs		.noTear
 		move.w	tearCount,d5			; the last BPLCON1 move of the bar is
 		subq.w	#1,d5					; never torn: it puts the delay back
 		lsr.l	#8,d0					; for the rest of the bar
@@ -1859,22 +1924,36 @@ glitchFrame:
 		moveq	#7,d4
 		and.w	d0,d4
 		addq.w	#2,d4					; 2..9 pixels
+		move.w	seq_shipY,d6			; the ship's lines
 		lea		tearAddr,a1
+		lea		tearLine,a3
 .tear:
 		cmp.w	d5,d2
 		bhs.s	.noTear
 		move.w	d2,d1
-		lsl.w	#2,d1
+		add.w	d1,d1
+		move.w	2(a3,d1.w),d0			; this move holds until the next one
+		subq.w	#1,d0
+		add.w	#shipClear,d0
+		cmp.w	d6,d0
+		blt.s	.tearIt					; ends above the ship ...
+		move.w	(a3,d1.w),d0
+		sub.w	#shipClear,d0
+		cmp.w	d6,d0
+		ble.s	.skipShip				; ... or starts below it, else leave it
+.tearIt:
+		add.w	d1,d1
 		move.l	(a1,d1.w),a0
 		move.w	2(a0),d1
 		and.w	#$fff0,d1
 		or.w	d4,d1
 		move.w	d1,2(a0)
+.skipShip:
 		addq.w	#1,d2
 		dbf		d3,.tear
 .noTear:
-		cmp.b	#FEED_SALAD,feedMode
-		bne.s	.out
+		cmp.w	#noiseLevel,glitchLevel
+		blo.s	.out
 		bsr		debrisRandom
 		moveq	#0,d1
 		move.b	d0,d1
@@ -1919,12 +1998,47 @@ glitchStop::
 .off:
 		sf		glitchOn
 		sf		stutterOn
+		clr.w	glitchLevel
 		movem.l	(a7)+,d7/a0-a2
 		rts
 
+; what happens to the scroller after the first attack
+feedScript:
+		dc.w	FS_SPACES,6				; a moment of silence
+		dc.w	FS_LEVEL,16				; then it all goes wrong
+		dc.w	FS_SALAD
+		dc.l	saladText
+		dc.w	FS_LEVEL,8				; mending, slowly: a dot now and then
+		dc.w	FS_DOTS,8,40
+		dc.w	FS_LEVEL,5
+		dc.w	FS_DOTS,6,24
+		dc.w	FS_TEXT					; somebody on the bridge tries it out
+		dc.l	testText1
+		dc.w	FS_LEVEL,3
+		dc.w	FS_DOTS,4,20
+		dc.w	FS_TEXT
+		dc.l	testText2
+		dc.w	FS_LEVEL,2
+		dc.w	FS_TEXT
+		dc.l	testText3
+		dc.w	FS_TEXT
+		dc.l	testText4
+		dc.w	FS_LEVEL,1
+		dc.w	FS_SPACES,20			; a long pause - all quiet?
+		dc.w	FS_MSG
+		dc.l	msgText
+		dc.w	FS_END
 ; designed nonsense: system noise with a hint of an error report in it
 saladText:
 		dc.b	"#@?! 3RR*R ][/\\0X<>?#",0
+testText1:
+		dc.b	"BRIDGE TO DISPLAY...  ",0
+testText2:
+		dc.b	"TEST  TEST  TEST 1 2 3...  ",0
+testText3:
+		dc.b	"DISPLAY ONLINE AGAIN.    ",0
+testText4:
+		dc.b	"-      -   -    -          -- - - -    ---",0
 msgText:
 		dc.b	"CAPTAIN, WHAT THE FUCK HAPPENS HERE",0
 		even
@@ -2239,13 +2353,17 @@ rings:			ds.b	ring_len*ringMax
 scrollSteps::	dc.w	0		; pixels the text has moved, ever
 msgStartAbs:	dc.w	0		; screen x + scrollSteps of the message's start
 msgEndAbs:		dc.w	0		; ... and of its end
-feedCount:		dc.w	0
+feedPtr:		dc.l	0		; feedScript command now
 feedPos:		dc.w	0
+glitchLevel::	dc.w	0		; how broken the scroller is, 0..16
+glitchTarget:	dc.w	0
+rampCount:		dc.w	0
 hangCount:		dc.w	0
 stutterHold:	dc.w	0
 tearCount:		dc.w	0
 tearAddr:		ds.l	tearMax
 tearOrig:		ds.w	tearMax
+tearLine:		ds.w	tearMax+1	; raster line of each, + an end
 seqTextOff::	dc.b	0		; the feed is off: only spaces from now on
 scrollGone::	dc.b	0		; ... and none of the old text is left
 scrollReady::	dc.b	0		; the text runs across the whole bar
@@ -3324,6 +3442,7 @@ putchar:
 		rts
 .feed:
 		bsr		feedNext				; -> d0 = char, 0 for a space
+		moveq	#43,d1					; (feedNext uses d1)
 		tst.b	d0
 		beq.s	.textfin
 		bra.s	.notextfin
