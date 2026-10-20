@@ -198,6 +198,7 @@ clearLines		= screenHeight+screenHeight-emberTop	; 219
 
 		section "code",data,chip
 initScroller::
+		sf		sfxWide					; (music.s) one channel for the effects
 		bsr		buildLogoPadded
 		move.l	#zeroArea,d0		; plane 2 above and below the logo
 		move.w	d0,topZero2l
@@ -219,6 +220,8 @@ initScroller::
 		bsr		initPoints
 		bsr		buildDebrisRnd
 		jsr		initGameObjects		; asteroids share this part's bitplane
+		bsr		glitchScan			; the bar's BPLCON1 moves, for the tears
+		bsr		tvScan				; ... and tvList's colour moves
 
  		move.l	#clist,$dff080
 		clr.w	$dff088
@@ -423,6 +426,7 @@ updateScroller::
 		bsr		glitchFrame			; the scroller breaking, tearing
 		bsr		barFlicker			; the bar going wrong (the Defender ending)
 		bsr		tvUpdate			; the TV switch off, once it is started
+		bsr		inkFade				; ... and the text's colours, once it is all shot
 		lea		$dff000,a6
 
 ; --- asteroids last: objects_draw leaves BLTAFWM/BLTALWM at $ffff0000 and
@@ -2141,26 +2145,30 @@ drawLaser:
 		rts
 
 ;---------------------------------------------
-; THE DEFENDER EXPLOSION (the laser's letters): as in the video - the
-; thing bursts into a lattice of dots that flies apart, the lattice
-; growing as a whole: dot (i, j) at the middle + (i, j) * step * age. no
-; two alike: the step across and down, its life (5x5 - a 7x7 one would
-; not fit in the frame). white hot,
-; then under the bar orange, red, gone (the ember plane). only the
-; scroller's buffer, so it never gets up onto the logo. cheap: no state
-; per dot, the whole lattice is a centre, two steps and an age
+; THE DEFENDER EXPLOSION (the laser's letters): a firework. the thing
+; bursts into sparks - a ring of 12 and an inner one of 6, a little uneven
+; - that fly out fast and slow down (drag), while the whole burst pops up
+; and then falls, ever faster (gravity). three sizes, each its life. white
+; hot, then under the bar orange, red (the ember plane), and over its last
+; third the sparks twinkle out at random. only the scroller's buffer, so it
+; never gets up onto the logo. cheap: no state per spark - where they are
+; for every age is a table (fw.i, fwgen.py), the burst is a centre, a size,
+; a pop and an age
 latMax			= 7
+latKick0		= 256			; the pop up: this + 0..127 (8.8 a frame)
+latGrav			= 77			; the fall, 8.8 a frame a frame (0.3 px)
+latLife0		= 13			; life: this + 0..3 frames (the drag has them out
+								; at nearly full reach by then - and fewer at once)
 				rsreset
 lat_x:			rs.w	1
 lat_line:		rs.w	1
-lat_sx:			rs.w	1			; step across a frame, 8.8
-lat_sy:			rs.w	1			; ... and down
 lat_age:		rs.w	1
 lat_life:		rs.b	1
-lat_n:			rs.b	1			; 2: 5x5, 3: 7x7
-lat_size:		rs.b	0
+lat_n:			rs.b	1			; the size, 0..2 (fwTab)
+lat_kick:		rs.w	1			; the pop upwards, 8.8 a frame
+lat_size:		rs.b	0			; 10
 
-; a lattice at debrisCx/debrisCy. keeps every register
+; a burst at debrisCx/debrisCy. keeps every register
 latticeAdd:
 		movem.l	d0-d1/a2,-(a7)
 		move.w	latCount,d1
@@ -2172,30 +2180,28 @@ latticeAdd:
 		add.w	d1,a2
 		move.w	debrisCx,lat_x(a2)
 		move.w	debrisCy,lat_line(a2)
+		clr.w	lat_age(a2)
 		bsr		debrisRandom
 		moveq	#0,d1
 		move.b	d0,d1
-		lsr.w	#1,d1
-		add.w	#320,d1					; 1.25 .. 1.75 px a frame across
-		move.w	d1,lat_sx(a2)
+		mulu	#3,d1					; the size: 0..2
+		lsr.w	#8,d1
+		move.b	d1,lat_n(a2)
 		lsr.w	#8,d0
-		and.w	#127,d0
-		add.w	#144,d0					; 0.55 .. 1.05 down
-		move.w	d0,lat_sy(a2)
-		clr.w	lat_age(a2)
-		swap	d0
-		move.b	#2,lat_n(a2)			; 5x5 (7x7 would not fit in the frame)
-		lsr.w	#2,d0
-		and.w	#7,d0
-		add.w	#14,d0					; 14..21 frames
+		and.w	#3,d0
+		add.w	#latLife0,d0			; 13..16 frames
 		move.b	d0,lat_life(a2)
+		bsr		debrisRandom
+		and.w	#127,d0
+		add.w	#latKick0,d0			; 1 .. 1.5 px a frame up at first
+		move.w	d0,lat_kick(a2)
 .out:
 		movem.l	(a7)+,d0-d1/a2
 		rts
 
-; every lattice a frame on and drawn (from drawBlastFx: a0 = buffer, a1 =
-; yTable). per lattice: the columns' x once (latCols: byte, bit; -1 off
-; the screen), then row by row a bset a dot
+; every burst a frame on and drawn (from drawBlastFx: a0 = buffer, a1 =
+; yTable). spark by spark: the table's offset + the centre (+ the fall),
+; on the screen? a bset
 drawLattice:
 		move.w	latCount,d0
 		beq		.out
@@ -2212,11 +2218,25 @@ drawLattice:
 		bls		.drop
 		move.l	(a2)+,(a3)+				; keep it (in place, packed)
 		move.l	(a2)+,(a3)+
-		move.l	(a2)+,(a3)+
+		move.w	(a2)+,(a3)+
 		lea		-lat_size(a3),a4
 		; how it looks: white the first half, then orange, the last quarter
-		; red - under the bar (the ember plane), white over it
+		; red - under the bar (the ember plane), white over it. the last
+		; third it twinkles: every spark has a 50:50 chance a frame
+		moveq	#0,d3					; (no twinkle)
 		move.w	lat_age(a4),d5
+		move.w	d5,d4
+		add.w	d4,d4
+		add.w	d5,d4					; age*3
+		move.w	d0,d2
+		add.w	d2,d2					; life*2
+		cmp.w	d2,d4
+		blo.s	.noTw
+		bsr		debrisRandom
+		move.l	d0,d3
+		moveq	#0,d0
+		move.b	lat_life(a4),d0
+.noTw:
 		add.w	d5,d5
 		moveq	#0,d6
 		cmp.w	d0,d5
@@ -2230,122 +2250,62 @@ drawLattice:
 		blo.s	.col
 		moveq	#2,d6
 .col:
-		move.w	lat_sx(a4),d4			; the steps now
-		mulu	lat_age(a4),d4
-		lsr.l	#8,d4
-		move.w	lat_sy(a4),d5
-		mulu	lat_age(a4),d5
-		lsr.l	#8,d5
-		moveq	#0,d3
-		move.b	lat_n(a4),d3			; n
-		; --- the columns
-		lea		latCols,a6
-		move.w	d4,d0
-		mulu	d3,d0
-		neg.w	d0
-		add.w	lat_x(a4),d0			; x of the first
-		move.w	d3,d1
-		add.w	d1,d1					; 2n+1 of them
-.cols:
+		; --- the centre, and the fall: g*t*t/2 (latFall) - kick*t
+		move.w	lat_x(a4),d4
+		move.w	lat_age(a4),d2
+		move.w	d2,d5
+		add.w	d5,d5
+		lea		latFall,a6
+		move.w	(a6,d5.w),d5
+		mulu	lat_kick(a4),d2
+		lsr.l	#8,d2
+		sub.w	d2,d5
+		add.w	lat_line(a4),d5
+		; --- the table row: (size * fwAges + age) * fwSparks * 2
+		moveq	#0,d0
+		move.b	lat_n(a4),d0
+		mulu	#fwAges,d0
+		add.w	lat_age(a4),d0
+		mulu	#fwSparks*2,d0
+		lea		fwTab,a6
+		add.w	d0,a6
+		moveq	#fwSparks-1,d7
+.dot:
+		move.b	(a6)+,d0
+		ext.w	d0
+		add.w	d4,d0					; x
+		move.b	(a6)+,d1
+		ext.w	d1
+		add.w	d5,d1					; y
+		lsr.l	#1,d3					; twinkling: this one off now?
+		bcs.s	.skip
 		cmp.w	#game_width,d0
-		bhs.s	.cOff
+		bhs.s	.skip
 		cmp.w	#borderX,d0
-		blo.s	.cOff
+		blo.s	.skip
+		cmp.w	#screenHeight,d1
+		bhs.s	.skip
 		move.w	d0,d2
-		lsr.w	#3,d2
-		move.w	d2,(a6)+
-		move.w	d0,d2
-		not.w	d2
-		move.w	d2,(a6)+
-		bra.s	.cNext
-.cOff:
-		move.l	#-1,(a6)+
-.cNext:
-		add.w	d4,d0
-		dbf		d1,.cols
-		; --- the rows
-		move.w	d5,d0
-		mulu	d3,d0
-		neg.w	d0
-		add.w	lat_line(a4),d0			; line of the first
-		move.w	d3,d1
-		add.w	d1,d1					; 2n+1 of them
-.row:
-		cmp.w	#screenHeight,d0
-		bhs		.rNext
-		move.w	d0,d2
-		add.w	d2,d2
-		move.w	(a1,d2.w),d2			; y * li
-		lea		(a0,d2.w),a4			; plane 1's line
-		lea		(a5,d2.w),a6			; (a6 is free again for the ember's)
-		move.l	a6,latEmber
-		lea		latCols,a6
-		cmp.w	d3,d1					; the middle row: not the middle dot
-		bne.s	.notMid
-		move.w	d3,d2
-		lsl.w	#2,d2
-		move.l	(a6,d2.w),-(a7)
-		move.l	#-1,(a6,d2.w)
-.notMid:
-		move.w	d3,d4
-		add.w	d4,d4					; 2n+1 dots
+		lsr.w	#3,d2					; its byte
+		not.w	d0						; its bit
+		cmp.w	#emberTop,d1
+		bhs.s	.under
+		add.w	d1,d1
+		add.w	(a1,d1.w),d2
+		bset	d0,(a0,d2.w)			; over the bar: white
+		bra.s	.skip
+.under:
+		add.w	d1,d1
+		add.w	(a1,d1.w),d2
 		tst.w	d6
-		beq.s	.white
-		cmp.w	#emberTop,d0
-		blo.s	.white
-		move.l	latEmber,a6				; a6 the ember plane's line, a4 the
-		lea		latCols,a4				; columns
+		beq.s	.wh
+		bset	d0,(a5,d2.w)			; orange or red: the ember plane
 		cmp.w	#1,d6
-		beq.s	.orange
-		; --- red: the ember plane only
-.red:
-		move.w	(a4)+,d2
-		move.w	(a4)+,d7
-		tst.w	d2
-		bmi.s	.rd
-		bset	d7,(a6,d2.w)
-.rd:
-		dbf		d4,.red
-		bra.s	.rowDone
-		; --- orange: both planes
-.orange:
-		move.l	a0,-(a7)
-		move.w	d0,-(a7)
-		move.w	d0,d7
-		add.w	d7,d7
-		move.w	(a1,d7.w),d7
-		lea		(a0,d7.w),a0			; plane 1's line
-		move.w	(a7)+,d0
-.or:
-		move.w	(a4)+,d2
-		move.w	(a4)+,d7
-		tst.w	d2
-		bmi.s	.od
-		bset	d7,(a6,d2.w)
-		bset	d7,(a0,d2.w)
-.od:
-		dbf		d4,.or
-		move.l	(a7)+,a0
-		bra.s	.rowDone
-		; --- white: plane 1
-.white:
-		move.w	(a6)+,d2
-		move.w	(a6)+,d7
-		tst.w	d2
-		bmi.s	.wd
-		bset	d7,(a4,d2.w)
-.wd:
-		dbf		d4,.white
-.rowDone:
-		cmp.w	d3,d1					; (the middle dot back)
-		bne.s	.rNext
-		lea		latCols,a6
-		move.w	d3,d2
-		lsl.w	#2,d2
-		move.l	(a7)+,(a6,d2.w)
-.rNext:
-		add.w	d5,d0
-		dbf		d1,.row
+		bne.s	.skip					; (red: that only)
+.wh:
+		bset	d0,(a0,d2.w)
+.skip:
+		dbf		d7,.dot
 		bra.s	.next
 .drop:
 		lea		lat_size(a2),a2			; gone: not written back
@@ -2369,6 +2329,57 @@ tvBeamTab:
 		dc.l	tvBD4,tvBD5,tvBeam0,tvBeam1,tvBeam2,tvBeam3,tvBDA,tvBDB
 tvBeamOrig:
 		dc.w	$0777,$0888,$0988,$0a99,$0baa,$0dcc,$0ddd,$0eee
+
+; the scroller all shot (seq_deffire sets inkOff): colour 1 under the bar -
+; the text's shading, which the ship and the letters get there too - goes
+; over to the game's own colour, as above the bar. a step every inkStepT
+; frames, once the last explosions and the beam are gone
+inkStepT		= 3
+inkColor		= $0eee			; (clist: the game area's colour 1)
+inkFade:
+		tst.b	inkOff
+		beq.s	.out
+		tst.w	latCount
+		bne.s	.out
+		tst.b	laserOn
+		bne.s	.out
+		tst.b	laserCol
+		bne.s	.out
+		subq.w	#1,inkTick
+		bpl.s	.out
+		move.w	#inkStepT-1,inkTick
+		move.w	tvInkCount,d7
+		beq.s	.done
+		subq.w	#1,d7
+		lea		tvInkAddr,a2
+		moveq	#1,d5					; all there?
+.c:
+		move.l	(a2)+,a3
+		move.w	(a3),d0
+		move.w	#inkColor,d1
+		cmp.w	d0,d1
+		beq.s	.there
+		moveq	#0,d5
+		bsr		colorStepTo
+		move.w	d6,(a3)
+.there:
+		dbf		d7,.c
+		tst.w	d5
+		beq.s	.out
+.done:
+		sf		inkOff
+		lea		tvBeamOrig,a2			; (and so it stays)
+		moveq	#8-1,d7
+.b:
+		move.w	#inkColor,(a2)+
+		dbf		d7,.b
+.out:
+		rts
+inkOff::		dc.b	0
+				even
+inkTick:		dc.w	0
+tvInkCount:		dc.w	0
+tvInkAddr:		ds.l	128
 
 ; one line d3 of the streak from x d4 to d5, d1.b the bits of each byte
 ; that are lit. keeps d1-d5
@@ -3788,6 +3799,10 @@ stutterStep:
 ; find the bar's BPLCON1 moves, and the raster line each one comes on, so
 ; glitchFrame can tear the lines
 glitchInit:
+		st		glitchOn				; (the moves were found at the start,
+		rts								; glitchScan - a 14k scan the frame of the
+										; first hit could not afford)
+glitchScan:
 		lea		barRegionStart,a0
 		lea		tearAddr,a1
 		lea		tearOrig,a2
@@ -3817,7 +3832,6 @@ glitchInit:
 		bra.s	.scan
 .done:
 		move.w	d0,tearCount
-		st		glitchOn
 		rts
 
 ; every frame while glitchOn: put the BPLCON1 values back, then maybe tear
@@ -3957,7 +3971,7 @@ feedScript:
 		dc.w	FS_DOTS,8,40
 		dc.w	FS_LEVEL,5
 		dc.w	FS_DOTS,6,24
-		dc.w	FS_TEXT					; somebody on the bridge tries it out
+		dc.w	FS_TEXT					; scene talk on the bridge as it mends
 		dc.l	testText1
 		dc.w	FS_LEVEL,3
 		dc.w	FS_DOTS,4,20
@@ -3967,12 +3981,13 @@ feedScript:
 		dc.w	FS_TEXT
 		dc.l	testText3
 		dc.w	FS_TAIL					; (the old way, with finalAttackOn)
-		dc.w	FS_CALM					; mended: from here it runs clean - a
-		dc.w	FS_TEXT					; glyph test of the display
-		dc.l	glyphTest1
-		dc.w	FS_CUE					; the end is set up (seq_defshoot): it goes
-										; on testing - the little jerks only from
-										; the first glyph shot out (seq_tshoot) ...
+feedMended:
+		dc.w	FS_CALM					; mended: from here it runs clean - and at
+		dc.w	FS_CUE					; once the end is set up (seq_defshoot):
+										; the ship comes over during a short
+		dc.w	FS_TEXT					; word from the bridge, then the crews
+		dc.l	glyphTest1				; come in - the little jerks only from the
+										; first glyph shot out ...
 		dc.w	FS_TESTLOOP
 		dc.l	crewText
 		dc.w	FS_CALM					; ... till the ship is ready for the
@@ -3996,18 +4011,16 @@ feedTailAttack:
 ; designed nonsense: system noise with a hint of an error report in it
 saladText:
 		dc.b	"#@?! 3RR*R ][/\\0X<>?#",0
+; scene talk while it mends (it used to be a display test)
 testText1:
-		dc.b	"BRIDGE TO DISPLAY...  ",0
+		dc.b	"COPPER TO BLITTER: COME IN!  ",0
 testText2:
-		dc.b	"TEST  TEST  TEST 1 2 3...  ",0
+		dc.b	"NO GURU TODAY!  ",0
 testText3:
-		dc.b	"DISPLAY ONLINE AGAIN.    ",0
-; the display test, not words: glyph by glyph, with room round each - a
-; ramp of blocks, the letters and the figures in steps, the wide ones and
-; the narrow ones side by side, the signs in pairs, the ring to close
+		dc.b	"SCREEN BACK. 50 FPS OR DIE!    ",0
+; mended: a word from the bridge (short - the attack comes soon)
 glyphTest1:
-		dc.b	"   #    ##    ###    ####      A   B   C   D   E   F      "
-		dc.b	"1   2   3   4   5      MMM   III   WWW      ",0
+		dc.b	"   REAL CODERS USE THE COPPER!    ",0
 ; ... and then this round and round till the ship is ready for the message:
 ; the crews, and a few words from Thrust's Ottifant intro (1988)
 crewText:
@@ -4096,8 +4109,9 @@ tvUpdate:
 
 ; --- first frame: the copper goes through tvList from now on
 tvStart:
-		moveq	#5,d0					; the zap of the set going off (music.s
-		jsr		sfxPlay					; sfxPlay, SFX_ZAP)
+		st		sfxWide					; Defender from here: the effects get
+		moveq	#5,d0					; more channels - and the zap of the set
+		jsr		sfxPlay					; going off (music.s sfxPlay, SFX_ZAP)
 		bsr		barFlickStop			; the bar's own colours again first
 		tst.b	tvKeepText				; (the monitor goes off, the text runs
 		bne.s	.keep					; on - the Defender ending)
@@ -4124,10 +4138,17 @@ tvStart:
 		move.w	(a2,d0.w),(a0)+
 		dbf		d7,.wall
 		clr.w	(a0)+					; $ef
-		; the line colour moves of tvList: a $0180 move after a wait at
-		; h position 1 (the h waits on the middle lines have their own)
+		move.w	#256,d0					; same colours as the bar has now (no
+		moveq	#0,d1					; stretch, no white)
+		bra		tvStart2
+
+; the line colour moves of tvList: a $0180 move after a wait at h
+; position 1 (the h waits on the middle lines have their own). once, at
+; the start (initScroller) - the frame the TV goes off has no room for it
+tvScan:
 		lea		tvList,a0
 		lea		tvColAddr,a1
+		lea		tvInkAddr,a2
 		moveq	#0,d1					; h of the last wait
 .scan:
 		cmp.l	#tvListEnd,a0
@@ -4138,6 +4159,12 @@ tvStart:
 		move.b	d0,d1					; a wait
 		bra.s	.next
 .move:
+		cmp.w	#$0182,d0				; colour 1: the text's, and what the ship
+		bne.s	.notInk					; and the letters get there (inkFade)
+		lea		2(a0),a3
+		move.l	a3,(a2)+
+		bra.s	.next
+.notInk:
 		cmp.w	#$0180,d0
 		bne.s	.next
 		cmp.b	#$01,d1
@@ -4148,7 +4175,13 @@ tvStart:
 		addq.l	#4,a0
 		bra.s	.scan
 .scanned:
-		bsr		tvPaint					; same colours as the bar has now
+		sub.l	#tvInkAddr,a2
+		move.l	a2,d0
+		lsr.w	#2,d0
+		move.w	d0,tvInkCount
+		rts
+tvStart2:
+		bsr		tvPaint
 		move.w	gamePlanes2,tvPlanes2	; whatever the game has it at
 		move.l	#barRegionEnd,d0		; the way back
 		move.w	d0,tvBackL
@@ -4393,6 +4426,14 @@ laserLast:		dc.w	0		; the last letter's end, + scrollSteps
 laserWait::		dc.w	0		; frames till the next letter
 laserCol:		dc.b	0		; the beam's colours are on (tvBeam0..3)
 				even
+; the fall for every age, g*t*t/2 in pixels
+latFall:
+LA		set		0
+		rept	22
+		dc.w	(latGrav*LA*LA)>>9
+LA		set		LA+1
+		endr
+		include	"fw.i"				; the sparks (fwgen.py)
 latCount:		dc.w	0		; Defender explosions going on ...
 lattices:		ds.b	lat_size*latMax		; ... drawLattice
 latLeft:		dc.w	0

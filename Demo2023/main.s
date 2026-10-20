@@ -12,6 +12,7 @@
 
 		section "code",data,chip
 init:
+		bsr		randomize
 		move.l	#st,$80
 		trap	#0
 
@@ -27,6 +28,64 @@ init:
 
 lib:	dc.b	'graphics.library',0
 		even
+
+; a new seed at every start, while the system still runs: the date and time
+; (dos.library DateStamp - to the 50th of a second, so even without a
+; battery clock the moment the demo gets started counts), where the beam
+; is, and both CIA clocks (frames and lines since the machine came on).
+; everything random follows from it - the ship comes in from somewhere
+; else, and the whole fight goes another way: an AI at work, not a
+; recording
+randomize:
+		movem.l	d0-d2/a0-a1/a6,-(a7)
+		move.l	$4.w,a6
+		lea		dosName(pc),a1
+		moveq	#0,d0
+		jsr		-552(a6)			; OpenLibrary
+		tst.l	d0
+		beq.s	.noDos
+		move.l	d0,a6
+		move.l	#dateStamp,d1
+		jsr		-192(a6)			; DateStamp
+		move.l	a6,a1
+		move.l	$4.w,a6
+		jsr		-414(a6)			; CloseLibrary
+.noDos:
+		move.l	dateStamp,d0		; days
+		rol.l	#7,d0
+		add.l	dateStamp+4,d0		; minutes
+		swap	d0
+		rol.l	#3,d0
+		add.l	dateStamp+8,d0		; ticks
+		rol.l	#5,d0
+		eor.l	d0,seed
+		move.l	$dff004,d0			; the beam
+		moveq	#0,d1
+		move.b	$bfea01,d1			; CIA-A: frames (read high to low,
+		lsl.l	#8,d1				; the low byte lets the latch go)
+		move.b	$bfe901,d1
+		lsl.l	#8,d1
+		move.b	$bfe801,d1
+		swap	d1
+		eor.l	d1,d0
+		moveq	#0,d1
+		move.b	$bfda00,d1			; CIA-B: lines
+		lsl.l	#8,d1
+		move.b	$bfd900,d1
+		lsl.l	#8,d1
+		move.b	$bfd800,d1
+		rol.l	#3,d1
+		eor.l	d1,d0
+		eor.l	d0,seed+0
+		moveq	#7,d2				; stir
+.stir:	bsr		getRandomNumber
+		dbf		d2,.stir
+		movem.l	(a7)+,d0-d2/a0-a1/a6
+		rts
+
+dosName:	dc.b	'dos.library',0
+		cnop	0,4
+dateStamp:	dc.l	0,0,0
 
 st:		
 		move.w	#$2700,sr
