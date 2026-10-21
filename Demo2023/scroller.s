@@ -4072,6 +4072,8 @@ msgFrom::
 ;                      up at once, down a step every glitchRampChars chars
 ;   FS_SALAD text      a text with every glyph broken (corruptGlyph)
 ;   FS_TEXT text       a text as it is
+;   FS_BROKEN text, o  a text on the mend: each glyph broken with odds
+;                      o/256 (corruptGlyph), the rest as they are
 ;   FS_DOTS n, odds    n chars, each a lone dot with odds/256, else space
 ;   FS_MSG text        the captain's message: where it starts and ends is
 ;                      kept for the ship (msgFrom), and letters of it
@@ -4099,6 +4101,7 @@ FS_CUE			= 8				; tells the ship the message is coming (msgCue)
 FS_TESTLOOP		= 9				; a text over and over till the ship is ready
 								; for the message (seq_defReady), then on
 FS_TAIL			= 10			; with finalAttackOn: on with feedTailAttack
+FS_BROKEN		= 11			; a text with some of its glyphs broken
 msgGap			= 20			; spaces before the message (3.2 s)
 cuePause		= 20			; spaces between the dashes and the message
 glitchRampChars	= 2				; chars per glitchLevel step down
@@ -4252,6 +4255,30 @@ feedNext:
 		clr.w	feedPos
 		bra		.cmd
 .notDots:
+		cmp.w	#FS_BROKEN,d1
+		bne.s	.notBroken
+		move.l	2(a0),a1
+		add.w	feedPos,a1
+		moveq	#0,d0
+		move.b	(a1),d0
+		bne.s	.bChar
+		addq.l	#8,feedPtr
+		clr.w	feedPos
+		bra		.cmd
+.bChar:
+		addq.w	#1,feedPos
+		cmp.b	#' ',d0
+		beq		.space
+		move.w	d0,-(a7)
+		bsr		debrisRandom
+		and.w	#$ff,d0
+		cmp.w	6(a0),d0
+		bhs.s	.bOk
+		st		saladChar				; this one still broken
+.bOk:
+		move.w	(a7)+,d0
+		rts
+.notBroken:
 		; FS_SALAD, FS_TEXT or FS_MSG: the text is at 2(a0)
 		move.l	2(a0),a1
 		add.w	feedPos,a1
@@ -4588,19 +4615,20 @@ feedScript:
 		dc.w	FS_LEVEL,16				; it all goes wrong at once
 		dc.w	FS_SALAD
 		dc.l	saladText
-		dc.w	FS_LEVEL,8				; mending, slowly: a dot now and then
-		dc.w	FS_DOTS,8,40
-		dc.w	FS_LEVEL,5
-		dc.w	FS_DOTS,6,24
-		dc.w	FS_TEXT					; scene talk on the bridge as it mends
-		dc.l	testText1
-		dc.w	FS_LEVEL,3
-		dc.w	FS_DOTS,4,20
-		dc.w	FS_TEXT
+		dc.w	FS_LEVEL,12				; mending, a step at a time: the scene talk
+		dc.w	FS_DOTS,4,48			; on the bridge comes through still broken,
+		dc.w	FS_BROKEN				; fewer glyphs each time - and the tears
+		dc.l	testText1				; and the stutter wear off with it
+		dc.w	190
+		dc.w	FS_LEVEL,8
+		dc.w	FS_DOTS,3,32
+		dc.w	FS_BROKEN
 		dc.l	testText2
-		dc.w	FS_LEVEL,2
-		dc.w	FS_TEXT
+		dc.w	120
+		dc.w	FS_LEVEL,4
+		dc.w	FS_BROKEN
 		dc.l	testText3
+		dc.w	56
 		dc.w	FS_TAIL					; (the old way, with finalAttackOn)
 feedMended:
 		dc.w	FS_CALM					; mended: from here it runs clean - and at
@@ -4633,14 +4661,14 @@ feedTailAttack:
 		dc.w	FS_END
 ; designed nonsense: system noise with a hint of an error report in it
 saladText:
-		dc.b	"#@?! 3RR*R ][/\\0X<>?#",0
+		dc.b	"#@?! 3RR*R ][/\\0X",0
 ; scene talk while it mends (it used to be a display test)
 testText1:
 		dc.b	"COPPER TO BLITTER: COME IN!  ",0
 testText2:
 		dc.b	"NO GURU TODAY!  ",0
 testText3:
-		dc.b	"SCREEN BACK. 50 FPS OR DIE!    ",0
+		dc.b	"50 FPS OR DIE!   ",0
 ; mended: a word from the bridge (short - the attack comes soon)
 glyphTest1:
 		dc.b	"   REAL CODERS USE THE COPPER!    ",0

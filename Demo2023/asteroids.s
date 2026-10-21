@@ -143,7 +143,7 @@ stars_count		= 120
 ;----------------------------------------------------------------------
 ; autopilot - flying
 ;----------------------------------------------------------------------
-ai_turnrate		= 8		; (6) degrees per frame (the keyboard player gets 4)
+ai_turnrate		= 6		; (6) degrees per frame (the keyboard player gets 4)
 seq_turnrate	= 6		; ... in the logo destruction (seq_pilot): as it was
 ; The engine fires only when the ship is NOT turning - rotate first, then
 ; burn in a straight line. Burning part way through a turn sweeps the
@@ -362,11 +362,13 @@ ai_homex		= ast_x_center	; where it loiters while a word zooms in
 ai_homey		= ship_start_y
 ai_wrapx		= wrap_x1-wrap_x0			; obj_move's wrap periods
 ai_wrapy		= game_height+2*wrap_my
+ai_wrapAtX		= 270		; round the edge only for a target further than this
+ai_wrapAtY		= 240		; across (it is in sight: straight at it, on screen)
 
 ;----------------------------------------------------------------------
 ; autopilot - shooting
 ;----------------------------------------------------------------------
-ai_holdframes	= 16		; (40) frames to admire a finished word before shooting
+ai_holdframes	= 24		; (40) frames to admire a finished word before shooting
 							; (50 == 1 second, 100 == 2 seconds)
 ai_pbholdfire	= 1
 ai_minclose		= 128		; a shot must close at least this fast (128 == 1 px
@@ -441,18 +443,18 @@ ai_dangerdist	= 56		; a letter coming this close is a threat (44) (a letter
 ai_shootthreat	= 70		; a shootable threat further away than this is
 							; shot, a nearer one dodged
 ai_evadespeed	= 176		; the velocity a dodge wants (128)
-ai_cruise		= 196		; (150) the fastest we fly to a station (144, 184: it
+ai_cruise		= 150		; (150) the fastest we fly to a station (144, 184: it
 							; dashed about - a good player flies calmly)
 ai_stdead		= 14		; this close to the station is close enough
 ai_engage		= 100		; a target nearer than this (and not a threat)
 							; is shot from where we are - no station
 ai_engagehyst	= 32		; ... and it is left again only past this much more
-ai_drift		= 72		; (48) ... drifting no faster than this meanwhile (96:
+ai_drift		= 48		; (48) ... drifting no faster than this meanwhile (96:
 							; it let itself drift far too often - now it
 							; brakes and shoots from a standstill)
 ; --- the start of the attack on a new word is a rush (ai_pilot)
 ai_rushtime		= 350		; frames, or until the first hit breaks it up
-ai_rushcruise	= 224		; (168) faster than ai_cruise ... (160, 208)
+ai_rushcruise	= 168		; (168) faster than ai_cruise ... (160, 208)
 ai_rushengage	= 72		; ... and closer in before it settles to shoot
 ai_rushdx		= 80		; the way in along the row: this far out to the side
 ai_rushdg		= 56		; the way in from above: this far out and up
@@ -484,6 +486,7 @@ ai_homex1		= 336
 ai_waytop		= 24		; now and then a waypoint over the logo, y 24..55
 ai_waytoprange	= 31		; (mask)
 ai_waybottom	= 212		; mostly the black below the scroller, y 212..243
+ai_patrolv		= 96			; between the words: the easy speed it patrols at
 ai_readyOn		= 0		; (1) between the words: to a ready spot and wait there
 ai_readyX0		= 52		; ... on the left (52..67) or the right (312..327)
 ai_readyX1		= 327
@@ -502,12 +505,12 @@ ai_wordHalf		= 120		; half a word's width at most (the row's middle
 							; is ast_x_center)
 ai_logopen		= 160		; a letter in front of the logo counts this much
 							; further away as a target
-ai_busymax		= 24		; (45) frames there before it moves somewhere else (100)
+ai_busymax		= 45		; (45) frames there before it moves somewhere else (100)
 ai_busypen		= 300		; a station there counts this much further away (48:
 							; it kept on hanging about over the logo)
 ai_busypenS		= 48		; ... and one in front of the scroller (logo: above)
 ai_waytime		= 250		; frames before giving up on a waypoint
-ai_homedist		= 20		; that close is "reached"
+ai_homedist		= 28		; that close is "reached"
 ai_rowclear		= 48		; the next word may come once the ship is on
 							; screen and this far from the word row
 ai_homewait		= 60		; after this long out of the band will do ...
@@ -515,23 +518,25 @@ ai_homemax		= 100		; ... and after this long the word comes anyway.
 							; (300 with no hard limit made the gap before a
 							; word up to 12 seconds when the ship kept
 							; patrolling through the band)
-ai_huntrange	= 116		; px - no point firing at anything further
-shot_frames		= 56		; a shot's life (was 80): ~130 px, and fewer shots
+ai_huntrange	= 150		; px - no point firing at anything further
+shot_frames		= 70		; a shot's life (80, then 56): ~165 px - the letters
+							; go quicker from a little further off
 							; in the air means fewer collision tests
-ai_hitslack		= 8		; px - allowed miss at the lead point (a letter's
+ai_hitslack		= 6		; px - allowed miss at the lead point (a letter's
 							; hit box is +-12)
-ai_huntgap		= 4		; (5) frames between shots, + 0..3 (9) - about the pace
+ai_huntgap		= 5		; (5) frames between shots, + 0..3 (9) - about the pace
 							; of a player on the fire button
 ; --- the hunt after the break up, as a gunner (ai_pilot)
-ai_gunnerfar	= 72		; (90) px - a target further than this is flown at (110:
+ai_gunnerfar	= 90		; (90) px - a target further than this is flown at (110:
 							; it drifted over far too long)
-ai_gunnerspeed	= 192		; (150) ... until we close at this speed (112, 200)
+ai_gunnerspeed	= 150		; (150) ... until we close at this speed (112, 200)
 ai_gunnertop	= 280		; faster than this: slow down first (200 before)
-ai_gunnerslow	= 128		; (96) in range and faster than this: it brakes, to
+ai_gunnerslow	= 150		; (96) in range and faster than this: it brakes, to
 							; shoot from (nearly) a standstill
 ai_farpen		= 150		; target choice: a letter out of range counts as
 							; this much further away (see ai_huntScan)
 ai_burstcap		= 4			; no shot while bursting letters + shots in the air reach this
+ai_stillslack	= 3			; px - a turn onto the lead point stops this near
 ai_maxshots		= 4			; shots in the air at once, at most - as in the
 							; arcade game
 ai_wrapslack	= 96		; px - the direct way is taken unless the way
@@ -551,23 +556,24 @@ ai_leadmax		= 63		; frames of lead at most
 		section "code",data,chip
 
 ; --- inlined helpers for the autopilot's per letter loops
-; d0/d1 -> the shortest way round the wrapped play area (ai_wrap)
+; d0/d1 -> the way to it: straight across the screen, round the edge of
+; the wrapped play area only when that is a lot shorter (ai_wrapAtX/Y)
 AI_WRAP	macro
-		cmp.w	#ai_wrapx/2,d0
+		cmp.w	#ai_wrapAtX,d0
 		ble.s	.wa\@
 		sub.w	#ai_wrapx,d0
 		bra.s	.wb\@
 .wa\@:
-		cmp.w	#-ai_wrapx/2,d0
+		cmp.w	#-ai_wrapAtX,d0
 		bge.s	.wb\@
 		add.w	#ai_wrapx,d0
 .wb\@:
-		cmp.w	#ai_wrapy/2,d1
+		cmp.w	#ai_wrapAtY,d1
 		ble.s	.wc\@
 		sub.w	#ai_wrapy,d1
 		bra.s	.wd\@
 .wc\@:
-		cmp.w	#-ai_wrapy/2,d1
+		cmp.w	#-ai_wrapAtY,d1
 		bge.s	.wd\@
 		add.w	#ai_wrapy,d1
 .wd\@:
@@ -1630,7 +1636,7 @@ shot_init:				;<initialize a shot>
 		dbf		d7,.findshot
 		bra.s	.nofreeshot
 .freeshot:
-		move.w	#shot_frames,(a1)	;shot duration
+		move.w	shotLife,(a1)		;shot duration (the game's, or the sequence's)
 		moveq	#shot,d5
 		bsr		obj_init
 		bset	d7,d6
@@ -1930,7 +1936,8 @@ ai_zooming:		dc.w	0		; letters spinning in or bursting (updateEnemies)
 ai_scanHalf:	dc.b	0		; ai_pilot: one bursting - every other look
 				even
 ai_scanLate:	dc.w	0		; looks put off for the beam (a count, for tests)
-ai_scanLine		= 88			; no look round once the beam is this far down
+ai_scanLine		= 82			; (88) no look round once the beam is this far down
+ai_scanLineHit	= 66			; ... (a whole word up, shots on the way) this far
 ai_scanShots	= 4			; ... nor with this many shots in the air
 				even
 ai_holdFire:	dc.w	ai_holdframes
@@ -2435,6 +2442,7 @@ dbgy:			dc.w	0
 ; a0 = ship. a6 is the draw table and must survive.
 ;---------------------------------------------
 ai_pilot:
+		move.w	#shot_frames,shotLife
 		move.w	#ai_turnrate,ai_turnNow
 		tst.w	ai_fireWait
 		beq.s	.nofw
@@ -2490,10 +2498,17 @@ ai_pilot:
 		bhs.s	.late
 		btst	#0,$dff005			; and only while the frame has room for it:
 		bne.s	.late				; the beam already past line ai_scanLine
-		cmp.b	#ai_scanLine,$dff006	; (a word as long as EQUALIZER, the
-		blo.s	.inTime				; dots, four shots in flight - and on the
-.late:								; real thing the DMA on top) it waits a
-		addq.w	#1,ai_scanLate		; frame
+		moveq	#ai_scanLine,d1		; (a word as long as EQUALIZER, the
+		tst.b	word_scattered		; dots, four shots in flight - and on the
+		bne.s	.lineSet			; real thing the DMA on top) it waits a
+		tst.w	shot_con			; frame. a whole word still up and shots
+		beq.s	.lineSet			; on their way: the first hit may break it
+		moveq	#ai_scanLineHit,d1	; up this very frame - earlier still
+.lineSet:
+		cmp.b	$dff006,d1
+		bhi.s	.inTime
+.late:
+		addq.w	#1,ai_scanLate
 		bra.s	.noScan
 .inTime:
 		bsr		ai_huntScan			; -> ai_target, ai_threat...
@@ -2911,6 +2926,7 @@ ai_onScreen:
 ai_tripX:		dc.w	0,0		; a way not to go across (1/-1), frames left
 ai_tripY:		dc.w	0,0		; ... and down
 ai_turnNow:		dc.w	ai_turnrate	; ai_turn's rate now
+shotLife:		dc.w	shot_frames	; a new shot's life now
 ai_logoT:		dc.w	0		; frames in front of the logo, in a row
 ai_logoEsc:		dc.b	0		; ai_onScreen: the steering takes over
 				even
@@ -3347,9 +3363,15 @@ ai_wantVelo:
 		move.w	d1,ai_wayy
 		bsr		.wayDelta
 .toWay:
-		moveq	#0,d2
-		moveq	#0,d3
-		bra		.toPoint
+		; patrolling: towards the waypoint at one easy speed, no slowing
+		; down to arrive - a burn, a turn, then it coasts there and on to
+		; the next one (braking at every waypoint and burning off again was
+		; the fidgety part)
+		move.w	#ai_patrolv,d2
+		bsr		ai_scaleTo
+		move.w	d0,ai_vdx
+		move.w	d1,ai_vdy
+		rts
 
 ; d4 = ship y -> d0/d1 = vector to the waypoint, the short way round the
 ; screen. while a word is forming the way never crosses its row: if the
@@ -3377,7 +3399,8 @@ ai_wantVelo:
 		move.w	ai_wayy,d5
 		cmp.w	#ast_y_start,d5
 		bge.s	.wdDone
-		add.w	#ai_wrapy,d1		; down, round the bottom edge
+		bra.s	.wdSide				; past the end of the word and up (round
+								; the bottom edge was a trip off the screen)
 .wdDone:
 		rts
 		; --- across the row past the end of the word: first out beside it
@@ -3654,7 +3677,7 @@ ai_huntTurn:
 		cmp.l	#ai_hitslack<<15,d4	; wanders a little all the time
 		blo.s	.onTarget
 .wasTurning:
-		cmp.l	#(ai_hitslack/2)<<15,d4
+		cmp.l	#ai_stillslack<<15,d4	; (well on it: no fidgeting about it)
 		blo.s	.onTarget
 		cmp.l	#(ai_hitslack*3)<<15,d4
 		blo.s	.fine
@@ -4822,19 +4845,19 @@ ai_valid:
 ; happily shoot across the border rather than fly the long way round
 ;---------------------------------------------
 ai_wrap:
-		cmp.w	#ai_wrapx/2,d0
+		cmp.w	#ai_wrapAtX,d0
 		ble.s	.x1
 		sub.w	#ai_wrapx,d0
 .x1:
-		cmp.w	#-ai_wrapx/2,d0
+		cmp.w	#-ai_wrapAtX,d0
 		bge.s	.x2
 		add.w	#ai_wrapx,d0
 .x2:
-		cmp.w	#ai_wrapy/2,d1
+		cmp.w	#ai_wrapAtY,d1
 		ble.s	.y1
 		sub.w	#ai_wrapy,d1
 .y1:
-		cmp.w	#-ai_wrapy/2,d1
+		cmp.w	#-ai_wrapAtY,d1
 		bge.s	.y2
 		add.w	#ai_wrapy,d1
 .y2:
@@ -5346,6 +5369,7 @@ SQ_DEFWORDS		= 15		; (switches.i defWords: instead of DEFFIRE)
 
 ; a0 = ship_struct, from ship_auto
 seq_pilot:
+		move.w	#seq_shotLife,shotLife	; (shots further at the text)
 		move.w	#seq_turnrate,ai_turnNow	; (ai_turn: as it was, the game turns faster)
 		addq.w	#1,seq_timer
 		move.w	obj_yc(a0),d0		; for glitchFrame: never tear the ship
@@ -5904,12 +5928,16 @@ seq_starAccD	= 4			; ... and speed up the other way (and run down
 							; at the end)
 seq_defvmax		= 120		; the drift over, top speed
 seq_tflyV		= 208		; ... over to the spots the text is shot from
-seq_huntDx0		= 64		; the hunt's spots: 64..95 left of the letter,
-seq_huntDy0		= 40		; 40..55 over or under the row (40..87 / 26..57:
-							; far too close)
+seq_huntDx0		= 96		; the hunt's spots: 96..159 left of the letter,
+seq_huntDy0		= 56		; 56..87 over or under the row (64..95 / 40..55
+							; and before that 40..87 / 26..57: too close)
+seq_huntYMax	= 246		; (under the row no lower than this ...
+seq_huntYMin	= 106		; ... over it no higher: the logo)
+seq_shotLife	= 84		; frames a shot lives in the sequence (~190 px;
+							; the game's shot_frames 56 would not get there)
 seq_huntX0		= 40		; (on the screen: x 40..330)
 seq_huntX1		= 330
-seq_holdT0		= 50		; at a spot 50..113 frames at most ...
+seq_holdT0		= 40		; at a spot 40..103 frames at most ...
 seq_flyMax		= 100		; ... on the way to one 100 at most
 seq_passT		= 120		; DEFTEST: shooting at the text this long, then the
 							; message is let in - and on till it comes in
@@ -6144,10 +6172,8 @@ seq_hunt:
 		add.w	#seq_holdT0,d1		; this long here at most ...
 		move.w	d1,seq_hopLeft
 		lsr.w	#8,d0
-		and.w	#3,d0				; ... and 3..4 hits
-		cmp.w	#3,d0
-		bhs.s	.nOk
-		addq.w	#3,d0
+		and.w	#1,d0				; ... and 2..3 hits
+		addq.w	#2,d0
 .nOk:
 		move.w	d0,seq_hopN
 		clr.w	seq_aimT
@@ -6187,8 +6213,8 @@ seq_huntHop:
 		moveq	#0,d1
 		move.b	seq_corner,d1
 		moveq	#1,d5				; (the same side: half way from here)
-		moveq	#7,d2				; mostly the same side of the row, somewhere
-		and.w	d4,d2				; else on it - 1 in 8 over to the other side
+		moveq	#3,d2				; mostly the same side of the row, somewhere
+		and.w	d4,d2				; else on it - 1 in 4 over to the other side
 		bne.s	.cOk				; (always left of the letter: from the right
 		eor.w	#2,d1				; the shot chases a letter that runs away)
 		moveq	#0,d5
@@ -6196,13 +6222,13 @@ seq_huntHop:
 		and.w	#2,d1
 		move.b	d1,seq_corner
 		lsr.l	#8,d4
-		moveq	#31,d2
+		moveq	#63,d2
 		and.w	d4,d2
-		add.w	#seq_huntDx0,d2		; across: 64..95
+		add.w	#seq_huntDx0,d2		; across: 96..159
 		lsr.l	#8,d4
-		moveq	#15,d3
+		moveq	#31,d3
 		and.w	d4,d3
-		add.w	#seq_huntDy0,d3		; up or down: 40..55
+		add.w	#seq_huntDy0,d3		; up or down: 56..87
 		move.w	seq_hTgt,d0
 		bpl.s	.base
 		move.w	seq_hFrom,d0		; (no letter yet: the first it will go for,
@@ -6226,10 +6252,16 @@ seq_huntHop:
 		move.w	#seq_textY,d4
 		btst	#1,d1
 		bne.s	.below
-		sub.w	d3,d4				; over the row
+		sub.w	d3,d4				; over the row (not into the logo)
+		cmp.w	#seq_huntYMin,d4
+		bge.s	.ySet
+		move.w	#seq_huntYMin,d4
 		bra.s	.ySet
 .below:
 		add.w	d3,d4				; under it
+		cmp.w	#seq_huntYMax,d4
+		ble.s	.ySet
+		move.w	#seq_huntYMax,d4
 .ySet:
 		tst.w	d5					; the same side: half way from where it is -
 		beq.s	.far				; a short hop, no long trip each time

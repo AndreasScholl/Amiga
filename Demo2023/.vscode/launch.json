@@ -13,7 +13,7 @@
                 "-s",
                 "filesystem=rw,dh0:${workspaceFolder}/uae/dh0"
             ],
-            "preLaunchTask": "amigaassembly: build"
+            "preLaunchTask": "amigaassembly: build debug"
         },
         {
             "type": "amiga-assembly",
@@ -28,7 +28,7 @@
                 "--remote_debugger=200",
                 "--automatic_input_grab=0"
             ],
-            "preLaunchTask": "amigaassembly: build"
+            "preLaunchTask": "amigaassembly: build debug"
         }
     ]
 }

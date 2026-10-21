@@ -180,12 +180,30 @@ demoParts::
         ; dc.l    initCopper,		updateCopper
 
 ;-------
+; -> d0 = a random long (all of it usable, the low bits as well).
+; xorshift32: the old mulu kept only 16 bits of the seed and ran round
+; after some 170 numbers - the ship's spots, the new stars came again and
+; again at the same few places. keeps every other register
 getRandomNumber::
-		move.l 	seed,d0
-		mulu 	#$a57b,d0
-		addi.l 	#$bb40e62d,d0
- 		rol.l	#6,d0
-		move.l 	d0,seed
+		move.l	d1,-(a7)
+		move.l	seed,d0
+		bne.s	.ok
+		moveq	#1,d0				; (never 0: it would stay 0)
+.ok:
+		move.l	d0,d1				; x ^= x << 13
+		lsl.l	#8,d1
+		lsl.l	#5,d1
+		eor.l	d1,d0
+		move.l	d0,d1				; x ^= x >> 17
+		clr.w	d1
+		swap	d1
+		lsr.l	#1,d1
+		eor.l	d1,d0
+		move.l	d0,d1				; x ^= x << 5
+		lsl.l	#5,d1
+		eor.l	d1,d0
+		move.l	d0,seed
+		move.l	(a7)+,d1
 		rts
 
 seed: 
