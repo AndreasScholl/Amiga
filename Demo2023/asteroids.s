@@ -1110,7 +1110,15 @@ obj_move:				;<calculate new object coords>
 		move.w	obj_yc(a0),d1
 		bsr		set_point
 		rts
-.lineobj:	
+.lineobj:
+	ifne	elite3
+		tst.b	morphOn					; (morph.i) the ship unfolds: its
+		beq.s	.noMorph				; own 3D lines instead
+		cmp.l	#ship_struct,a0
+		bne.s	.noMorph
+		jmp		morphDraw
+.noMorph:
+	endc
 		; insert line obj to draw table
 		move.w	obj_angle(a0),d0
 		cmp.w	#$8000,d0				; rotate?
@@ -1650,8 +1658,8 @@ shot_init:				;<initialize a shot>
 ;
 enemy_init:				
 ;		move.l	a0,-(a7)
-		move.l	enemy_con(pc),d6
-		lea		enemy_structs(pc),a0
+		move.l	enemy_con,d6
+		lea		enemy_structs,a0
 		moveq	#31,d7
 .findfree:	
 		btst	d7,d6
@@ -1748,7 +1756,7 @@ shot_collision:
 		bne.s	.nlast
 .removeObj:
 		move.w	10(a3),d6			; enemy_con bit
-		move.l	enemy_con(pc),d7
+		move.l	enemy_con,d7
 		bclr	d6,d7
 		move.l	d7,enemy_con
 		moveq	#1,d1
@@ -1779,7 +1787,7 @@ shot_collision:
 ;---------------------------------------------
 word_scatter:
 		st		word_scattered
-		move.l	enemy_con(pc),d4
+		move.l	enemy_con,d4
 		lea		enemy_structs(pc),a1
 		moveq	#31,d7
 .letter:
@@ -2090,7 +2098,7 @@ ship_auto:
 		;     in from the left under power
 		tst.b	ai_entered
 		bne.s	.flying
-		move.l	enemy_con(pc),d0
+		move.l	enemy_con,d0
 		beq.s	.parkHold			; no word yet
 		tst.w	ai_enterTimer		; word has spawned - hold for ai_enterwait
 		beq.s	.launch				; frames, then go
@@ -2125,7 +2133,7 @@ ship_auto:
 		; --- which end do we attack from? Decided the moment a word
 		;     appears, not when it has finished zooming in, so the ship can
 		;     be on its way to that end while the letters are still arriving.
-		move.l	enemy_con(pc),d0
+		move.l	enemy_con,d0
 		bne.s	.haveWord
 		sf		ai_sidePicked		; no word - arm for the next one
 		bra.s	.sideDone
@@ -2246,7 +2254,7 @@ ai_findTarget:
 		bmi.s	.wantLeft
 		move.w	#$8000,d5			; ... or max end
 .wantLeft:
-		move.l	enemy_con(pc),d4
+		move.l	enemy_con,d4
 		lea		enemy_structs(pc),a1
 		moveq	#31,d7				; bit 31 is struct 0
 .scan:
@@ -3035,7 +3043,7 @@ ai_stagePoint:
 ; the right end), letters still waiting included. uses d0-d7/a1
 ;---------------------------------------------
 ai_endX:
-		move.l	enemy_con(pc),d2
+		move.l	enemy_con,d2
 		lea		enemy_structs,a1
 		moveq	#31,d7
 		move.w	ai_rushIdx,d4
@@ -3070,7 +3078,7 @@ ai_endX:
 ; the rush goes for the letter at its end of the word -> ai_target
 ;---------------------------------------------
 ai_rushTarget:
-		move.l	enemy_con(pc),d2
+		move.l	enemy_con,d2
 		beq.s	.none
 		lea		enemy_structs,a1
 		moveq	#31,d7
@@ -3755,7 +3763,7 @@ ai_huntScan:
 		move.w	#$7fff,a2			; ... and how near
 		lea		ai_list,a5			; every live letter's vector, for
 		move.l	a5,ai_listEnd		; ai_pickStation
-		move.l	enemy_con(pc),d2
+		move.l	enemy_con,d2
 		bne.s	.any
 		move.w	#-1,ai_target
 		rts
@@ -4274,7 +4282,7 @@ ai_pickEdge:
 		move.w	ai_side,d6
 		cmp.w	ai_edgeSide,d6		; swapped ends since we picked?
 		bne.s	.rescan
-		move.l	enemy_con(pc),d6
+		move.l	enemy_con,d6
 		btst	d7,d6
 		beq.s	.rescan				; gone entirely
 		bsr		ai_ptr
@@ -4288,7 +4296,7 @@ ai_pickEdge:
 		move.w	ai_side,d6
 		move.w	d6,ai_edgeSide
 		moveq	#-1,d3
-		move.l	enemy_con(pc),d4
+		move.l	enemy_con,d4
 		beq		.store
 		lea		enemy_structs(pc),a1
 		moveq	#31,d7
@@ -4827,7 +4835,7 @@ ai_ptr:
 ;---------------------------------------------
 ai_valid:
 		moveq	#0,d0
-		move.l	enemy_con(pc),d6
+		move.l	enemy_con,d6
 		btst	d7,d6
 		beq.s	.bad
 		bsr.s	ai_ptr
@@ -5058,7 +5066,7 @@ ai_fire:
 ;---------------------------------------------
 ai_pointblankNear:
 		moveq	#0,d5
-		move.l	enemy_con(pc),d4
+		move.l	enemy_con,d4
 		beq.s	.done
 		lea		enemy_structs(pc),a1
 		moveq	#31,d7
@@ -5922,10 +5930,17 @@ seq_wdelta:
 ;            is an Asteroids ship again (seq_drift)
 seq_defX		= 56		; the Defender spot (x; on the row, seq_rowY)
 seq_defY		= 136
+	ifne	fastStars
+seq_defStar		= -1152		; the stars then: 4.5 px a frame to the left
+seq_starAcc		= 2			; how fast they slow down, 8.8 a frame ...
+seq_starAccD	= 6			; ... and speed up the other way (as long as at
+							; 3 px: 192 frames)
+	else
 seq_defStar		= -768		; the stars then: 3 px a frame to the left
 seq_starAcc		= 2			; how fast they slow down, 8.8 a frame ...
 seq_starAccD	= 4			; ... and speed up the other way (and run down
 							; at the end)
+	endc
 seq_defvmax		= 120		; the drift over, top speed
 seq_tflyV		= 208		; ... over to the spots the text is shot from
 seq_huntDx0		= 96		; the hunt's spots: 96..159 left of the letter,
@@ -6420,8 +6435,10 @@ seq_deffire:
 		bne.s	.out				; now the TV goes off, for good, with its
 		st		tvGo				; zap - the climax
 	endc
+	ifeq	fastStars
 		clr.w	starTarget			; the stars run down to a stand
 		move.w	#seq_starAccD,starAcc
+	endc
 		sf		seq_shotsLive
 		st		inkOff				; (scroller.s) the text's colours off
 		sf		seq_dOn				; an Asteroids ship again - up off the row
@@ -6546,8 +6563,10 @@ seq_defwords:
 		jsr		defWordsLeft
 		tst.w	d1
 		bne.s	.out
+	ifeq	fastStars
 		clr.w	starTarget			; the stars run down to a stand
 		move.w	#seq_starAccD,starAcc
+	endc
 		st		inkOff				; (scroller.s) the text's colours off
 		sf		seq_dOn				; an Asteroids ship again
 		sf		seq_dLow
@@ -6794,12 +6813,73 @@ seq_wxShip:		dc.w	seq_defX	; the ship's x for this word
 
 ; the words are gone: Asteroids again
 seq_after:
+	ifne	elite3
+		bsr		seq_morph
+		bra		seq_endCheck
+	endc
 		cmp.w	#warpWait,seq_timer	; it has had its look round: the stars
 		bne.s	.look				; go over into depth (warp.i)
 		jsr		warpStart
 .look:
 		bsr		seq_drift
 		bra		seq_endCheck
+
+	ifne	elite3
+; (switches.i elite3) the words are gone and the ship stays a Defender ship:
+; nose to the right, it glides over to the middle (seq_mX/seq_mY), on a
+; slow figure of eight there, while the fast stars go by. after seq_mWait
+; frames it unfolds into the fighter, settles, turns to the viewer and the
+; camera flies past it (morph.i morphTick: the timeline)
+seq_mX			= 142		; where it unfolds (the middle of the model)
+seq_mY			= 140
+seq_mSwayX		= 10		; the figure of eight there
+seq_mSwayY		= 5
+seq_mWait		= 70		; frames before it starts
+seq_morph:
+		move.w	#90,seq_dface
+		tst.b	morphKept			; the fighter is done: it settles in the
+		beq.s	.float				; middle and holds still there (the
+		move.w	#seq_mX,d0			; stars do the moving now - and its
+		move.w	#seq_mY,d1			; lines are drawn once, then only shown:
+		move.w	d0,d2				; morph.i morphKeptDraw)
+		sub.w	obj_xc(a0),d2
+		move.w	d1,d3
+		sub.w	obj_yc(a0),d3
+		or.w	d3,d2
+		bne.s	.move
+		move.w	obj_xvelo(a0),d2
+		bpl.s	.v0
+		neg.w	d2
+.v0:	move.w	obj_yvelo(a0),d3
+		bpl.s	.v1
+		neg.w	d3
+.v1:	add.w	d3,d2
+		cmp.w	#24,d2				; there, and nearly still: still
+		bhi.s	.move
+		clr.w	obj_xvelo(a0)
+		clr.w	obj_yvelo(a0)
+		move.w	#seq_mX<<7,obj_xfloat(a0)
+		move.w	#seq_mY<<7,obj_yfloat(a0)
+		move.w	#90,d0
+		move.w	#seq_turnrate,d1
+		bsr		seq_turnTo
+		moveq	#1,d0				; (still: it may turn round now)
+		bra.s	.time
+.float:
+		moveq	#seq_mSwayX,d2
+		moveq	#seq_mSwayY,d3
+		bsr		seq_dfloat
+		add.w	#seq_mX-seq_defX,d0
+		add.w	#seq_mY-seq_defY,d1
+.move:	bsr		seq_dmoveA
+		moveq	#0,d0
+.time:
+		tst.b	morphOn				; the first frame: the unfolding starts
+		bne.s	.on					; seq_mWait frames from now
+		st		morphOn
+		move.w	#-seq_mWait-1,morphT
+.on:	jmp		morphTick			; (morph.i: the timeline)
+	endc
 
 ; -> d0/d1 = the Defender spot on a slow figure of eight, d2 px to and fro
 ; and d3 up and down (seq_timer: 4 seconds a round)
@@ -8923,6 +9003,8 @@ starsParallax:
 		beq.s	.out
 		bmi.s	.back
 .fwd:
+		cmp.w	#5,d0				; five: in one go too (starsFwd5)
+		beq		starsFwd5
 		cmp.w	#3,d0				; three: four now, two next frame (four or
 		bne.s	.f4					; two in one go are as cheap as one)
 		moveq	#4,d0
@@ -8943,6 +9025,8 @@ starsParallax:
 .f1:
 		bra		starsFwd
 .back:
+		cmp.w	#-5,d0
+		beq		starsBack5
 		cmp.w	#-3,d0
 		bne.s	.b4
 		moveq	#-4,d0
@@ -9101,6 +9185,48 @@ starsFwd4:
 		STARS4	beq,add
 starsBack4:
 		STARS4	bne,sub
+
+; five pixels in one go: four, and then the one pixel of starsFwd on top -
+; star by star in one pass, so the same as the two calls one after the
+; other, without the second walk through the lists (the Defender stars,
+; 4.5 px a frame: four and five by turns)
+STARS5	macro					; \1 beq (forwards) or bne (back), \2 add/sub
+		moveq	#1,d0
+		moveq	#2,d1
+		move.w	#stars_count-1,d7
+		lea		slst0+1,a0
+.loop\@:
+		\2.b	d1,(a0)
+		\2.b	d0,stars_count*8+0+4(a0)
+		bchg	#0,stars_count*16+0+2+8(a0)
+		\1.s	.p\@
+		\2.b	d0,stars_count*16+0+8(a0)
+		bchg	#0,stars_count*24+0+2+12(a0)
+		\1.s	.p\@
+		\2.b	d0,stars_count*24+0+12(a0)
+.p\@:
+		bchg	#0,2(a0)
+		\1.s	.n\@
+		\2.b	d0,(a0)
+		bchg	#0,stars_count*8+0+2+4(a0)
+		\1.s	.n\@
+		\2.b	d0,stars_count*8+0+4(a0)
+		bchg	#0,stars_count*16+0+2+8(a0)
+		\1.s	.n\@
+		\2.b	d0,stars_count*16+0+8(a0)
+		bchg	#0,stars_count*24+0+2+12(a0)
+		\1.s	.n\@
+		\2.b	d0,stars_count*24+0+12(a0)
+.n\@:
+		addq.l	#8,a0
+		dbf		d7,.loop\@
+		rts
+		endm
+
+starsFwd5:
+		STARS5	beq,add
+starsBack5:
+		STARS5	bne,sub
 		
 starGfx:	
 		dc.l	$00010000,$00000001,$00010001
@@ -9483,3 +9609,6 @@ collList:		ds.b	coll_len*32		; shootable boxes, see updateEnemies
 ;---------------------------------------------
 ; the Elite transition (the stars into depth)
 		include	"warp.i"
+	ifne	elite3
+		include	"morph.i"
+	endc

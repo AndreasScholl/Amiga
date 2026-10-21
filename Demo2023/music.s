@@ -1,4 +1,15 @@
 
+; --- which music. one switch, everything else follows from it: only the
+;     chosen tune's files go into the build (the other bank costs no chip
+;     memory at all), and the effects pick their channels to suit it.
+;     back to the old music: MUSIC = MUSIC_RINK, build, done.
+MUSIC_RINK      = 0             ; rink-a-dink (209.7 KB chip bank)
+MUSIC_CCABANA   = 1             ; CopperCabana by Mark II, from our own demo
+                                ; (16.9 KB chip bank; see Own Demos/CopperCabana-Musik)
+        IFND    MUSIC           ; (or from outside: vasm -DMUSIC=0)
+MUSIC           = MUSIC_CCABANA
+        ENDC
+
         section "code",data,chip
 
 initMusic::
@@ -56,7 +67,7 @@ musicPalTick:
 ;     sfxPlay (from the game, the VBL) asks for one; it goes out on channel
 ;     sfxCh - or, once the TV is off and it is Defender (sfxWide), on the
 ;     channels sfxChW says: the laser stays on 3, the booms and the zap go
-;     out on 0 and 1 at once (the music's two quietest voices, left and
+;     out on two channels at once (the music's two quietest voices, left and
 ;     right: in the middle, and twice as loud). the music leaves a channel
 ;     alone while an effect is on it: sfxKeep masks it out of LSP's note
 ;     restarts, and every tick the effect's period and volume go back in
@@ -106,8 +117,15 @@ sfxTable:
                 dc.w    sfxBigBoomS_len/2,520,64,50,2,sfxBoomAgain      ; (period 520: lower, more bass)
 sfxBoomAgain    = 9                 ; a big boom rolls on this long at least
 
-; the channels of each effect once it is Defender (bits 0..3)
+; the channels of each effect once it is Defender (bits 0..3). rink-a-dink:
+; the booms on 0 and 1. CopperCabana: 0 is its main voice (on nearly all
+; the time), so the booms go on 1 and 3, its quiet ones (hi-hat on 3) -
+; still left and right, in the middle
+        IFEQ    MUSIC-MUSIC_RINK
 sfxChW:         dc.b    0,%1000,%0011,%1000,%1000,%0011,%0011
+        ELSE
+sfxChW:         dc.b    0,%1000,%1010,%1000,%1000,%1010,%1010
+        ENDC
                 even
 
 ; d0.b = the effect wanted (from the game). keeps every register
@@ -316,15 +334,24 @@ musicPalCountdown:: dc.w    musicPalTicks
 logoPalTarget::     dc.w    0   ; bumped once per cue
 musicPalStream:     dc.l    0   ; LSP byte stream pointer after the last tick
 
-LSPBank:	
+LSPBank:
+        IFEQ    MUSIC-MUSIC_RINK
         incbin	"rink-a-dink.lsbank"
+        ELSE
+        incbin	"coppercabana.lsbank"
+        ENDC
         even
 
-        include "sfx.i"
-
         data
-LSPMusic:	
+; (the packed effects only get read by the CPU, once - no need for chip memory)
+        include "sfx.i"
+        even
+LSPMusic:
+        IFEQ    MUSIC-MUSIC_RINK
         incbin	"rink-a-dink.lsmusic"
+        ELSE
+        incbin	"coppercabana.lsmusic"
+        ENDC
 		even
 ; the effects, unpacked (sfxInit) - chip memory, Paula plays them
         section "sfxbuf",bss,chip
