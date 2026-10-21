@@ -6830,8 +6830,8 @@ seq_after:
 ; slow figure of eight there, while the fast stars go by. after seq_mWait
 ; frames it unfolds into the fighter, settles, turns to the viewer and the
 ; camera flies past it (morph.i morphTick: the timeline)
-seq_mX			= 156		; where it unfolds (the middle of the model)
-seq_mY			= 138
+seq_mX			= 140		; where it unfolds (the middle of the model)
+seq_mY			= 142
 seq_mSwayX		= 10		; the figure of eight there
 seq_mSwayY		= 5
 seq_mWait		= 70		; frames before it starts

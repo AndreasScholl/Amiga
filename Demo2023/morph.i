@@ -1,34 +1,37 @@
 ;======================================================================
-; morph.i - the Elite ending, steps 3 and 4. included at the end of
+; morph.i - the Elite ending: "Elite Attack". included at the end of
 ; asteroids.s, switched by switches.i elite3.
 ;
-; step 3, the unfolding: the Defender ship, small and far off, unfolds
-; into the Quadlite-Thrust fighter in 3D lines - no bigger than twice the
-; Asteroids ship, so it only makes the viewer wonder. the model has 16
-; points: each one starts on the flat Defender arrow (asteroids.s
-; ship_coords turned to the right, times 7, z 0) and ends on the fighter.
-; the parts unfold one after the other, each with its own start and a
-; smoothstep: the arrow grows a little, the hull opens (and the ship
-; rolls over and dips its nose, so the depth shows), the wing guns come
-; out, the canopy rises, the engine plate ("the quad") comes on. a line
-; that has just come out glows (drawn twice); towards the end the lines
-; on faces turned away go (backface culling on the projected corners).
+; the world changes from Asteroids (a tiny ship seen from above, very far
+; off) to Elite (endless space, mighty sizes), and the scale is told by
+; speeds: the stars, which are endlessly far, rush by faster and faster,
+; while the fighter - huge, and flying the same way as we do - grows only
+; slowly as we catch up with it.
 ;
-; step 4, the camera: the fighter turns its nose towards the viewer while
-; the stars go into depth (warp.i, started here); then the camera flies
-; at it and past it on its right: the ship (it only turns, it never moves)
-; grows and goes off to the left as the stars rush by (warpVzNow up, a
-; jolt), new stars come from further off while the ship is big
-; (warpPark), and afterwards the stars slow down softly to their speed.
+;   UNFOLD  the Defender ship, small and far off, unfolds into the Quadlite
+;           Thrust fighter in 3D lines (16 points, from the flat arrow;
+;           part by part with a smoothstep, new lines glow; towards the
+;           end the back lines go - backface culling)
+;   HOLD    it settles; the stars start to go into depth (warp.i)
+;   TURN    it turns into our way, its tail to us (the engine plate)
+;   CHASE   we pick up speed - the stars faster and faster - and catch up
+;           with it, slowly: on the way the pilot (Zeronine) gets ready
+;           for the attack: banks to and fro, weaves, a roll. we overtake
+;           it on its right: it goes past us on the left
+;   LOOP    it is behind us, flying a loop (unseen)
+;   ATTACK  and thunders past us on the right, away towards the logo - a
+;           station of galactic size - and fires its torpedoes on the way;
+;           they take a long while to get there (the hits: later)
 ;
-; the projection: a point of the model (1/16 units, turned) at depth Zs
-; ahead of the eye: x = middle + x*F/(Zs - z). the middle is the ship
-; (obj_xc/yc) until the flight, then it moves away from the stars'
-; middle (morphVX/VY) as Zs gets less.
+; the ship is a body in the world: its middle (morphSX/SY/SZ, 1/16 units,
+; ahead of the eye), turned by roll/pitch/yaw/tilt; a point on the screen
+; is the stars' middle + (S + p) * lens / (SZ - z) - the same perspective
+; as the stars'. no 2D tricks.
 ;
 ; obj_move comes here for the ship while morphOn is set: a0 the ship, a5
-; yOffTab, a6 the draw table. the lines go into morphCache and the table
-; gets a pointer to them; they are built only when something has changed
+; yOffTab, a6 the draw table. the ship's lines go into morphCache and the
+; table gets a pointer to them; they are built only when something has
+; changed, and while it moves, over two frames (points, then lines)
 ;======================================================================
 
 		section "code",data,chip
@@ -39,28 +42,45 @@ morphGlow	= 6			; frames a part's lines glow either side of its end
 morphRoll	= 46		; degrees the ship rolls over (its right wing up)
 morphPitch	= 13		; degrees its nose dips (we see the engine plate)
 morphHoldT	= 50		; frames the fighter waits (still) before it turns
-morphTurnT	= 110		; frames it takes to turn towards the viewer
-morphRoll2	= 18		; ... rolled this much then
-morphPitch2	= 72		; ... and its nose this far round to us
-morphFlyT	= 110		; frames of the fly-by (the camera at it and past it)
-morphFlyD	= 14		; frames into it before the ship starts to move itself
-morphRoll3	= -38		; ... into its flight position: banked the other way,
-morphPitch3	= 76		; the nose still to us (it goes off left)
-morphYaw3	= -36		; and up (to the logo)
-morphSlide	= 40		; px (at its first size) the camera swings past it
+morphTurnT	= 110		; frames it takes to turn into our way
+morphChaseT	= 400		; frames of the chase (we catch up and overtake)
+morphZPass	= 40*16		; ... where it would be at its end (1/16 units):
+						; by then it is past us (off the screen) already
+morphBank	= 22		; degrees it banks to and fro meanwhile
+morphChaseTilt = -20	; degrees its nose down (we are a little above it)
+morphWeave	= 6*16		; 1/16 units it weaves sideways
+morphRollAt	= 200		; frames into the chase: the roll ...
+morphRollT	= 56		; ... takes this long
+morphLoopT	= 150		; frames it is behind us (its loop)
+morphAtkT	= 190		; frames of its attack run
+morphAtkX	= 80*16		; it passes us this far to the right (1/16 units),
+morphAtkY	= 48*16		; ... below (and so on the line to the logo)
+morphAtkZ0	= -40*16	; ... coming from behind us,
+morphAtkPassT = 70		; frames of its pass beside us ...
+morphAtkZ1	= 250*16	; ... at the end of which it is this far ahead,
+morphAtkGo	= 3300*16	; ... then the burn: this much further by the end
+morphAtkTilt = 17		; degrees: its nose up, at the logo
+morphAtkRoll = -60		; ... coming out of the loop banked
+morphLogoY	= 46		; the logo (screen y): where it all goes
+morphTorpN	= 3			; torpedoes
+morphTorpAt	= 45		; frames into the run: the first one, ...
+morphTorpGap = 10		; ... then one every this many frames
+morphTorpV	= 52*16		; their speed ahead (1/16 units a frame)
+morphTorpR	= 8*16		; their size (radius, 1/16 units)
+morphTorpEnd = 8000*16	; ... gone this far off (on the logo, as a spark)
 morphZ0		= 1024*16	; the ship's depth (1/16 units) - far off
-morphKMax	= 18		; ... and it 18 times as big at the end (by then it is
-						; off the screen to the left)
 morphF		= 288		; the lens: 0.28 px a unit at morphZ0 (the fighter
 						; 72 units long: 20 px, twice the Asteroids ship)
 morphG0		= 131		; 8.8: the arrow at the start (the game's size)
-morphVX		= 160		; the stars' middle (warp.i warpCx/warpCy), where the
-morphVY		= 134		; camera flies to
-morphVzBoost = 2		; the jolt: the stars this many times faster on top
-morphBoostUp = 12		; ... up by this a frame (of 256)
-morphBoostDn = 5		; ... down by this a frame after the fly-by
-morphParkZ	= 600		; new stars this much further off during the fly-by
-morphParkT	= 50		; ... from this many frames before it
+morphVX		= 160		; the stars' middle (warp.i warpCx/warpCy): where
+morphVY		= 134		; we fly to
+morphVzMax	= 10		; the stars at the end of the chase: this many times
+						; as fast as at the start
+morphVzEnd	= 3			; ... and after the attack run
+morphParkZ	= 200		; new stars this much further off for each step of speed
+morphPark0	= 400		; ... and from the chase on this much anyway
+morphFar	= 220*16	; (the chase) further off than this: a picture in three
+						; frames (it is small), nearer: in two
 morphNP		= 16		; points
 morphNE		= 23		; edges
 morphNF		= 9			; faces
@@ -68,8 +88,10 @@ morphNF		= 9			; faces
 MP_UNFOLD	= 0
 MP_HOLD		= 1
 MP_TURN		= 2
-MP_FLY		= 3
-MP_GONE		= 4
+MP_CHASE	= 3
+MP_LOOP		= 4
+MP_ATTACK	= 5
+MP_GONE		= 6
 
 ; the parts: start frame, frames to unfold
 morphParts:	dc.w	0,46			; 0 the arrow grows
@@ -164,40 +186,112 @@ morphOn::		dc.b	0		; seq_after: the ship is drawn from here
 morphKept::		dc.b	0		; the unfolding is over
 morphPhase::	dc.b	MP_UNFOLD
 morphDirty:		dc.b	-1		; the picture has to be built again
+morphFlyB:		dc.b	0		; (moving) which half of a picture
+morphOut:		dc.b	0		; the ship has gone past, off the screen
+morphHide:		dc.b	0		; the ship is not drawn (behind us, too far)
+				even
 morphT::		dc.w	0		; frames into the unfolding (< 0: the arrow)
-morphPT:		dc.w	0		; frames in the phase (hold, turn, fly)
+morphPT:		dc.w	0		; frames in the phase
+morphStep:		dc.w	0		; (the turn) which third of a picture
 morphU:			ds.w	5		; each part's 0..256 this frame
 morphFG:		dc.w	0		; the lens times the arrow's growth
-morphRollD:		dc.w	0		; degrees now
-morphPitchD:	dc.w	0
+morphRollD:		dc.w	0		; the ship's turn, degrees: roll (about its
+morphPitchD:	dc.w	0		; length), pitch (about its wings), yaw (in
+morphYawD:		dc.w	0		; the screen's plane), tilt (its nose up or
+morphTiltD:		dc.w	0		; down, seen from us)
 morphCR:		dc.w	0		; roll cos, sin
 morphSR:		dc.w	0
 morphCP:		dc.w	0		; pitch cos, sin
 morphSP:		dc.w	0
-morphZs:		dc.w	morphZ0	; the ship's depth now
-morphCX:		dc.w	0		; its middle on the screen
+morphSX:		dc.w	0		; the ship's middle, 1/16 units: across,
+morphSY:		dc.w	0		; down,
+morphSZ:		dc.l	morphZ0	; ahead
+morphSX0:		dc.w	0		; ... where it was when it set off
+morphSY0:		dc.w	0
+morphSh:		dc.w	0		; far off: everything this much smaller (>>)
+morphSXs:		dc.w	0		; ... the middle so
+morphSYs:		dc.w	0
+morphSZs:		dc.w	0
+morphCX:		dc.w	0		; (the unfolding) its middle on the screen
 morphCY:		dc.w	0
-morphC0X:		dc.w	0		; ... where it was when the camera set off
-morphC0Y:		dc.w	0
-morphBoost:		dc.w	0		; 0..256 the jolt
-morphStep:		dc.w	0		; (the turn) which third of a picture
-morphFlyB:		dc.b	0		; (the fly-by) which half of a picture
-morphFlyP:		dc.b	0		; ... its first pose is done
-morphOut:		dc.b	0		; ... the ship is off the screen
-				even
-morphSlideX:	dc.w	0		; ... its place, so far to the left
-				even
-morphYawD:		dc.w	0		; degrees in the screen's plane (the fly-by)
+morphVz:		dc.w	256		; the stars' speed, 8.8 times warpVz
 morphM:			ds.w	9		; (unfolded) the turn as a matrix, Q15
-morphXY:		ds.w	2*morphNP	; the points on the screen, round the middle
+morphXY:		ds.w	2*morphNP	; the points on the screen
 morphFV:		ds.b	morphNF		; faces seen
 				even
 morphFMask:		dc.w	0		; faces seen, a bit each
-				even
 morphGlowE:		dc.w	0		; (morphLine) glow: the edge again, a line down
 morphKey:		dc.l	-1		; xc:yc the cache was built for
 morphCacheEnd:	dc.l	morphCache
 morphCache:		ds.b	2*morphNE*line_entry
+
+; a torpedo: age (0: none, -1: done), x (1/16 units), y, z (longs)
+				rsreset
+tp_age:			rs.w	1
+tp_x:			rs.w	1
+tp_y:			rs.l	1
+tp_z:			rs.l	1
+tp_len:			rs.b	0
+morphTorps:		ds.b	morphTorpN*tp_len
+morphTorpNext:	dc.w	0		; the next one to go
+
+;---------------------------------------------
+; d0 = degrees (any) -> d0 = sin, d1 = cos (Q15). uses a1
+morphSinCos:
+		tst.w	d0
+		bpl.s	.p
+.n:		add.w	#360,d0
+		bmi.s	.n
+.p:		cmp.w	#360,d0
+		blo.s	.ok
+		sub.w	#360,d0
+		bra.s	.p
+.ok:	lsl.w	#2,d0
+		lea		sctab,a1
+		move.w	2(a1,d0.w),d1
+		move.w	(a1,d0.w),d0
+		rts
+
+; d0 = a wave (0..4), d1 = its step (1/16 degrees a frame), d2 = amplitude
+; -> d0 = amplitude * sin(its phase), the phase one step on. uses a1
+morphWave:
+		add.w	d0,d0
+		lea		morphPh,a1
+		add.w	d0,a1
+		move.w	(a1),d0
+		add.w	d1,d0
+		cmp.w	#360*16,d0
+		blo.s	.w0
+		sub.w	#360*16,d0
+.w0:	move.w	d0,(a1)
+		lsr.w	#4,d0
+		lsl.w	#2,d0
+		lea		sctab,a1
+		move.w	(a1,d0.w),d0
+		muls	d2,d0
+		add.l	d0,d0
+		swap	d0
+		rts
+morphPh:	ds.w	5			; the waves' phases
+
+; d0 = frames, d1 = frames in all -> d0 = 0..256 (clamped), d1 the
+; smoothstep of it
+morphUnit:
+		cmp.w	d1,d0
+		blo.s	.u0
+		move.w	d1,d0
+.u0:	tst.w	d0
+		bpl.s	.u1
+		moveq	#0,d0
+.u1:	ext.l	d0
+		lsl.l	#6,d0
+		divu	d1,d0				; 0..64
+		move.w	d0,d1
+		add.w	d1,d1
+		lea		morphSmooth(pc),a1
+		move.w	(a1,d1.w),d1
+		lsl.w	#2,d0				; 0..256
+		rts
 
 ;---------------------------------------------
 ; once a frame from seq_morph (asteroids.s), before the ship moves and is
@@ -213,14 +307,26 @@ morphTick::
 		move.w	.tab(pc,d1.w),d1
 		jsr		.tab(pc,d1.w)
 		addq.l	#2,a7
-		; the jolt: the stars' speed ahead
-		move.w	morphBoost,d0
-		mulu	#warpVz*morphVzBoost,d0
+		bsr		morphTorpMove
+		; the stars' speed, and fewer of them while they rush
+		move.w	morphVz,d0
+		mulu	#warpVz,d0
 		lsr.l	#8,d0
-		add.w	#warpVz,d0
 		move.w	d0,warpVzNow
+		; new stars from further off the faster they come (the same wait for
+		; each: the faster, the fewer of them in sight - a rush of stars
+		; costs; the parked ones next to nothing)
+		move.w	morphVz,d0
+		sub.w	#256,d0
+		mulu	#morphParkZ,d0
+		lsr.l	#8,d0
+		cmp.b	#MP_CHASE,morphPhase	; (from the chase on a few always:
+		blo.s	.pk						; the ship costs its share)
+		add.w	#morphPark0,d0
+.pk:	move.w	d0,warpPark
 		rts
-.tab:	dc.w	.unfold-.tab,.hold-.tab,.turn-.tab,.fly-.tab,.gone-.tab
+.tab:	dc.w	.unfold-.tab,.hold-.tab,.turn-.tab,.chase-.tab,.loop-.tab
+		dc.w	.attack-.tab,.gone-.tab
 
 .unfold:
 		st		morphDirty
@@ -246,122 +352,387 @@ morphTick::
 		move.b	#MP_TURN,morphPhase
 		clr.w	morphPT
 		clr.w	morphStep
-		move.w	obj_xc(a0),morphC0X
-		move.w	obj_yc(a0),morphC0Y
+		move.w	morphSX,morphSX0	; (morphPose has it from the ship)
+		move.w	morphSY,morphSY0
 		rts
 
-.turn:
+.turn:	; into our way: its tail to us (pitch -90, yaw -90 is the ship seen
+		; from behind, upright)
 		st		morphDirty
 		move.w	morphPT,d0
-		mulu	#64,d0
-		divu	#morphTurnT,d0
-		cmp.w	#64,d0
-		bls.s	.t0
-		moveq	#64,d0
-.t0:	add.w	d0,d0
-		lea		morphSmooth,a1
-		move.w	(a1,d0.w),d1		; 0..256
-		move.w	#morphRoll2-morphRoll,d0
+		move.w	#morphTurnT,d1
+		bsr		morphUnit			; d1 0..256
+		move.w	#-morphRoll,d0
 		muls	d1,d0
 		asr.l	#8,d0
 		add.w	#morphRoll,d0
 		move.w	d0,morphRollD
-		move.w	#morphPitch2-morphPitch,d0
+		move.w	#-90-morphPitch,d0
 		muls	d1,d0
 		asr.l	#8,d0
 		add.w	#morphPitch,d0
 		move.w	d0,morphPitchD
-		cmp.w	#morphTurnT-morphParkT,morphPT	; new stars from further off
-		blo.s	.t1						; already before the fly-by (it takes
-		move.w	#morphParkZ,warpPark	; a while till there are fewer)
-.t1:	cmp.w	#morphTurnT+6,morphPT	; (two pictures at the end pose)
-		blo.s	.out
-		move.b	#MP_FLY,morphPhase
-		clr.w	morphPT
-		move.w	#morphParkZ,warpPark	; (new stars from further off while the
-		rts							; ship is big)
-
-.fly:
-		st		morphDirty
-		add.w	#morphBoostUp,morphBoost
-		cmp.w	#256,morphBoost
-		bls.s	.f0
-		move.w	#256,morphBoost
-.f0:	; the depth: the ship's size on the screen (1/depth) grows from 1 to
-		; morphKMax, faster and faster (u*u)
-		move.w	morphPT,d0
-		lsl.w	#8,d0
-		ext.l	d0
-		divu	#morphFlyT,d0		; u 0..256
-		; the camera swings right past it: the ship's place slides to the
-		; left more and more (and on, after the end, till it is gone)
-		move.w	d0,d1				; (only late - it is big by then - and
-		sub.w	#192,d1				; then all the more)
-		bpl.s	.sl0
-		moveq	#0,d1
-.sl0:	mulu	d1,d1
-		mulu	#morphSlide,d1
-		lsr.l	#8,d1
-		lsr.l	#4,d1
-		move.w	d1,morphSlideX
-		cmp.w	#256,d0
-		bls.s	.fu
-		move.w	#256,d0
-.fu:	mulu	d0,d0
-		lsr.l	#8,d0				; u*u
-		mulu	#morphKMax-1,d0
-		add.w	#256,d0				; 8.8, 1..morphKMax
-		move.l	#morphZ0*256,d1
-		divu	d0,d1
-		move.w	d1,morphZs
-		; and meanwhile it brings itself round into its flight position,
-		; banking, the nose up to the logo - as if it had a plan
-		move.w	morphPT,d0
-		sub.w	#morphFlyD,d0
-		bpl.s	.f1
-		moveq	#0,d0
-.f1:	mulu	#64,d0
-		divu	#morphFlyT-morphFlyD,d0
-		cmp.w	#64,d0
-		bls.s	.f2
-		moveq	#64,d0
-.f2:	add.w	d0,d0
-		lea		morphSmooth,a1
-		move.w	(a1,d0.w),d1		; 0..256
-		move.w	#morphRoll3-morphRoll2,d0
-		muls	d1,d0
-		asr.l	#8,d0
-		add.w	#morphRoll2,d0
-		move.w	d0,morphRollD
-		move.w	#morphPitch3-morphPitch2,d0
-		muls	d1,d0
-		asr.l	#8,d0
-		add.w	#morphPitch2,d0
-		move.w	d0,morphPitchD
-		move.w	#morphYaw3,d0
+		move.w	#-90,d0
 		muls	d1,d0
 		asr.l	#8,d0
 		move.w	d0,morphYawD
-		tst.b	morphOut			; gone once it is all off the screen (or
-		bne.s	.fe					; a while after the end, anyway)
-		cmp.w	#morphFlyT+40,morphPT
+		cmp.w	#morphTurnT+6,morphPT	; (two pictures at the end pose)
 		blo.s	.out
-.fe:	move.b	#MP_GONE,morphPhase
-		clr.w	warpPark
+		move.b	#MP_CHASE,morphPhase
+		clr.w	morphPT
 		rts
 
-.gone:
-		move.w	morphBoost,d0		; the stars slow down softly
-		sub.w	#morphBoostDn,d0
-		bpl.s	.g0
+.chase:
+		st		morphDirty
+		; the way: from far off to past us, faster at first, slower near
+		; (ease out): it grows slowly - big, and nearly as fast as we are
+		move.w	morphPT,d0
+		move.w	#morphChaseT,d1
+		bsr		morphUnit			; d0 u 0..256
+		move.w	d0,d2				; (u, for the stars)
+		move.w	#256,d1
+		sub.w	d0,d1
+		mulu	d1,d1
+		lsr.l	#8,d1				; (1-u)^2
+		move.l	#morphZ0-morphZPass,d0
+		lsr.l	#4,d0
+		mulu	d1,d0
+		lsr.l	#4,d0
+		add.l	#morphZPass,d0		; ZPass + (Z0 - ZPass) (1-u)^2
+		move.l	d0,morphSZ
+		; we pick up speed: the stars faster and faster (u*u)
+		mulu	d2,d2
+		lsr.l	#8,d2
+		mulu	#morphVzMax-1,d2
+		add.w	#256,d2
+		move.w	d2,morphVz
+		; the pilot gets ready: banks to and fro, weaves, the nose a little
+		; this way and that - and once a full roll
 		moveq	#0,d0
-.g0:	move.w	d0,morphBoost
+		moveq	#22,d1
+		moveq	#morphBank,d2
+		bsr		morphWave
+		move.w	d0,d3
+		move.w	morphPT,d0
+		sub.w	#morphRollAt,d0
+		move.w	#morphRollT,d1
+		bsr		morphUnit			; d1 0..256 (0 before, 256 after)
+		mulu	#360,d1
+		lsr.l	#8,d1
+		cmp.w	#360,d1
+		blo.s	.c0
+		moveq	#0,d1				; (round: as before)
+.c0:	add.w	d1,d3
+		move.w	d3,morphRollD
+		moveq	#1,d0
+		moveq	#34,d1
+		moveq	#4,d2
+		bsr		morphWave
+		sub.w	#90,d0
+		move.w	d0,morphPitchD
+		moveq	#2,d0
+		moveq	#13,d1
+		moveq	#5,d2
+		bsr		morphWave
+		sub.w	#90,d0
+		move.w	d0,morphYawD
+		moveq	#3,d0
+		moveq	#27,d1
+		moveq	#3,d2
+		bsr		morphWave
+		add.w	#morphChaseTilt,d0	; (we see it a little from above)
+		move.w	d0,morphTiltD
+		moveq	#4,d0
+		moveq	#14,d1
+		move.w	#morphWeave,d2
+		bsr		morphWave
+		add.w	morphSX0,d0
+		move.w	d0,morphSX
+		move.w	morphSY0,morphSY
+		; past us (all of it off the screen): it is behind us now
+		tst.b	morphOut
+		bne.s	.toLoop
+		cmp.w	#morphChaseT,morphPT
+		blo		.out
+.toLoop:
+		move.b	#MP_LOOP,morphPhase
+		clr.w	morphPT
+		st		morphHide
+		rts
+
+.loop:
+		cmp.w	#morphLoopT,morphPT
+		blo		.out
+		move.b	#MP_ATTACK,morphPhase
+		clr.w	morphPT
+		sf		morphOut
+		st		morphDirty
+		move.w	#morphAtkX,morphSX
+		rts
+
+.attack:
+		st		morphDirty
+		; from behind us past us on the right - a little faster than we are,
+		; so it is big beside us for a while - then the afterburner: away
+		; towards the logo, faster and faster
+		move.w	morphPT,d0
+		move.w	#morphAtkT,d1
+		bsr		morphUnit
+		move.w	d1,d3				; (its smoothstep: rolling out)
+		move.w	morphPT,d0
+		cmp.w	#morphAtkPassT,d0
+		bhs.s	.ab
+		mulu	#(morphAtkZ1-morphAtkZ0)/morphAtkPassT,d0	; the pass
+		add.l	#morphAtkZ0,d0
+		bra.s	.az
+.ab:	sub.w	#morphAtkPassT,d0	; the burn: z1 + go * t^2
+		move.w	#morphAtkT-morphAtkPassT,d1
+		bsr		morphUnit			; d0 0..256
+		mulu	d0,d0
+		lsr.l	#8,d0
+		move.l	#morphAtkGo/16,d1
+		mulu	d1,d0
+		lsr.l	#4,d0
+		add.l	#morphAtkZ1,d0
+.az:	move.l	d0,morphSZ
+		; up along the line that ends on the logo: y = y0 + dz * k
+		sub.l	#morphAtkZ0,d0
+		lsr.l	#4,d0				; (units)
+		muls	#(morphLogoY-morphVY)*16*16/morphF,d0
+		asr.l	#4,d0
+		add.w	#morphAtkY,d0
+		move.w	d0,morphSY
+		; seen from behind, its nose up at the logo, rolling out of the loop
+		move.w	#-morphAtkRoll,d0
+		muls	d3,d0
+		asr.l	#8,d0
+		add.w	#morphAtkRoll,d0
+		move.w	d0,morphRollD
+		move.w	#-90,morphPitchD
+		move.w	#-90,morphYawD
+		move.w	#morphAtkTilt,morphTiltD
+		; drawn only while it is ahead of us (and not too far off)
+		sf		morphHide
+		cmp.l	#1500,morphSZ
+		bge.s	.a0
+		st		morphHide
+.a0:	; the torpedoes
+		move.w	morphTorpNext,d0
+		cmp.w	#morphTorpN,d0
+		bhs.s	.a1
+		mulu	#morphTorpGap,d0
+		add.w	#morphTorpAt,d0
+		cmp.w	morphPT,d0
+		bne.s	.a1
+		bsr		morphTorpFire
+.a1:	cmp.w	#morphAtkT,morphPT
+		blo		.out
+		move.b	#MP_GONE,morphPhase
+		clr.w	morphPT
+		st		morphHide
+		rts
+
+.gone:	; the stars slow down softly
+		move.w	morphVz,d0
+		cmp.w	#morphVzEnd*256,d0
+		bls		.out
+		subq.w	#8,d0
+		move.w	d0,morphVz
 		rts
 
 ;---------------------------------------------
+; a torpedo off: from the ship's nose (a little ahead of its middle),
+; along the line to the logo, faster than the ship
+morphTorpFire:
+		move.w	morphTorpNext,d0
+		addq.w	#1,morphTorpNext
+		mulu	#tp_len,d0
+		lea		morphTorps,a1
+		add.w	d0,a1
+		move.w	#1,tp_age(a1)
+		move.w	morphSX,tp_x(a1)
+		move.w	morphSY,d0
+		ext.l	d0
+		sub.l	#6*16,d0
+		move.l	d0,tp_y(a1)
+		move.l	morphSZ,d0
+		add.l	#38*16,d0
+		move.l	d0,tp_z(a1)
+		rts
+
+; the torpedoes on: ahead, and up along the line to the logo
+morphTorpMove:
+		lea		morphTorps,a1
+		moveq	#morphTorpN-1,d7
+.t:		move.w	tp_age(a1),d0
+		ble.s	.n
+		addq.w	#1,tp_age(a1)
+		add.l	#morphTorpV,tp_z(a1)
+		add.l	#(morphLogoY-morphVY)*morphTorpV/morphF,tp_y(a1)
+		cmp.l	#morphTorpEnd,tp_z(a1)
+		blt.s	.n
+		move.w	#-1,tp_age(a1)		; there (the hits: later)
+.n:		lea		tp_len(a1),a1
+		dbf		d7,.t
+		rts
+
+; the torpedoes into the draw table: a plasma ball - a diamond that
+; twinkles, its size by its distance - then a spark, then a dot; and a
+; muzzle flash at the nose for their first frames. a5/a6 as set_line
+morphTorpDraw:
+		lea		morphTorps,a4
+		moveq	#morphTorpN-1,d7
+.t:		move.w	tp_age(a4),d0
+		ble		.n
+		movem.l	d7/a4,-(a7)
+		; onto the screen: x = mid + x*lens/z (long z: both halved till it
+		; fits a word)
+		move.l	tp_z(a4),d5
+		move.w	tp_x(a4),d3
+		ext.l	d3
+		move.l	tp_y(a4),d4
+.sh:	cmp.l	#32000,d5
+		blt.s	.s0
+		asr.l	#1,d5
+		asr.l	#1,d3
+		asr.l	#1,d4
+		bra.s	.sh
+.s0:	muls	#morphF,d3
+		divs	d5,d3
+		add.w	#morphVX,d3			; x
+		muls	#morphF,d4
+		divs	d5,d4
+		add.w	#morphVY,d4			; y
+		move.l	tp_z(a4),d5			; the radius
+		moveq	#0,d6
+.r:		cmp.l	#32000,d5
+		blt.s	.r0
+		asr.l	#1,d5
+		addq.w	#1,d6
+		bra.s	.r
+.r0:	move.l	#morphTorpR*morphF,d0
+		lsr.l	d6,d0
+		divu	d5,d0				; px
+		move.w	tp_age(a4),d1
+		btst	#0,d1				; the twinkle
+		beq.s	.tw
+		addq.w	#1,d0
+.tw:	cmp.w	#2,d0
+		blo.s	.dot
+		; a diamond of radius d0 round d3/d4
+		movem.w	d0/d3/d4,-(a7)
+		move.w	d3,d1
+		sub.w	d0,d1				; (left)
+		move.w	d4,d2
+		bsr		.line4
+		movem.w	(a7)+,d0/d3/d4
+		cmp.w	#5,d0				; big: a smaller one inside, every
+		blo.s	.nf					; other frame (the plasma swirls)
+		move.w	tp_age(a4),d1
+		btst	#1,d1
+		bne.s	.nf
+		lsr.w	#1,d0
+		movem.w	d0/d3/d4,-(a7)
+		bsr		.line4
+		movem.w	(a7)+,d0/d3/d4
+		bra.s	.nf
+.dot:	movem.w	d3/d4,-(a7)
+		move.w	d3,d0
+		move.w	d4,d1
+		jsr		set_point
+		movem.w	(a7)+,d3/d4
+.nf:	; the muzzle flash: rays at its start, shorter each frame
+		move.w	tp_age(a4),d0
+		cmp.w	#5,d0
+		bhs.s	.nx
+		moveq	#5,d1
+		sub.w	d0,d1
+		mulu	#3,d1				; 12, 9, 6, 3
+		move.w	d1,d0
+		bsr		.rays
+.nx:	movem.l	(a7)+,d7/a4
+.n:		lea		tp_len(a4),a4
+		dbf		d7,.t
+		rts
+; four lines: the diamond of radius d0 round d3/d4
+.line4:
+		move.w	d0,d5
+		move.w	d3,d0				; left -> top
+		sub.w	d5,d0
+		move.w	d4,d1
+		move.w	d3,d2
+		move.w	d4,d3
+		sub.w	d5,d3
+		movem.w	d0-d5,-(a7)
+		jsr		set_line
+		movem.w	(a7)+,d0-d5
+		move.w	d2,d0				; top -> right
+		move.w	d3,d1
+		add.w	d5,d2
+		add.w	d5,d3
+		movem.w	d0-d5,-(a7)
+		jsr		set_line
+		movem.w	(a7)+,d0-d5
+		move.w	d2,d0				; right -> bottom
+		move.w	d3,d1
+		sub.w	d5,d2
+		add.w	d5,d3
+		movem.w	d0-d5,-(a7)
+		jsr		set_line
+		movem.w	(a7)+,d0-d5
+		move.w	d2,d0				; bottom -> left
+		move.w	d3,d1
+		sub.w	d5,d2
+		sub.w	d5,d3
+		jmp		set_line
+; four rays of length d0 round d3/d4: a cross, and a diagonal one
+.rays:
+		move.w	d0,d5
+		move.w	d3,d0
+		sub.w	d5,d0
+		move.w	d4,d1
+		move.w	d3,d2
+		add.w	d5,d2
+		movem.w	d3-d5,-(a7)
+		move.w	d1,d3
+		jsr		set_line			; across
+		movem.w	(a7)+,d3-d5
+		move.w	d3,d0
+		move.w	d4,d1
+		sub.w	d5,d1
+		move.w	d3,d2
+		movem.w	d3-d5,-(a7)
+		move.w	d4,d3
+		add.w	d5,d3
+		jsr		set_line			; up and down
+		movem.w	(a7)+,d3-d5
+		lsr.w	#1,d5
+		move.w	d3,d0
+		sub.w	d5,d0
+		move.w	d4,d1
+		sub.w	d5,d1
+		move.w	d3,d2
+		add.w	d5,d2
+		movem.w	d3-d5,-(a7)
+		move.w	d4,d3
+		add.w	d5,d3
+		jsr		set_line			; one diagonal
+		movem.w	(a7)+,d3-d5
+		move.w	d3,d0
+		add.w	d5,d0
+		move.w	d4,d1
+		sub.w	d5,d1
+		move.w	d3,d2
+		sub.w	d5,d2
+		move.w	d4,d3
+		add.w	d5,d3
+		jmp		set_line			; the other
+
+;---------------------------------------------
 morphDraw:
-		cmp.b	#MP_GONE,morphPhase
-		beq		.none
+		bsr		morphTorpDraw
+		tst.b	morphHide
+		bne		.none
 		tst.b	morphDirty
 		bne.s	.build
 		move.l	obj_xc(a0),d0		; the same picture: and the ship on the
@@ -369,21 +740,29 @@ morphDraw:
 		beq		.emit
 .build:
 		move.l	obj_xc(a0),morphKey
-		cmp.b	#MP_FLY,morphPhase
-		bne.s	.noFly
-		; the fly-by (the stars rush, the ship is big): a picture takes two
-		; frames - the points and faces, then the lines
-		not.b	morphFlyB
+		cmp.b	#MP_CHASE,morphPhase
+		bhs.s	.moving
+		cmp.b	#MP_TURN,morphPhase
+		beq.s	.turn
+		bra		.whole
+.moving:
+		; on the move (the chase, the attack run): a picture takes two
+		; frames - the points, then the faces and the lines; while it is
+		; still small and far off in the chase, three (as in the turn)
+		cmp.b	#MP_CHASE,morphPhase
+		bne.s	.two
+		cmp.l	#morphFar,morphSZ
+		bgt		.turn
+.two:	not.b	morphFlyB
 		bne.s	.fl1
-		tst.b	morphFlyP			; (the first frame of it: no pose yet)
-		bne.s	.fl0
-		st		morphFlyP
 		bsr		morphPose
-.fl0:	moveq	#0,d6
+		moveq	#0,d6
 		moveq	#morphNP-1,d7
 		bsr		morphPoints
-		lea		morphXY,a1			; all of it off the screen (to the left
-		moveq	#morphNP-1,d0		; or below)?
+		cmp.b	#MP_CHASE,morphPhase
+		bne		.emit
+		lea		morphXY,a1			; (the chase) all of it off the screen,
+		moveq	#morphNP-1,d0		; to the left or below?
 .ox:	tst.w	(a1)
 		bmi.s	.ox1
 		cmp.w	#game_height,2(a1)
@@ -392,13 +771,10 @@ morphDraw:
 		dbf		d0,.ox
 		st		morphOut
 		bra		.emit
-.fl1:	sf		morphDirty			; the faces, the pose for the next picture
-		bsr		morphFaceVis		; (a frame early: the same as then, near
-		bsr		morphPose			; enough), the lines
+.fl1:	sf		morphDirty
+		bsr		morphFaceVis
 		bra		.lines
-.noFly:
-		cmp.b	#MP_TURN,morphPhase
-		bne.s	.whole
+.turn:
 		; the turn (the ship small, far off, turning slowly): a picture
 		; takes three frames - half the points, the other half and the
 		; faces, the lines. the one before is shown meanwhile
@@ -468,8 +844,6 @@ morphDraw:
 		bra.s	.lend
 .edge:	move.w	d7,-(a7)
 		clr.w	morphGlowE
-		tst.b	morphKept
-		bne.s	.seen
 		moveq	#0,d0
 		move.b	4(a4),d0			; its part
 		lsl.w	#2,d0
@@ -502,10 +876,10 @@ morphDraw:
 		move.l	d0,(a6)+
 .none:	rts
 
-; this frame's turn, growth, depth and middle
+; this frame's turn, growth and place
 morphPose:
 		tst.b	morphKept
-		bne.s	.done
+		bne		.done
 		; the unfolding: the parts' smoothsteps
 		move.w	morphT,d6
 		bpl.s	.t0
@@ -547,59 +921,59 @@ morphPose:
 		move.w	d1,morphPitchD
 		move.w	obj_xc(a0),morphCX
 		move.w	obj_yc(a0),morphCY
-		bra.s	.trig
-.done:
-		move.w	#morphF,morphFG
-		cmp.b	#MP_FLY,morphPhase
-		beq.s	.fly
-		move.w	obj_xc(a0),morphCX	; (hold: wherever it is; turn: it is
-		move.w	obj_yc(a0),morphCY	; still)
-		cmp.b	#MP_TURN,morphPhase
-		bne.s	.trig
-		move.w	morphC0X,morphCX
-		move.w	morphC0Y,morphCY
-		bra.s	.trig
-.fly:	; the middle moves away from the stars' middle as the camera comes
-		move.w	morphC0X,d0
-		sub.w	#morphVX,d0
-		sub.w	morphSlideX,d0
-		muls	#morphZ0/16,d0
-		lsl.l	#4,d0
-		divs	morphZs,d0
-		add.w	#morphVX,d0
-		move.w	d0,morphCX
-		move.w	morphC0Y,d0
-		sub.w	#morphVY,d0
-		muls	#morphZ0/16,d0
-		lsl.l	#4,d0
-		divs	morphZs,d0
-		add.w	#morphVY,d0
-		move.w	d0,morphCY
-.trig:
-		lea		sctab,a3
 		move.w	morphRollD,d0
-		bpl.s	.r0
-		add.w	#360,d0
-.r0:	lsl.w	#2,d0
-		movem.w	(a3,d0.w),d2/d3		; sin, cos
-		move.w	d3,morphCR
-		move.w	d2,morphSR
+		bsr		morphSinCos
+		move.w	d1,morphCR
+		move.w	d0,morphSR
 		move.w	morphPitchD,d0
-		bpl.s	.p2
-		add.w	#360,d0
-.p2:	lsl.w	#2,d0
-		movem.w	(a3,d0.w),d2/d3
-		move.w	d3,morphCP
-		move.w	d2,morphSP
-		tst.b	morphKept
-		beq.s	.out
-		; unfolded: roll, pitch and the yaw (the turn in the screen's plane,
-		; the fly-by) as one matrix, Q15 - nine muls a point
+		bsr		morphSinCos
+		move.w	d1,morphCP
+		move.w	d0,morphSP
+		rts
+.done:
+		; unfolded: a body in the world. until it sets off its place comes
+		; from the ship (obj_xc/yc, at morphZ0)
+		cmp.b	#MP_TURN,morphPhase
+		bhs.s	.place
+		move.w	obj_xc(a0),d0
+		sub.w	#morphVX,d0
+		muls	#morphZ0,d0
+		divs	#morphF,d0
+		move.w	d0,morphSX
+		move.w	obj_yc(a0),d0
+		sub.w	#morphVY,d0
+		muls	#morphZ0,d0
+		divs	#morphF,d0
+		move.w	d0,morphSY
+.place:	; far off: all of it smaller by a shift, so the depth fits the table
+		move.l	morphSZ,d2
+		move.w	morphSX,d0
+		move.w	morphSY,d1
+		moveq	#0,d3
+.sh:	cmp.l	#16000,d2
+		ble.s	.sh0
+		asr.l	#1,d2
+		asr.w	#1,d0
+		asr.w	#1,d1
+		addq.w	#1,d3
+		bra.s	.sh
+.sh0:	move.w	d2,morphSZs
+		move.w	d0,morphSXs
+		move.w	d1,morphSYs
+		move.w	d3,morphSh
+		; the turn as one matrix, Q15: roll, pitch, yaw, then the tilt
+		move.w	morphRollD,d0
+		bsr		morphSinCos
+		move.w	d1,morphCR
+		move.w	d0,morphSR
+		move.w	morphPitchD,d0
+		bsr		morphSinCos
+		move.w	d1,morphCP
+		move.w	d0,morphSP
 		move.w	morphYawD,d0
-		bpl.s	.y0
-		add.w	#360,d0
-.y0:	lsl.w	#2,d0
-		movem.w	(a3,d0.w),d6/d7		; syw, cyw
+		bsr		morphSinCos
+		move.w	d0,d6				; syw
+		move.w	d1,d7				; cyw
 		lea		morphM,a2
 		move.w	morphSP,d4
 		move.w	morphSR,d0
@@ -673,11 +1047,35 @@ morphPose:
 		add.l	d2,d2
 		swap	d2
 		move.w	d2,(a2)+
+		; the tilt (about the screen's x, + its nose up while it flies
+		; away): y' = c y + s z, z' = -s y + c z, column by column
+		move.w	morphTiltD,d0
+		beq.s	.out
+		bsr		morphSinCos			; d0 s, d1 c
+		lea		morphM+6,a2			; row y
+		moveq	#3-1,d7
+.tc:	move.w	(a2),d2				; y
+		move.w	6(a2),d3			; z
+		move.w	d2,d4
+		muls	d1,d4
+		move.w	d3,d5
+		muls	d0,d5
+		add.l	d5,d4
+		add.l	d4,d4
+		swap	d4
+		move.w	d4,(a2)
+		muls	d1,d3
+		muls	d0,d2
+		sub.l	d2,d3
+		add.l	d3,d3
+		swap	d3
+		move.w	d3,6(a2)
+		addq.l	#2,a2
+		dbf		d7,.tc
 .out:	rts
 
 ; the points d6.. (d7+1 of them): unfolded as far as their part is,
-; turned, onto the screen. the turned ones are kept (morphRot): in the
-; fly-by the ship does not turn any more, there only the projection is new
+; turned, onto the screen
 morphPoints:
 		move.w	d6,d0
 		mulu	#mp_len,d0
@@ -688,8 +1086,9 @@ morphPoints:
 		lea		morphXY,a2
 		add.w	d0,a2
 		tst.b	morphKept
-		beq.s	.pt
-		; unfolded: the end points through the matrix (morphPose)
+		beq		.pt
+		; unfolded: the end points through the matrix (morphPose), and
+		; onto the screen from where the ship is in the world
 .km:	movem.w	(a1),d0-d2
 		add.w	6(a1),d0
 		add.w	8(a1),d1
@@ -707,7 +1106,7 @@ morphPoints:
 		muls	d2,d5
 		add.l	d5,d4
 		add.l	d4,d4
-		swap	d4					; x on the screen (round the middle)
+		swap	d4					; x (across)
 		move.w	(a3)+,d3
 		muls	d0,d3
 		move.w	(a3)+,d5
@@ -717,7 +1116,7 @@ morphPoints:
 		muls	d2,d5
 		add.l	d5,d3
 		add.l	d3,d3
-		swap	d3					; y
+		swap	d3					; y (down)
 		move.w	(a3)+,d5
 		muls	d0,d5
 		move.w	(a3)+,d6
@@ -727,24 +1126,38 @@ morphPoints:
 		muls	d2,d6
 		add.l	d6,d5
 		add.l	d5,d5
-		swap	d5
-		move.w	d5,d2				; z (+: towards the eye)
-		bsr.s	.project
+		swap	d5					; z (+: towards the eye)
+		move.w	morphSh,d1
+		asr.w	d1,d4
+		asr.w	d1,d3
+		asr.w	d1,d5
+		move.w	morphSZs,d1
+		sub.w	d5,d1
+		cmp.w	#64,d1				; (never at or behind the eye)
+		bge.s	.kz
+		moveq	#64,d1
+.kz:	lsr.w	#3,d1				; the lens over the depth: the table
+		add.w	d1,d1				; (morphInit)
+		lea		morphRcp,a3
+		move.w	(a3,d1.w),d0
+		add.w	morphSXs,d4
+		muls	d0,d4
+		asr.l	#8,d4
+		asr.l	#4,d4
+		add.w	#morphVX,d4
+		add.w	morphSYs,d3
+		muls	d0,d3
+		asr.l	#8,d3
+		asr.l	#4,d3
+		add.w	#morphVY,d3
+		move.w	d4,(a2)+
+		move.w	d3,(a2)+
 		lea		mp_len(a1),a1
 		dbf		d7,.km
 		rts
 .pt:	movem.w	(a1),d0-d2			; start
 		movem.w	6(a1),d3-d5			; the way to the end
-		tst.b	morphKept
-		beq.s	.unf
-		add.w	d3,d0				; done: the end
-		add.w	d4,d1
-		add.w	d5,d2
-		lsl.w	#4,d0
-		lsl.w	#4,d1
-		lsl.w	#4,d2
-		bra.s	.turn
-.unf:	move.w	12(a1),d6			; its part's smoothstep
+		move.w	12(a1),d6			; its part's smoothstep
 		add.w	d6,d6
 		lea		morphU,a3
 		move.w	(a3,d6.w),d6
@@ -760,7 +1173,7 @@ morphPoints:
 		muls	d6,d5
 		asr.l	#4,d5
 		add.w	d5,d2
-.turn:	; roll about x: y' = y cr - z sr, z' = y sr + z cr
+		; roll about x: y' = y cr - z sr, z' = y sr + z cr
 		move.w	d1,d3
 		muls	morphCR,d3
 		move.w	d2,d4
@@ -786,39 +1199,26 @@ morphPoints:
 		add.l	d0,d2
 		add.l	d2,d2
 		swap	d2					; z'' (+: towards the eye)
-		bsr.s	.project
-		lea		mp_len(a1),a1
-		dbf		d7,.pt
-		rts
-; onto the screen: x'' d4, y' d3, z'' d2 -> * lens / (depth - z'')
-.project:
-		move.w	morphZs,d1
+		; onto the screen round the ship: * lens*growth / (depth - z'')
+		move.w	#morphZ0,d1
 		sub.w	d2,d1
-		cmp.w	#64,d1				; (never at or behind the eye)
-		bge.s	.pz
-		moveq	#64,d1
-.pz:	tst.b	morphKept			; unfolded: the lens is morphF - from the
-		beq.s	.pdiv				; table (morphInit), an eighth of a unit
-		lsr.w	#3,d1				; apart
-		add.w	d1,d1
-		lea		morphRcp,a3
-		move.w	(a3,d1.w),d0
-		bra.s	.pmul
-.pdiv:	moveq	#0,d0				; lens/(depth - z'') once, as 4.12
+		moveq	#0,d0				; (4.12)
 		move.w	morphFG,d0
 		lsl.l	#8,d0
 		lsl.l	#4,d0
 		divu	d1,d0
-.pmul:	muls	d0,d4
+		muls	d0,d4
 		asr.l	#8,d4
 		asr.l	#4,d4
 		muls	d0,d3
 		asr.l	#8,d3
 		asr.l	#4,d3
-		add.w	morphCX,d4			; (on the screen: round the middle)
+		add.w	morphCX,d4
 		add.w	morphCY,d3
 		move.w	d4,(a2)+
 		move.w	d3,(a2)+
+		lea		mp_len(a1),a1
+		dbf		d7,.pt
 		rts
 
 ; the faces seen, from the projected corners (screen y down: a face whose
@@ -872,8 +1272,8 @@ morphSeen:
 .no:	moveq	#0,d2
 		rts
 
-; a4 = an edge: its line into the table at a6 (the cache), round the middle
-; (and once more a line lower while it glows). keeps a4
+; a4 = an edge: its line into the table at a6 (the cache) (and once more a
+; line lower while it glows). keeps a4
 morphLine:
 		lea		morphXY,a1
 		moveq	#0,d0
