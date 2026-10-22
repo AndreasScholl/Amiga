@@ -58,6 +58,20 @@ warpMidStep	= 3
 warpCol1	= $0125		; dim: the old back layer's blue
 warpCol2	= $0371		; middle: the old second layer's green
 warpCol3	= $0842		; bright: the old front layer's orange
+	ifne	elite3
+; (elite3) the four layers' colours at the end of the fade: those of the
+; bitplane field's depth bands they go into (stars3d.i s3Band, scroller.s
+; ELC1..7) - not a star changes its colour at the switch
+warpColF	= $0b72		; the front layer: orange
+warpColS	= $0a32		; the second: red
+warpColT	= $0a32		; the third: red (in the same band as the second)
+warpColB	= $0125		; the back: dark blue (as it was)
+	else
+warpColF	= warpCol3
+warpColS	= warpCol2
+warpColT	= warpCol2
+warpColB	= warpCol1
+	endc
 warpCx		= 160		; the middle of the field: screen x 0..319 ...
 warpCy		= 134		; ... and line from $20 ($a6)
 
@@ -263,16 +277,16 @@ warpFade:
 		move.w	#warpFadeT,warpFadeC
 		moveq	#0,d5				; one still on its way
 		lea		starColours+6,a1	; 18: the second layer -> middle
-		move.w	#warpCol2,d1
+		move.w	#warpColS,d1
 		bsr.s	.step
 		lea		starColours+10,a1	; 19: the front -> bright
-		move.w	#warpCol3,d1
+		move.w	#warpColF,d1
 		bsr.s	.step
 		lea		starColours+14,a1	; 21: the back -> dim
-		move.w	#warpCol1,d1
+		move.w	#warpColB,d1
 		bsr.s	.step
 		lea		starColours+18,a1	; 22: the third -> middle
-		move.w	#warpCol2,d1
+		move.w	#warpColT,d1
 		bsr.s	.step
 		tst.w	d5
 		bne.s	.out

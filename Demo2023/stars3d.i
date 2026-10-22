@@ -7,9 +7,10 @@
 ; depth a sprite star needs a free place on every line it comes to, and
 ; it costs ~450 cycles a frame. here the stars are dots in three bitplanes
 ; of their own (planes 1..3, the game's lines on plane 4 in front of
-; them): no places, no beam to mind, ~170 cycles a star - and the planes
-; give the engines and the plasma balls their glow as well (colours 3, 5,
-; 6, 7: s3Glow), so no sprites at all from here on.
+; them): no places, no beam to mind, ~170 cycles a star. the planes are
+; the stars' alone - seven colours by the depth, far dark blue, blue,
+; violet, dark red, red, orange, near green (s3Band); the glows are
+; sprites (morph.i morphSprFrame).
 ;
 ; once the warp's colour fade (warp.i, state 1) is through, EVERY
 ; Defender star on the screen becomes a 3D star right where it is (four
@@ -17,8 +18,9 @@
 ; is twice as far), and it goes on sideways at its layer's speed while
 ; that dies away and the flight ahead takes over (S3BLENDT frames,
 ; smoothstep). then the field thins out to S3NLIVE stars - all of them
-; on the screen - and grows richer (s3Grow: more bright ones, brighter
-; colours).
+; on the screen. a star's colour is its depth band's: it changes only as
+; the star comes into the next band (the four layers are on bands whose
+; colours the warp faded them to: nothing changes at the switch).
 ;
 ; the perspective without a multiply (learnt from Planet Rocklobster's
 ; starfield, done our own way): a star keeps the log of its place times
@@ -26,9 +28,9 @@
 ; and a look-up, which gives the byte and the bit straight away (s3ExpX),
 ; and for a star off the screen a sum below 0 (S3OFF): it flies out and
 ; never comes back, so a new one takes its place far off (made in
-; advance: s3SpTab) - every star is one you see. L is 256 log2. the plane
-; (the colour by the depth) comes with L(z) in the same look-up (s3ZTab).
-; the dots and glows of two frames ago are cleared from the buffer drawn
+; advance: s3SpTab) - every star is one you see. L is 256 log2. the planes
+; (the colour by the depth) come with L(z) in the same look-up (s3ZTab).
+; the dots of two frames ago are cleared from the buffer drawn
 ; next (double buffered, lists of their bytes), nothing else is touched.
 ;
 ; the copper: clistElite (scroller.s) from then on - the logo stays
@@ -47,31 +49,29 @@ S3VX		= morphVX	; the middle of the field (game plane x, y): where we fly
 S3VY		= morphVY
 S3BITC		= (S3VX+1)&7	; s3ExpX's bit: -px - this (its low 3 bits the bit)
 S3ZNEAR		= 36		; quarter z: nearer than this a star is past us
-S3ZMAX		= 3700		; ... the furthest (new stars: up to 3623)
+S3ZMAX		= 4000		; ... the furthest (new stars: up to 3973)
 S3SPAN8		= (S3ZMAX-S3ZNEAR)*8
 S3DB		= 2016		; the logs' range: L(x z0) - L(z) from -S3DB on ...
 S3HN		= 6144		; ... S3HN steps (a half of the tables: x >= 0, x < 0)
 S3HX		= S3HN*4
 S3HY		= S3HN*2
-S3ZFAR		= 2600		; new stars come from this far (and up to 1023 more:
+S3ZFAR		= 2950		; new stars come from this far (and up to 1023 more:
 						; depth)
-S3ZBRIGHT	= 448		; nearer: bright (plane 3) ...
-S3ZMID		= 1700		; ... the middle one (plane 2), else dim (plane 1):
-						; as the Defender layers were (256 .. 2048)
-S3ZBRIGHT2	= 1200		; ... and once straight ahead, step by step: more
-S3ZMID2		= 1800		; of them bright (s3Grow)
 S3BLENDT	= 110		; frames from sideways to straight ahead
 S3OFF		= -$4000	; off the screen (s3ExpX's byte, s3ExpY's row): the sum < 0
 S3FOLDN		= 16		; stars folded a frame at the blend's end ...
 S3FOLDT		= S3BLENDT-S3N/S3FOLDN+1	; ... from this frame on
-S3ADJ		= 5			; a layer's frames on at s3Begin (the front one: 4
-						; more of the sprites, the copper's frame between)
+S3ZSAFE		= 224-160-4	; (the blend: till the way ahead is this far - the
+						; front layer from z 224 into the green band - every
+						; star is in one plane: the quicker loop)
+S3ADJ		= 4			; a layer's frames on at s3Begin (the front one: the
+						; three more of the conversion, then the first frame
+						; of the field - drawn as they are converted)
 S3K0		= 8			; s3_k: no way sideways (s3XT's last entry)
 S3NLIVE		= 190		; ... once the blend is over: those that go are not all
 						; made again (the field's steady number)
 S3SPMAX		= 24		; new ones a frame at most (the rest the next frame)
-S3GN		= 5		; glows: their sizes (s3GlR) ...
-S3GMAX		= 8		; ... and a frame's most
+
 S3SPN		= 1024		; new stars made in advance (a power of 2)
 
 ; a star: L(|x| z0) * 4 and L(|y| z0) * 2 (their signs: which half of the
@@ -97,9 +97,7 @@ s3XS:			dc.w	0		; the front layer's way sideways (px * 16)
 s3XT:			dcb.w	5,S3VX-S3BITC	; ... a layer's x of the middle with it
 							; (px, - S3BITC)
 s3SpI:			dc.w	0		; the next new star (s3SpTab, * 8)
-s3ZB:			dc.w	0		; s3Grow: the depths bright up to here ...
-s3ZM:			dc.w	0		; ... the middle ones
-s3Cols:			dc.w	0,0,0		; ... the colours now (dim, middle, bright)
+
 s3Live:			dc.w	S3N		; stars in the field (s3Stars, from the start)
 s3LastP:		dc.l	0		; ... the last one
 s3BgA:			dc.l	0,0	; s3Begin -> s3Begin2: a3/a4 ...
@@ -109,16 +107,36 @@ s3V0:			dc.w	0		; starV at the start
 s3Draw::		dc.l	0		; the buffer drawn this frame (by its middle)
 s3Show::		dc.l	0		; ... the one shown
 s3ErN:			dc.w	0,0		; dots to clear, a buffer each
-s3GlN:			dc.w	0,0		; glows to clear, a buffer each (s3Glow)
+s3ErP:			dc.l	0		; (s3Begin: buffer A's list, as it fills)
+
 s3Seed:			dc.l	$1f2e3d4b
 s3Null:			dc.l	0		; (chip) a sprite that is not there
+; the depth bands, near to far: up to (quarter z), the first plane (its
+; offset), the more (0: none, + another so far on, - two more, S3PL apart).
+; the Defender layers are on orange (the front, z 256), red (the second and
+; the third, z 512, 1024) and dark blue (the back, z 2048; the new stars
+; too) - the warp's colours for them (warp.i warpColF..B) - each in one
+; plane: so at the blend's start (all of them about) no star has more than
+; one, and s3Field draws them all the quicker (S3ZSAFE). the colours:
+; scroller.s ELC1..7
+S3P1		= -S3MID
+S3P2		= S3PL-S3MID
+S3P3		= 2*S3PL-S3MID
+s3Band:	dc.w	160,S3P1,-S3PL		; green (1, 2, 3: colour 7)
+		dc.w	400,S3P3,0			; orange (3: 4)
+		dc.w	1160,S3P2,0			; red (2: 2)
+		dc.w	1350,S3P1,2*S3PL	; dark red (1, 3: 5)
+		dc.w	1550,S3P2,S3PL		; violet (2, 3: 6)
+		dc.w	1750,S3P1,S3PL		; blue (1, 2: 3)
+		dc.w	$7fff,S3P1,0		; dark blue (1: 1)
 
 ;---------------------------------------------
 ; once, at the start (morph.i morphInit): the tables
 s3Init::
 		movem.l	d0-d7/a0-a6,-(a7)
-		; the depths: L(z) * 4, * 2 and the plane (as an offset from the
-		; buffer's middle), from S3ZNEAR on
+		; the depths: L(z) * 4, * 2 and the planes of its band (s3Band:
+		; the first as an offset from the buffer's middle, then the more),
+		; from S3ZNEAR on
 		lea		s3ZTab,a3
 		move.w	#S3ZNEAR,d7
 .z:		move.w	d7,d0
@@ -127,15 +145,11 @@ s3Init::
 		move.w	d0,2(a3)			; * 2
 		add.w	d0,d0
 		move.w	d0,(a3)				; * 4
-		move.w	#2*S3PL-S3MID,d0	; the plane by the depth
-		cmp.w	#S3ZBRIGHT,d7
-		blo.s	.z1
-		move.w	#S3PL-S3MID,d0
-		cmp.w	#S3ZMID,d7
-		blo.s	.z1
-		move.w	#-S3MID,d0
-.z1:	move.w	d0,4(a3)
-		clr.w	6(a3)
+		lea		s3Band-6,a0			; the band
+.zb:	addq.l	#6,a0
+		cmp.w	(a0),d7
+		bhs.s	.zb
+		move.l	2(a0),4(a3)
 		addq.l	#8,a3
 		addq.w	#1,d7
 		cmp.w	#S3ZMAX,d7
@@ -234,7 +248,7 @@ s3Init::
 		bsr		s3Make				; (s3ZTot is 0: z * 8 as it is ...
 		sub.w	#S3ZNEAR*8,-4(a3)	; ... from the near end: s3Field's d6)
 		dbf		d7,.sp
-		bsr		s3GlMake
+
 		movem.l	(a7)+,d0-d7/a0-a6
 		rts
 ; d0 = x on the game plane -> d0 = byte (off the screen: S3OFF)
@@ -372,14 +386,8 @@ s3Begin::
 		clr.w	s3XS
 		move.w	starV,s3V0
 		clr.l	s3ErN
-		clr.l	s3GlN
+		move.l	#s3Er0,s3ErP
 		move.w	#S3N,s3Live
-		move.w	#S3ZBRIGHT,s3ZB
-		move.w	#S3ZMID,s3ZM
-		lea		elCol0,a0			; (scroller.s clistElite's)
-		move.w	2(a0),s3Cols
-		move.w	6(a0),s3Cols+2
-		move.w	14(a0),s3Cols+4
 		move.l	#s3Stars+(S3N-1)*s3_len,s3LastP
 		sf		s3Buf
 		move.l	#s3BufA+S3MID,s3Draw
@@ -402,7 +410,10 @@ s3Begin2::
 		movem.w	s3BgW,d3/d6/d7
 s3Bg:	moveq	#S3ADJ,d4			; (the frames to the field's first)
 		sub.w	d6,d4
+		move.l	a3,-(a7)
 		bsr.s	s3Conv
+		move.l	(a7)+,a1			; (their dots into the field's first
+		bsr		s3Dots				; frame)
 		move.l	a3,s3BgA
 		move.l	a4,s3BgA+4
 		movem.w	d3/d6/d7,s3BgW
@@ -411,11 +422,18 @@ s3Bg:	moveq	#S3ADJ,d4			; (the frames to the field's first)
 		move.b	#4,warpState
 		movem.l	(a7)+,d0-d7/a0-a6
 		rts
+		move.l	a3,a1
 .full:	subq.w	#1,d7				; the other places: far off
 		bmi.s	.done
 		bsr		s3Spawn
 		bra.s	.full
-.done:	st		s3On
+.done:	bsr		s3Dots
+		move.l	s3ErP,d0			; the field's first frame is drawn (buffer
+		sub.l	#s3Er0,d0			; A): shown from the next frame on, right
+		lsr.w	#1,d0				; after the sprites' last (this one) - the
+		move.w	d0,s3ErN			; copper changes over at the frame's edge
+		bsr		s3Activate
+		st		s3On
 		st		s3Blend
 		move.b	#3,warpState
 		movem.l	(a7)+,d0-d7/a0-a6
@@ -504,9 +522,7 @@ s3Field::
 		addq.w	#1,s3T
 		move.w	#256,d5
 		tst.b	s3Blend
-		bne.s	.bl
-		bsr		s3Grow				; (straight ahead: it grows brighter)
-		bra		.ahead
+		beq		.ahead
 .bl:	move.w	s3T,d0
 		mulu	#256,d0
 		divu	#S3BLENDT,d0
@@ -566,50 +582,64 @@ s3Field::
 		lea		.er9,a2
 		sub.w	d0,a2
 		jmp		(a2)
-	rept	S3N
+	rept	3*S3N
 		move.w	(a1)+,d0
 		clr.b	0(a0,d0.w)
 	endr
-.er9:	bsr		s3GlowClear			; (the engines' glows too)
+.er9:
 		; the stars
 		lea		s3Stars,a3
 		lea		s3ZTab,a2
 		lea		s3ExpY+S3HY,a6
-		move.w	#S3SPAN8,a1
 		move.w	s3ZTot,d6
 		add.w	#S3ZNEAR,d6
 		lsl.w	#3,d6
-		move.w	s3Live,d7
-		subq.w	#1,d7
 		tst.b	s3Blend
 		bne		.blend
 		lea		s3ExpX+S3HX,a5
-		moveq	#S3SPMAX,d4			; (new ones this frame at most)
+		move.w	#S3SPMAX,d7			; (new ones this frame at most: d7's
+		swap	d7					; high word)
+		move.w	s3Live,d7
+		subq.w	#1,d7
 		lea		s3SpTab,a1			; (... and the next of them)
 		add.w	s3SpI,a1
 .s:		movem.w	(a3)+,d0-d3			; L(x z0)*4, L(y z0)*2, z*8, (shift)
 		sub.w	d6,d2
 		cmp.w	#S3SPAN8,d2
 		bhi.s	.edge
-		movem.w	(a2,d2.w),d2/d3/d5	; L(z)*4, L(z)*2, the plane
+		movem.w	(a2,d2.w),d2-d5		; L(z)*4, L(z)*2, its band's planes
 		sub.w	d2,d0
 		sub.w	d3,d1
 		movem.w	(a5,d0.w),d2/d3		; byte, bit
 		add.w	(a6,d1.w),d2		; + row
 		bmi.s	.off				; (off the screen: it will not come back)
-		add.w	d5,d2				; + plane
+		add.w	d4,d2				; + the (first) plane
 		bset	d3,(a0,d2.w)
 		move.w	d2,(a4)+
+		tst.w	d5					; (its band's colour in more planes)
+		bne.s	.more
 .n:		dbf		d7,.s
 		sub.l	#s3SpTab,a1
 		move.w	a1,s3SpI
 		bra		.done
+.more:	bmi.s	.m3
+		add.w	d5,d2				; one more
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		bra.s	.n
+.m3:	add.w	#S3PL,d2			; two more (all three)
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		add.w	#S3PL,d2
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		bra.s	.n
 .edge:	tst.w	d2					; past us, or still to come (parked
 		bpl.s	.n					; further off)
 .off:	lea		-s3_len(a3),a3		; gone: more than S3NLIVE, the last one
 		cmp.w	#S3NLIVE,s3Live	; takes its place, else a new one far off
 		bhi.s	.kill
-		subq.w	#1,d4
+		sub.l	#$10000,d7
 		bmi.s	.late
 		cmp.l	#s3SpTab+S3SPN*s3_len,a1	; (s3Spawn, here)
 		blo.s	.sp
@@ -639,28 +669,94 @@ s3Field::
 		; --- while it still goes sideways: the px, its way sideways added
 .blend:	lea		s3ExpX+S3HX,a5
 		lea		s3XT,a1
-.bs:	movem.w	(a3)+,d0-d2/d4
+		move.w	s3Live,d7
+		subq.w	#1,d7
+		cmp.w	#S3ZSAFE,s3ZTot		; (at first all in one plane: quicker)
+		blo		.cs
+.bs:	movem.w	(a3)+,d0-d2/d4		; (d4: its way sideways, into s3XT)
 		sub.w	d6,d2
 		cmp.w	#S3SPAN8,d2
 		bhi.s	.bedge
-		movem.w	(a2,d2.w),d2/d3/d5
+		sub.w	(a2,d2.w),d0		; L(z)*4
+		move.w	(a1,d4.w),d4		; the middle, its way sideways with it
+		sub.w	2(a5,d0.w),d4		; + px from the middle (-(-px - S3BITC))
+		cmp.w	#game_width,d4
+		bhs.s	.boff				; (gone: a new one far off)
+		movem.w	2(a2,d2.w),d0/d3/d5	; L(z)*2, its band's planes
+		sub.w	d0,d1
+		move.w	(a6,d1.w),d1		; the row
+		bmi.s	.boff
+		add.w	d3,d1				; + the (first) plane
+		move.w	d4,d0
+		lsr.w	#3,d0
+		add.w	d0,d1
+		not.w	d4
+		bset	d4,(a0,d1.w)
+		move.w	d1,(a4)+
+		tst.w	d5
+		bne.s	.bmore
+.bn:	dbf		d7,.bs
+		bra.s	.bend
+.bmore:	bmi.s	.bm3
+		add.w	d5,d1
+		bset	d4,(a0,d1.w)
+		move.w	d1,(a4)+
+		bra.s	.bn
+.bm3:	add.w	#S3PL,d1
+		bset	d4,(a0,d1.w)
+		move.w	d1,(a4)+
+		add.w	#S3PL,d1
+		bset	d4,(a0,d1.w)
+		move.w	d1,(a4)+
+		bra.s	.bn
+.bend:	bra		.bfold
+		; --- ... the same, while every star is in one plane (S3ZSAFE)
+.cs:	movem.w	(a3)+,d0-d2/d4		; (d4: its way sideways, into s3XT)
+		sub.w	d6,d2
+		cmp.w	#S3SPAN8,d2
+		bhi.s	.cedge
+		movem.w	(a2,d2.w),d2/d3/d5	; L(z)*4, L(z)*2, its plane
 		sub.w	d2,d0
 		sub.w	d3,d1
 		move.w	(a1,d4.w),d2		; the middle, its way sideways with it
-		sub.w	2(a5,d0.w),d2		; + px from the middle (-(-px - S3BITC))
+		sub.w	2(a5,d0.w),d2		; + px from the middle
 		cmp.w	#game_width,d2
-		bhs.s	.boff				; (gone: a new one far off)
-		move.w	(a6,d1.w),d1		; the row (+ the plane)
-		bmi.s	.boff
-		add.w	d5,d1
+		bhs.s	.coff
+		move.w	(a6,d1.w),d1		; the row
+		bmi.s	.coff
+		add.w	d5,d1				; + the plane
 		move.w	d2,d0
 		lsr.w	#3,d2
 		add.w	d2,d1
 		not.w	d0
 		bset	d0,(a0,d1.w)
 		move.w	d1,(a4)+
-.bn:	dbf		d7,.bs
-		; its last frames (it hardly goes sideways any more): their ways
+.cn:	dbf		d7,.cs
+		bra.s	.bfold
+.cedge:	tst.w	d2
+		bpl.s	.cn
+.coff:	lea		-s3_len(a3),a3		; gone: as in .boff
+		cmp.w	#S3NLIVE,s3Live
+		bls.s	.csp
+		cmp.w	#S3FOLDT,s3T
+		bhs.s	.csp
+		subq.w	#1,s3Live
+		tst.w	d7
+		bne.s	.ck1
+		subq.l	#s3_len,s3LastP
+		bra.s	.cn
+.ck1:	move.l	a2,-(a7)
+		move.l	s3LastP,a2
+		move.l	(a2)+,(a3)
+		move.l	(a2),4(a3)
+		lea		-12(a2),a2
+		move.l	a2,s3LastP
+		move.l	(a7)+,a2
+		subq.w	#1,d7
+		bra		.cs
+.csp:	bsr		s3Spawn
+		bra		.cn
+.bfold:		; its last frames (it hardly goes sideways any more): their ways
 		; sideways go into their places, S3FOLDN stars a frame
 		move.w	s3T,d0
 		sub.w	#S3FOLDT,d0
@@ -709,276 +805,49 @@ s3Field::
 .out:	movem.l	(a7)+,d2-d7/a2-a6
 		rts
 
-; straight ahead (s3Field, a frame): the field grows richer - two more
-; depths bright and middle a frame (s3ZTab's planes), and every 4th frame
-; the dim, middle and bright colours a step nearer the field's own (far
-; dark blue, red, near green). keeps d5
-s3Grow:
-		lea		s3ZTab-S3ZNEAR*8+4,a0	; (the plane by the depth)
-		move.w	s3ZB,d0
-		cmp.w	#S3ZBRIGHT2,d0
-		bhs.s	.m
-		move.w	d0,d1
-		lsl.w	#3,d1
-		move.w	#2*S3PL-S3MID,d2
-		move.w	d2,(a0,d1.w)
-		move.w	d2,8(a0,d1.w)
-		addq.w	#2,s3ZB
-.m:		move.w	s3ZM,d0
-		cmp.w	#S3ZMID2,d0
-		bhs.s	.c
-		move.w	d0,d1
-		lsl.w	#3,d1
-		move.w	#S3PL-S3MID,d2
-		move.w	d2,(a0,d1.w)
-		move.w	d2,8(a0,d1.w)
-		addq.w	#2,s3ZM
-.c:		moveq	#3,d0
-		and.w	s3T,d0
-		bne.s	.out
-		lea		s3Cols,a0
-		lea		s3ColsTo,a1
-		moveq	#3-1,d7
-.col:	move.w	(a0),d0
-		move.w	(a1)+,d1
-		moveq	#$00f,d2			; each of r, g, b one step nearer
-		moveq	#$001,d3
-		moveq	#3-1,d6
-.nib:	move.w	d0,d4
-		and.w	d2,d4
-		and.w	d2,d1
-		cmp.w	d1,d4
-		beq.s	.nn
-		bhi.s	.dn
-		add.w	d3,d0
-		bra.s	.nn
-.dn:	sub.w	d3,d0
-.nn:	move.w	-2(a1),d1
-		lsl.w	#4,d2
-		lsl.w	#4,d3
-		dbf		d6,.nib
-		move.w	d0,(a0)+
-		dbf		d7,.col
-		lea		elCol0,a0			; into clistElite: above the logo and
-		bsr.s	.put				; below it
-		lea		elCol1,a0
-.put:	move.w	s3Cols,2(a0)		; dim (1)
-		move.w	s3Cols+2,6(a0)		; middle (2)
-		move.w	s3Cols+4,14(a0)		; bright (4)
-.out:	rts
-s3ColsTo:	dc.w	$0137,$0b22,$05e3	; (far: dark blue, then red, near: green -
-							; the brightest)
-
-
-;---------------------------------------------
-; a glow in the star planes (the engines, the plasma balls - morph.i): a
-; round blob of fire, white-hot in the middle, yellow, orange, a dark red
-; rim (colours 7, 6, 5, 3), drawn over the stars into the buffer drawn
-; this frame, cleared again from it two frames on (s3GlowClear). made in
-; advance for every size and every shift (s3Init: s3GlMake), so a row is
-; three longs or'ed in. d0/d1 = x, y (game plane), d2 = the size
-; (0 .. S3GN-1). keeps all
-s3Glow::
-		tst.b	s3On
-		beq.s	.out
-		movem.l	d0-d4/a0-a2,-(a7)
-		moveq	#0,d3				; the glows of this buffer
-		tst.b	s3Buf
-		beq.s	.b0
-		moveq	#2,d3
-.b0:
-		lea		s3GlN,a2
-		add.w	d3,a2
-		cmp.w	#S3GMAX,(a2)
-		bhs.s	.x
-		add.w	d2,d2
-		lea		s3GlR,a1
-		move.w	(a1,d2.w),d4		; R
-		sub.w	d4,d0				; its top left
-		bmi.s	.x
-		cmp.w	#21*16,d0
-		bhs.s	.x
-		sub.w	d4,d1
-		add.w	d4,d4
-		addq.w	#1,d4				; rows
-		lsl.w	#5,d2				; (size * 64: its 16 shifts' blobs)
-		moveq	#15,d3
-		and.w	d0,d3				; the shift
-		lsl.w	#2,d3
-		add.w	d3,d2
-		lea		s3GlD,a1
-		move.l	(a1,d2.w),a1
-		tst.w	d1					; rows above the top off
-		bpl.s	.t
-		add.w	d1,d4
-		ble.s	.x
-		neg.w	d1
-		mulu	#12,d1
-		add.l	d1,a1
-		moveq	#0,d1
-.t:		move.w	d1,d2				; ... and below the bottom
-		add.w	d4,d2
-		sub.w	#game_height,d2
-		ble.s	.b
-		sub.w	d2,d4
-		ble.s	.x
-.b:		add.w	d1,d1
-		lea		s3RowT,a2
-		move.w	(a2,d1.w),d1		; the row
-		lsr.w	#4,d0
-		add.w	d0,d0
-		add.w	d0,d1
-		move.l	s3Draw,a0
-		sub.l	#S3MID,a0
-		add.w	d1,a0
-		lea		s3GlN,a2			; into the list (for the clear)
-		moveq	#0,d3
-		tst.b	s3Buf
-		beq.s	.l0
-		addq.l	#2,a2
-		moveq	#S3GMAX*6,d3
-.l0:	move.w	(a2),d0
-		addq.w	#1,(a2)
-		mulu	#6,d0
-		add.w	d3,d0
-		lea		s3GlL0,a2
-		move.l	a0,(a2,d0.w)
-		move.w	d4,4(a2,d0.w)
-		subq.w	#1,d4
-.r:		movem.l	(a1)+,d0-d2
-		or.l	d0,(a0)
-		or.l	d1,S3PL(a0)
-		or.l	d2,2*S3PL(a0)
-		lea		S3LI(a0),a0
-		dbf		d4,.r
-.x:		movem.l	(a7)+,d0-d4/a0-a2
-.out:	rts
-
-; the buffer drawn now (s3Field): its glows of two frames ago off. keeps
-; a0/a3/a4
-s3GlowClear:
-		lea		s3GlN,a2
-		lea		s3GlL0,a1
-		tst.b	s3Buf
-		beq.s	.b
-		addq.l	#2,a2
-		lea		s3GlL1,a1
-.b:		move.w	(a2),d7
-		clr.w	(a2)
-		subq.w	#1,d7
-		bmi.s	.out
-.g:		move.l	(a1)+,a5
-		move.w	(a1)+,d6
-		subq.w	#1,d6
-		moveq	#0,d0
-.r:		move.l	d0,(a5)
-		move.l	d0,S3PL(a5)
-		move.l	d0,2*S3PL(a5)
-		lea		S3LI(a5),a5
-		dbf		d6,.r
-		dbf		d7,.g
-.out:	rts
-
-; s3Init: the glows, every size, every shift. a row: plane 1, 2, 3 (longs,
-; the blob from bit 31 down, shifted). by the distance from the middle
-; (in eighths, squared): 7 within 3/8 R, 6 within 5/8, 5 within 7/8, 3
-; out to R + 1/2
-s3GlMake:
-		lea		s3GlBlobs,a3
-		lea		s3GlD,a4
-		lea		s3GlR,a5
-		moveq	#S3GN-1,d7
-.size:	move.w	(a5)+,d6			; R
-		moveq	#0,d5				; the shift
-.sh:	move.l	a3,(a4)+
-		move.w	d6,d4
-		neg.w	d4					; dy
-.row:	moveq	#0,d0				; the three planes
-		moveq	#0,d1
-		moveq	#0,d2
-		move.w	d6,d3
-		neg.w	d3					; dx
-.px:	movem.l	d0-d2,-(a7)
-		move.w	d3,d0
-		muls	d0,d0
-		move.w	d4,d1
-		muls	d1,d1
-		add.l	d1,d0
-		lsl.l	#6,d0				; (eighths)
-		move.w	d6,d1				; the rings
-		mulu	#3,d1
-		mulu	d1,d1
-		moveq	#7,d2
-		cmp.l	d1,d0
-		bls.s	.v
-		move.w	d6,d1
-		mulu	#5,d1
-		mulu	d1,d1
-		moveq	#6,d2
-		cmp.l	d1,d0
-		bls.s	.v
-		move.w	d6,d1
-		mulu	#7,d1
-		mulu	d1,d1
-		moveq	#5,d2
-		cmp.l	d1,d0
-		bls.s	.v
-		move.w	d6,d1
-		lsl.w	#3,d1
-		addq.w	#4,d1
-		mulu	d1,d1
-		moveq	#3,d2
-		cmp.l	d1,d0
-		bls.s	.v
-		moveq	#0,d2
-.v:		move.w	d2,a6				; (the value)
-		movem.l	(a7)+,d0-d2
-		add.l	d0,d0				; one bit on, each plane
-		add.l	d1,d1
-		add.l	d2,d2
-		move.w	a6,a0
-		move.l	a0,-(a7)
-		btst	#0,3(a7)
-		beq.s	.p1
-		addq.l	#1,d0
-.p1:	btst	#1,3(a7)
-		beq.s	.p2
-		addq.l	#1,d1
-.p2:	btst	#2,3(a7)
-		beq.s	.p3
-		addq.l	#1,d2
-.p3:	addq.l	#4,a7
-		addq.w	#1,d3
-		cmp.w	d6,d3
-		ble.s	.px
-		; the row's bits, 2R+1 of them, to bit 31 down, then the shift
-		move.w	d6,d3
-		add.w	d3,d3
-		addq.w	#1,d3
-		neg.w	d3
-		add.w	#32,d3
-		sub.w	d5,d3
-		lsl.l	d3,d0
-		lsl.l	d3,d1
-		lsl.l	d3,d2
-		movem.l	d0-d2,(a3)
-		lea		12(a3),a3
-		addq.w	#1,d4
-		cmp.w	d6,d4
-		ble		.row
-		addq.w	#1,d5
-		cmp.w	#16,d5
-		blo		.sh
-		dbf		d7,.size
-		lea		s3RowT,a0			; (the rows)
-		moveq	#0,d0
-		move.w	#game_height-1,d7
-.rt:	move.w	d0,(a0)+
-		add.w	#S3LI,d0
-		dbf		d7,.rt
+; a1 = the first star just made, a3 = right after the last (s3Begin:
+; s3ZTot 0, nothing sideways yet): their dots into buffer A, the field's
+; first frame (their bytes onto s3Er0 at s3ErP), as s3Field draws them.
+; keeps all
+s3Dots:
+		movem.l	d0-d5/a0-a2/a4-a6,-(a7)
+		lea		s3ZTab,a2
+		lea		s3ExpX+S3HX,a5
+		lea		s3ExpY+S3HY,a6
+		lea		s3BufA+S3MID,a0
+		move.l	s3ErP,a4
+.l:		cmp.l	a3,a1
+		bhs.s	.e
+		movem.w	(a1)+,d0-d3			; L(x z0)*4, L(y z0)*2, z*8, (shift)
+		sub.w	#S3ZNEAR*8,d2
+		cmp.w	#S3SPAN8,d2
+		bhi.s	.l
+		movem.w	(a2,d2.w),d2-d5		; L(z)*4, L(z)*2, its band's planes
+		sub.w	d2,d0
+		sub.w	d3,d1
+		movem.w	(a5,d0.w),d2/d3		; byte, bit
+		add.w	(a6,d1.w),d2		; + row
+		bmi.s	.l
+		add.w	d4,d2				; + the (first) plane
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		tst.w	d5
+		beq.s	.l
+		bmi.s	.t
+		add.w	d5,d2
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		bra.s	.l
+.t:		add.w	#S3PL,d2
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		add.w	#S3PL,d2
+		bset	d3,(a0,d2.w)
+		move.w	d2,(a4)+
+		bra.s	.l
+.e:		move.l	a4,s3ErP
+		movem.l	(a7)+,d0-d5/a0-a2/a4-a6
 		rts
-s3GlR:		dc.w	2,3,4,6,8		; the sizes' R (px)
-
 ; the blend's end: a star's way sideways into its place (its log), from
 ; where it is now on the screen. d0 = the chunk (S3FOLDN stars), d6 = the
 ; near end (s3Field); a2/a5 as there
@@ -1096,6 +965,9 @@ s3Activate:
 		swap	d0
 		addq.l	#8,a0
 		dbf		d1,.sp
+	ifne	sprTest
+		bsr		s3SprTest
+	endc
 		move.l	#logoStartWait,d0	; into clist for the logo ...
 		move.w	d0,elJmpL
 		swap	d0
@@ -1109,6 +981,71 @@ s3Activate:
 		st		s3Cop
 		movem.l	(a7)+,d0-d1/a0
 		rts
+
+	ifne	sprTest
+; the sprite test (switches.i sprTest): all eight sprites as tall bars from
+; the top (over the logo) down, 40 px apart - an even sprite's pattern
+; leans one way, an odd one's the other, each pair its own colours, a
+; white line every 16 rows. which come out clean shows in WinUAE
+SPRT_H		= 236
+s3SprTest:
+		movem.l	d0-d7/a0-a2,-(a7)
+		lea		s3SprT,a0
+		lea		elSpr,a1
+		moveq	#0,d7
+.s:		move.l	a0,d0
+		move.w	d0,6(a1)
+		swap	d0
+		move.w	d0,2(a1)
+		addq.l	#8,a1
+		move.w	d7,d0				; HSTART: x 16 + 40 i, + 96
+		mulu	#40,d0
+		add.w	#16+96,d0
+		move.w	#$24,d1				; VSTART (row 4), VSTOP
+		move.w	#$24+SPRT_H,d2
+		move.w	d1,d3
+		lsl.w	#8,d3
+		move.w	d0,d4
+		lsr.w	#1,d4
+		move.b	d4,d3
+		move.w	d3,(a0)+
+		move.w	d2,d3
+		lsl.w	#8,d3
+		btst	#8,d2
+		beq.s	.c1
+		bset	#1,d3
+.c1:	btst	#0,d0
+		beq.s	.c2
+		bset	#0,d3
+.c2:	move.w	d3,(a0)+
+		moveq	#0,d6				; the rows
+.r:		moveq	#15,d0
+		and.w	d6,d0
+		bne.s	.r1
+		move.l	#$ffffffff,(a0)+	; (a line: colour 3)
+		bra.s	.r2
+.r1:	move.l	#$ff00f0f0,(a0)+
+		btst	#0,d7
+		beq.s	.r2
+		move.l	#$00ff0f0f,-4(a0)
+.r2:	addq.w	#1,d6
+		cmp.w	#SPRT_H,d6
+		blo.s	.r
+		clr.l	(a0)+
+		addq.w	#1,d7
+		cmp.w	#8,d7
+		blo.s	.s
+		lea		.col(pc),a0			; the colours 17..31
+		lea		elSprCol+2,a1
+		moveq	#15-1,d0
+.c:		move.w	(a0)+,(a1)
+		addq.l	#4,a1
+		dbf		d0,.c
+		movem.l	(a7)+,d0-d7/a0-a2
+		rts
+.col:	dc.w	$0f00,$00f0,$0fff,0,$0ff0,$00ff,$0fff,0
+		dc.w	$0f80,$080f,$0fff,0,$0f0f,$08f8,$0fff
+	endc
 
 ; -> d0 = a random long (xorshift). keeps the rest
 s3Rand:
@@ -1135,6 +1072,9 @@ s3Rand:
 		section "s3chip",bss_c
 s3BufA:		ds.b	S3BUF
 s3BufB:		ds.b	S3BUF
+	ifne	sprTest
+s3SprT:		ds.b	8*(4+SPRT_H*4+4)	; (s3SprTest) the eight bars
+	endc
 
 		section "s3bss",bss
 s3ZTab:		ds.b	(S3ZMAX-S3ZNEAR+1)*8
@@ -1144,11 +1084,7 @@ s3CodeX:	ds.w	512
 s3CodeY:	ds.w	512
 s3Stars:	ds.b	S3N*s3_len
 s3SpTab:	ds.b	S3SPN*s3_len
-s3Er0:		ds.w	S3N
-s3Er1:		ds.w	S3N
-s3GlL0:		ds.b	S3GMAX*6	; the glows drawn: their first long, rows
-s3GlL1:		ds.b	S3GMAX*6	; (right after s3GlL0)
-s3GlD:		ds.l	S3GN*16		; a size's blobs, a shift each ...
-s3RowT:		ds.w	game_height	; a row's offset
-s3GlBlobs:	ds.b	(5+7+9+13+17)*16*12	; ... (s3GlR: 2R+1 rows each)
+s3Er0:		ds.w	3*S3N	; (a dot in up to three planes)
+s3Er1:		ds.w	3*S3N
+
 

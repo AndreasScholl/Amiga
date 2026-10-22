@@ -39,3 +39,9 @@ fastStars		= 1
 ;              once it is done (asteroids.s seq_morph); 0: an Asteroids ship
 ;              again, the stars into depth after warpWait, as before
 elite3			= 1
+; sprTest  1: (with elite3) the sprite test: from the switch to the bitplane
+;              stars on, all eight sprites as tall bars over the screen and
+;              the logo (stars3d.i s3SprTest), each pair its own colours -
+;              to see in WinUAE which come out clean; the glows are off
+;           0: as it is
+sprTest			= 0

@@ -7526,19 +7526,22 @@ gameColor		= $0eee		; ship, shots and letters, same as colour 1 below
 ; copperlist
 ;--------------------------------------------------------------
 ; the Elite ending's copper list (stars3d.i puts the copper over to it):
-; the stars in planes 1..3 (colours 1..7: dim, middle, bright, and the
-; engines' glow), the game's lines in plane 4 in front of them (8..15)
+; the stars in planes 1..3 (colours 1..7: their depth bands, stars3d.i
+; s3Band), the game's lines in plane 4 in front of them (8..15), the
+; glows in sprites 0..3 in front of all (colours 17..31: morph.i
+; morphSprFrame patches them every frame)
 ; from the top of the window to the bottom - one buffer each, no tricks.
 ; the logo is clist's own part: a jump there, and back here once it is
 ; through (stars3d.i s3Activate patches clist right after logoEndWait).
 ; the pointers: s3Flip (each frame), s3MidPatch (below the logo)
-ELC1			= $0125		; dim (warp.i warpCol1)
-ELC2			= $0371		; middle (warpCol2)
-ELC3			= $0a20		; the glow's rim
-ELC4			= $0842		; bright (warpCol3)
-ELC5			= $0f60		; the glow
-ELC6			= $0fb3
-ELC7			= $0ffe		; ... its core
+ELC1			= $0125		; dark blue (the furthest; warp.i warpColB: the
+						; back layer)
+ELC2			= $0a32		; red (warpColS, warpColT: the middle two)
+ELC3			= $0239		; blue
+ELC4			= $0b72		; orange (warpColF: the front)
+ELC5			= $0723		; dark red
+ELC6			= $0537		; violet
+ELC7			= $05c3		; green (the nearest, the brightest)
 ELCOLS	macro
 		dc.w	$0182,ELC1,$0184,ELC2,$0186,ELC3,$0188,ELC4
 		dc.w	$018a,ELC5,$018c,ELC6,$018e,ELC7
@@ -7557,9 +7560,10 @@ elSpr::	dc.w	$120,0,$122,0,$124,0,$126,0
 		dc.w	$130,0,$132,0,$134,0,$136,0
 		dc.w	$138,0,$13a,0,$13c,0,$13e,0
 		dc.w	$0180,$0000
-		dc.w	$01a2,ELC3,$01a4,ELC5,$01a6,ELC7	; the torpedoes' glows (morph.i
-		dc.w	$01aa,ELC3,$01ac,ELC5,$01ae,ELC7	; morphTorpSpr: sprites 0, 1, 2):
-									; rim, middle, core
+elSprCol::							; the sprites' colours (morph.i)
+		dc.w	$01a2,0,$01a4,0,$01a6,0,$01a8,0,$01aa,0,$01ac,0,$01ae,0
+		dc.w	$01b0,0,$01b2,0,$01b4,0,$01b6,0,$01b8,0,$01ba,0,$01bc,0
+		dc.w	$01be,0
 elCol0::
 		ELCOLS
 		dc.w	$0190,gameColor,$0192,gameColor,$0194,gameColor,$0196,gameColor

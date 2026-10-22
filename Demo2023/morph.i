@@ -137,8 +137,14 @@ morphTorpAcc = 6		; then they speed up (1/256 units a frame, a frame)
 morphTorpHitAge = 31*morphBeat	; frames from the drop to the hit (14.9 s)
 morphTorpR	= 8*16		; their size (radius, 1/16 units)
 morphTorpHissT = 40		; frames their hiss is heard after the whoosh
-MSPR_LEN	= 4+15*4+4	; (morphTorpSpr) a sprite: control, 15 rows, the end
-MSPR_RMAX	= 7			; ... its glow's R at most
+MSPR_LEN	= 4+15*4+4	; (morphSprFrame) a sprite: control, 15 rows, the end
+MSPR_RMAX	= 7			; ... a glow's R at most (the torpedoes, the small flame)
+AB_TM		= 16		; (morphSprFrame) frames from the afterburner's chain
+						; (a power of 2: shifts for it)
+						; to the small flame (the torpedoes), and back
+AB_FLICK	= 1			; the chain's glows flicker (a 4 frame round): 0 off
+AB_DEBUG	= 0			; 1: the line from the plate's middle to the
+						; flame's tip, drawn in the playfield
 ; --- the flight
 morphKV		= 11		; our speed (1/16 units a frame) = the stars' (8.8) * this
 						; >> 8: 7 units a frame at top speed
@@ -344,7 +350,27 @@ morphCache:		ds.b	2*morphNE*line_entry
 morphPMask:		dc.w	0		; the faces seen
 morphPGP:		dc.w	0		; the glow: radius (px) << 8 | thrust
 morphPTorpN:	dc.w	0		; torpedoes
-morphSprB:		dc.b	0		; (morphTorpSpr) the sprite buffer built now
+morphSprB:		dc.b	0		; (morphSprFrame) the sprite buffer built now
+morphFlash:		dc.b	0		; ... the afterburner's flash: frames on
+morphFlPh:		dc.b	0		; ... the flame's phase (0..3)
+morphFlPC:		dc.b	0		; ... frames till the next
+				even
+morphFlJ:		dc.w	0		; ... its size up or down a little (R)
+morphFlTX:		dc.w	0		; ... the tongues flicker about (px)
+morphFlTY:		dc.w	0
+morphFlX:		dc.w	0		; ... the plate's middle (screen)
+morphFlY:		dc.w	0
+morphFlVX:		dc.w	0		; ... the way out behind it (the nose to the
+morphFlVY:		dc.w	0		; plate)
+morphFlR16:		dc.w	0		; ... its R * 16 (softly), R (0: none)
+morphFlR:		dc.w	0
+morphTm:		dc.w	0		; ... the chain over to the small flame (0..AB_TM)
+morphFlBoost:	dc.w	0		; ... the ignition's overshoot (* 256 of f)
+morphChP:		ds.w	4*4		; ... the chain's glows: x, y, R*16, (b) off
+morphChR16:		ds.w	4		; ... their R * 16, softly
+morphChTip:		ds.w	4		; ... the plate's middle, the way to the tip
+morphFrame:		dc.b	0		; ... frames (the flicker's round)
+morphChDbg:		dc.b	0		; ... (AB_DEBUG) the line drawn
 				even
 morphPXY:		ds.w	2*morphNP	; the points
 morphPTorps:	ds.b	8*morphTorpN	; x, y, radius, flags, flare x, flare y
@@ -779,7 +805,9 @@ morphPlayFrame:
 		bne.s	.ig					; a big boom on 3 - left and right)
 		tst.w	d7
 		bpl.s	.e2
-.ig:	moveq	#SFX_SHIPIGN,d0
+.ig:	move.b	#2,morphFlash		; (the afterburner: its flash, the flame
+		move.w	#128,morphFlBoost	; longer for a while)
+		moveq	#SFX_SHIPIGN,d0
 		jsr		sfxPlay
 		moveq	#SFX_BIGBOOM,d0
 		jsr		sfxPlay
@@ -897,6 +925,7 @@ morphEdgeLines:
 
 ; the play's picture: the torpedoes, the glow, the ship
 morphPlayDraw:
+		bsr		morphSprFrame		; (the glows: sprites)
 		bsr		morphPTorpDraw
 		tst.b	morphPShip
 		beq.s	.none
@@ -908,11 +937,16 @@ morphPlayDraw:
 		move.w	morphPMask,d5
 		moveq	#morphNE-1,d7
 		bsr		morphEdgeLines
-		tst.b	morphPGlow			; the engine burning, its plate seen: the
-		beq.s	.nf					; flame in it
-		bsr		morphFlame
-		bsr		morphEngGlow
-.nf:	move.l	a6,d0
+	ifne	AB_DEBUG
+		tst.b	morphChDbg			; (the thrust axis: the plate's middle to
+		beq.s	.nd					; the flame's tip)
+		movem.w	morphChTip,d0-d3
+		add.w	d0,d2
+		add.w	d1,d3
+		jsr		set_line
+.nd:
+	endc
+		move.l	a6,d0
 		move.l	(a7)+,a6
 		cmp.l	#morphCache,d0
 		beq.s	.none
@@ -921,243 +955,633 @@ morphPlayDraw:
 		move.l	d0,(a6)+
 .none:	rts
 
-; the engine's flame: a second plate inside the engine plate, its size
-; flickering frame by frame and bigger with the thrust - and when it pushes
-; hard a cross of fire over it. lines like the ship's own (no sprites: they
-; lose their DMA slots under the game plane's early fetch). a6 the table
-morphFlame:
-		lea		morphPXY+7*4,a1		; the middle of the plate's corners
-		moveq	#0,d0
-		moveq	#0,d1
-		moveq	#4-1,d7
-.c:		add.w	(a1)+,d0
-		add.w	(a1)+,d1
-		dbf		d7,.c
-		asr.w	#2,d0
-		asr.w	#2,d1
-		move.w	d0,morphFlC
-		move.w	d1,morphFlC+2
-		moveq	#0,d6				; its size: 0.45 .. 0.9 of the plate
-		move.b	morphPGP+1,d6		; (the thrust)
-		lsr.w	#1,d6
-		add.w	#115,d6
-		movem.w	d0/d1,-(a7)			; (it pulses: 24 degrees a frame)
-		move.w	morphT,d0
-		mulu	#24*16,d0
-		bsr		morphSinCos16
-		asr.w	#8,d0
-		asr.w	#2,d0				; -32..32
-		add.w	d0,d6
-		movem.w	(a7)+,d0/d1
-		move.w	d6,morphFlS
-		bsr.s	.scale
-		lea		morphFlP,a2
-		moveq	#4-1,d7
-.l:		movem.w	(a2),d0/d1			; the four sides
-		cmp.w	#3,d7
-		bne.s	.l0
-		movem.w	12(a2),d2/d3
-		bra.s	.l1
-.l0:	movem.w	-4(a2),d2/d3
-.l1:	move.w	d7,-(a7)
-		jsr		set_line
-		move.w	(a7)+,d7
-		addq.l	#4,a2
-		dbf		d7,.l
-		move.w	morphFlS,d6			; the cross of fire: out beyond the
-		add.w	d6,d6				; plate's corners (a flare)
-		movem.w	morphFlC,d0/d1
-		bsr.s	.scale
-		lea		morphFlP,a2
-		movem.w	(a2),d0-d3/d4-d7	; (corners 0, 1 / 2, 3)
-		movem.w	d2/d3/d6/d7,-(a7)
-		move.w	d4,d2
-		move.w	d5,d3
-		jsr		set_line			; 0 - 2
-		movem.w	(a7)+,d0/d1/d2/d3
-		jmp		set_line			; 1 - 3
-.out:	rts
-; d0/d1 the middle, d6 the size (256 = the plate) -> morphFlP
-.scale:	lea		morphPXY+7*4,a1
-		lea		morphFlP,a2
-		moveq	#4-1,d7
-.p:		move.w	(a1)+,d2			; x = mid + (x - mid) * size
-		sub.w	d0,d2
-		muls	d6,d2
-		asr.l	#8,d2
-		add.w	d0,d2
-		move.w	d2,(a2)+
-		move.w	(a1)+,d2
-		sub.w	d1,d2
-		muls	d6,d2
-		asr.l	#8,d2
-		add.w	d1,d2
-		move.w	d2,(a2)+
-		dbf		d7,.p
+;---------------------------------------------
+; the sprites: every glow (the star planes are the stars' alone), from
+; morphPlayDraw every frame. built in one of two buffers: the copper takes
+; their pointers (clistElite elSpr) and colours (elSprCol) at the top of
+; the next frame. sprites 0..3 only - the wide fetch (DDFSTRT $28) takes
+; the higher ones' DMA slots:
+;   no torpedoes about: the afterburner - four round glows on the thrust
+;     axis on the screen, from the plate's middle out to the flame's tip
+;     (the plate's middle and more of the nose-to-plate way): seen from
+;     behind they fall together into one glow, from the side they make a
+;     stream - no special cases (morphChain)
+;   torpedoes about: 0, 1, 2 their glows (once they burn), 3 the ship's
+;     small flame - over morphTm frames the chain fades out of 0..2 into
+;     that (and the colours go over), and back once they are gone
+; keeps all
+morphSprFrame:
+	ifne	sprTest
 		rts
-morphFlC:	ds.w	2
-morphFlS:	dc.w	0
-morphFlP:	ds.w	8
-; the engine's glow in the star planes (stars3d.i s3Glow) round the
-; flame's middle: its size from the plate's (corner to corner) and the
-; flame's (morphFlS). keeps a6
-morphEngGlow:
-		movem.w	morphPXY+7*4,d0/d1	; corners 0 and 2
-		movem.w	morphPXY+9*4,d2/d3
-		sub.w	d2,d0
-		bpl.s	.x
-		neg.w	d0
-.x:		sub.w	d3,d1
-		bpl.s	.y
-		neg.w	d1
-.y:		cmp.w	d1,d0				; the diagonal ~ max + min / 2
-		bhs.s	.m
-		exg		d0,d1
-.m:		lsr.w	#1,d1
-		add.w	d1,d0
-		mulu	morphFlS,d0			; half of it, times the flame
-		lsr.l	#8,d0
-		lsr.w	#1,d0
-		bsr.s	morphGlowSize
-		movem.w	morphFlC,d0/d1
-		jmp		s3Glow
-; d0 = the radius wanted (px) -> d2 = the glow's size (s3GlR 2,3,4,6,8)
-morphGlowSize:
-		moveq	#0,d2
-		cmp.w	#2,d0
-		bls.s	.o
-		moveq	#1,d2
-		cmp.w	#3,d0
-		bls.s	.o
-		moveq	#2,d2
-		cmp.w	#4,d0
-		bls.s	.o
-		moveq	#3,d2
-		cmp.w	#6,d0
-		bls.s	.o
-		moveq	#4,d2
-.o:		rts
-; the torpedoes' glows: sprites 0, 1 and 2, in front of everything - so
-; they show over the logo too, where the star planes do not (stars3d.i
-; s3Glow). round blobs, rim, middle, core (morphSprMake), a bigger one the
-; frame its engine fires. double buffered: built now, the copper takes the
-; pointers (clistElite elSpr) at the top of the next frame. keeps all
-morphTorpSpr:
-		movem.l	d0-d7/a0-a4,-(a7)
+	endc
+		movem.l	d0-d7/a0-a6,-(a7)
+		addq.b	#1,morphFrame
 		not.b	morphSprB
 		lea		morphSprBuf,a2
 		tst.b	morphSprB
 		beq.s	.b0
-		lea		3*MSPR_LEN(a2),a2
-.b0:	lea		elSpr,a3
-		lea		morphPTorps,a4
+		lea		4*MSPR_LEN(a2),a2
+.b0:	bsr		morphFlRand			; (the flicker's numbers)
+		bsr		morphFlGeo
+		move.w	morphTm,d0			; torpedoes about: over to the small
+		tst.w	morphPTorpN			; flame, none: back to the chain
+		beq.s	.t0
+		cmp.w	#AB_TM,d0
+		bhs.s	.t1
+		addq.w	#1,d0
+		bra.s	.t1
+.t0:	tst.w	d0
+		beq.s	.t1
+		subq.w	#1,d0
+.t1:	move.w	d0,morphTm
+		move.w	morphFlBoost,d0		; the ignition's overshoot dies away
+		move.w	d0,d1
+		lsr.w	#3,d1
+		addq.w	#1,d1
+		sub.w	d1,d0
+		bpl.s	.bo
+		moveq	#0,d0
+.bo:	move.w	d0,morphFlBoost
+		bsr		morphChain
+		lea		elSpr,a3			; 0..2: a torpedo's glow (burning) or
+		lea		morphPTorps,a4		; the chain's
+		lea		morphChP,a5
 		moveq	#0,d7
-.t:		cmp.w	morphPTorpN,d7
-		bhs		.null
+.s:		cmp.w	morphPTorpN,d7
+		bhs.s	.ch
 		btst	#TF_BURN,5(a4)
-		beq		.null
-		moveq	#0,d3				; its size: inside its diamond (in front
-		move.b	4(a4),d3			; of it: the lines show round it) - far
-		subq.w	#1,d3				; off smaller and smaller, down to a
-		btst	#TF_FLASH,5(a4)		; spark (R 1); the flash bigger than the
-		beq.s	.s0					; diamond
-		addq.w	#4,d3
-.s0:	cmp.w	#1,d3
-		bge.s	.s1
-		moveq	#1,d3
-.s1:	cmp.w	#MSPR_RMAX,d3
-		ble.s	.s
-		moveq	#MSPR_RMAX,d3
-.s:		move.w	d3,d2				; R: the image
-		subq.w	#1,d2
-		move.w	d2,.sz
-		move.w	(a4),d0				; HSTART: its left (x - 7) + 96
-		add.w	#96-7,d0
-		bmi		.null
-		cmp.w	#$1c0,d0
-		bhs		.null
-		move.w	2(a4),d1			; its top row (game plane y)
-		sub.w	d3,d1
-		moveq	#0,d4				; (rows cut off at the top)
-		tst.w	d1
-		bpl.s	.y0
-		move.w	d1,d4
-		neg.w	d4
-		moveq	#0,d1
-.y0:	move.w	d3,d5				; rows: 2R+1, less those
-		add.w	d5,d5
-		addq.w	#1,d5
-		sub.w	d4,d5
-		ble		.null
-		move.w	d1,d6				; (and those below the plane)
-		add.w	d5,d6
-		cmp.w	#game_height,d6
-		bls.s	.y1
-		move.w	#game_height,d5
-		sub.w	d1,d5
-		ble		.null
-.y1:	add.w	#$20,d1			; VSTART, VSTOP
-		move.w	d1,d6
-		add.w	d5,d6
-		move.w	d1,d3				; the control words
-		lsl.w	#8,d3
-		move.w	d0,d2
-		lsr.w	#1,d2
-		move.b	d2,d3
-		move.w	d3,(a2)
-		move.w	d6,d3
-		lsl.w	#8,d3
-		btst	#8,d1
-		beq.s	.c0
-		bset	#2,d3
-.c0:	btst	#8,d6
-		beq.s	.c1
-		bset	#1,d3
-.c1:	btst	#0,d0
-		beq.s	.c2
-		bset	#0,d3
-.c2:	move.w	d3,2(a2)
-		move.w	.sz(pc),d2			; its rows
-		add.w	d2,d2
-		lea		morphSprOff,a0
-		move.w	(a0,d2.w),d2
-		lea		morphSprImg,a0
-		add.w	d2,a0
-		lsl.w	#2,d4
-		add.w	d4,a0
-		lea		4(a2),a1
-		subq.w	#1,d5
-.r:		move.l	(a0)+,(a1)+
-		dbf		d5,.r
-		clr.l	(a1)
-		move.l	a2,d0
+		beq.s	.ch
+		moveq	#0,d6				; (its glow: inside its diamond, the
+		move.b	4(a4),d6			; flash bigger)
+		subq.w	#1,d6
+		btst	#TF_FLASH,5(a4)
+		beq.s	.s0
+		addq.w	#4,d6
+.s0:	movem.w	(a4),d0/d1
+		bsr		morphGlowPut
 		bra.s	.ptr
-.null:	move.l	#s3Null,d0
-.ptr:	move.w	d0,6(a3)
-		swap	d0
-		move.w	d0,2(a3)
-		addq.l	#8,a3				; (sprites 0, 1, 2: the wide fetch, DDFSTRT
-									; $28, takes the higher ones' slots)
+.ch:	bsr		morphChPut
+.ptr:	bsr		morphSprPtr
 		lea		MSPR_LEN(a2),a2
 		addq.l	#8,a4
+		addq.l	#8,a5
 		addq.w	#1,d7
 		cmp.w	#3,d7
-		blo		.t
-		movem.l	(a7)+,d0-d7/a0-a4
+		blo.s	.s
+		cmp.w	#AB_TM/2,morphTm	; 3: the chain's tip, or the small flame
+		bhs.s	.sm
+		bsr		morphChPut
+		bra.s	.p3
+.sm:	move.w	morphFlR16,d6		; (the small flame: as big as the plate,
+		mulu	morphTm,d6			; growing in as the chain goes)
+		lsr.l	#4,d6				; (/ AB_TM)
+		addq.w	#8,d6
+		lsr.w	#4,d6
+		beq.s	.n3
+		add.w	morphFlJ,d6
+		movem.w	morphFlX,d0/d1
+		bsr		morphGlowPut
+		bra.s	.p3
+.n3:	move.l	#s3Null,d0
+.p3:	bsr		morphSprPtr
+		; the colours 17-19, 21-23: the afterburner's, the torpedoes' (the
+		; same in both pairs), in between as it goes over
+		lea		morphColAb,a0
+		lea		morphColTorp,a1
+		lea		elSprCol+2,a4
+		move.w	morphTm,d5
+		moveq	#7-1,d7
+		tst.w	d5					; (all the one or the other: no mixing)
+		beq.s	.ca
+		cmp.w	#AB_TM,d5
+		bne.s	.c
+		move.l	a1,a0
+.ca:	move.w	(a0)+,(a4)
+		addq.l	#4,a4
+		dbf		d7,.ca
+		bra.s	.cd
+.c:		move.w	(a0)+,d0
+		move.w	(a1)+,d1
+		bsr		morphColMix
+		move.w	d0,(a4)
+		addq.l	#4,a4
+		dbf		d7,.c
+.cd:
+		tst.b	morphFlash			; (it fires: white hot, a frame or two)
+		beq.s	.out
+		subq.b	#1,morphFlash
+		cmp.w	#AB_TM/2,morphTm
+		bhs.s	.out
+		lea		elSprCol+2,a4
+		move.w	#$0fff,4(a4)
+		move.w	#$0fff,8(a4)
+.out:
+	ifne	AB_DEBUG
+		st		morphChDbg
+	endc
+		movem.l	(a7)+,d0-d7/a0-a6
 		rts
-.sz:	dc.w	0
-morphSprOff: dc.w	0,3*4,8*4,15*4,24*4,35*4,48*4	; the glows by R (1..7: a sprite
-								; is 16 wide), their first rows
 
-; once (morphInit): the glows' rows for the sprites - rim, middle, core
-; (colours 1, 2, 3: plane A, B, both) by the distance from the middle
+; d0 = a colour (the afterburner's), d1 = another (the torpedoes'), d5 =
+; 0..AB_TM -> d0 = between them. uses d2-d4
+morphColMix:
+		moveq	#0,d4
+		move.w	#$f00,d3
+.n:		move.w	d0,d2				; each of r, g, b
+		and.w	d3,d2
+		move.w	d1,-(a7)
+		and.w	d3,d1
+		sub.w	d2,d1
+		muls	d5,d1
+		asr.l	#4,d1				; (/ AB_TM)
+		add.w	d1,d2
+		and.w	d3,d2
+		or.w	d2,d4
+		move.w	(a7)+,d1
+		lsr.w	#4,d3
+		bne.s	.n
+		move.w	d4,d0
+		rts
+
+; the chain (no special cases): the tip = the plate's middle + its way out
+; behind it (morphFlVX/VY: the nose to the plate on the screen) * f - f
+; 0.3 .. 0.5 with the thrust (the nose-to-plate way is most of the ship's
+; length), longer the frame it fires (morphFlBoost), +-15 % a frame. the
+; four glows at 12, 38, 66, 100 % of the way: their middles, their R (* 16,
+; softly: the plate's size, more for the further ones and the longer the
+; flame; less as the torpedoes take over), their frames (0 and 2 every 2
+; frames, 1 and 3 every 3, 1 or 2 on), their flicker -> morphChP
+morphChain:
+		cmp.w	#8,morphFlR16		; (no flame, and none dying away: nothing
+		bhs.s	.on					; to work out)
+		move.l	morphChR16,d0
+		or.l	morphChR16+4,d0
+		bne.s	.on
+		lea		morphChP+4,a0
+		moveq	#4-1,d0
+.no:	clr.w	(a0)
+		addq.l	#8,a0
+		dbf		d0,.no
+		rts
+.on:	moveq	#0,d0				; f (* 256)
+		move.b	morphPGP+1,d0
+		mulu	#51,d0
+		lsr.w	#8,d0
+		add.w	#77,d0
+		add.w	morphFlBoost,d0
+		move.w	morphFlRn+2,d1		; (+-15 %: * 77 >> 14 ~ / 213)
+		and.w	#63,d1
+		sub.w	#32,d1
+		muls	d0,d1
+		muls	#77,d1
+		asr.l	#8,d1
+		asr.l	#6,d1
+		add.w	d1,d0
+		move.w	morphFlVX,d2		; the way to the tip
+		muls	d0,d2
+		asr.l	#8,d2
+		move.w	morphFlVY,d3
+		muls	d0,d3
+		asr.l	#8,d3
+		move.w	d2,d4				; its length (about: max + min/2)
+		bpl.s	.l0
+		neg.w	d4
+.l0:	move.w	d3,d5
+		bpl.s	.l1
+		neg.w	d5
+.l1:	cmp.w	d5,d4
+		bhs.s	.l2
+		exg		d4,d5
+.l2:	lsr.w	#1,d5
+		add.w	d5,d4				; (px)
+		movem.w	morphFlX,d0/d1
+		movem.w	d0-d3,morphChTip	; (the debug line: the middle, the way)
+		lea		morphChP,a0			; the four glows' middles: 1/8, 3/8,
+		move.w	d2,d5				; 11/16 and all of the way (shifts: no
+		asr.w	#3,d5				; multiplies)
+		move.w	d3,d6
+		asr.w	#3,d6
+		add.w	d0,d5
+		add.w	d1,d6
+		movem.w	d5/d6,(a0)
+		move.w	d2,d5
+		asr.w	#1,d5
+		move.w	d2,d6
+		asr.w	#3,d6
+		sub.w	d6,d5
+		add.w	d0,d5
+		move.w	d5,8(a0)
+		move.w	d3,d5
+		asr.w	#1,d5
+		move.w	d3,d6
+		asr.w	#3,d6
+		sub.w	d6,d5
+		add.w	d1,d5
+		move.w	d5,10(a0)
+		move.w	d2,d5
+		asr.w	#1,d5
+		move.w	d2,d6
+		asr.w	#3,d6
+		add.w	d6,d5
+		asr.w	#1,d6
+		add.w	d6,d5
+		add.w	d0,d5
+		move.w	d5,16(a0)
+		move.w	d3,d5
+		asr.w	#1,d5
+		move.w	d3,d6
+		asr.w	#3,d6
+		add.w	d6,d5
+		asr.w	#1,d6
+		add.w	d6,d5
+		add.w	d1,d5
+		move.w	d5,18(a0)
+		add.w	d0,d2
+		add.w	d1,d3
+		movem.w	d2/d3,24(a0)
+		; their R * 16 wanted: the plate's * 9/16, 11/16, 7/8, 1, + the
+		; flame's length * 0, 1, 2, 3 (none if the plate's none: it fades
+		; with RB_GLOW)
+		lea		.want(pc),a1
+		move.w	morphFlR16,d0
+		cmp.w	#8,d0
+		bhs.s	.w0
+		clr.l	(a1)
+		clr.l	4(a1)
+		bra.s	.w1
+.w0:	move.w	d0,d1
+		lsr.w	#1,d1
+		move.w	d0,d2
+		lsr.w	#4,d2
+		add.w	d2,d1
+		move.w	d1,(a1)
+		move.w	d0,d2
+		lsr.w	#3,d2
+		add.w	d2,d1
+		add.w	d4,d1
+		move.w	d1,2(a1)
+		move.w	d0,d1
+		sub.w	d2,d1
+		add.w	d4,d1
+		add.w	d4,d1
+		move.w	d1,4(a1)
+		add.w	d4,d0
+		add.w	d4,d0
+		add.w	d4,d0
+		move.w	d0,6(a1)
+.w1:	lea		morphChR16,a1
+		lea		.want(pc),a4
+		lea		.max(pc),a3
+		lea		morphChC,a5
+		lea		morphChF,a6
+		moveq	#0,d7				; the glow
+.g:		move.w	(a4)+,d5			; at most its own: they grow from the
+		cmp.w	(a3)+,d5			; nozzle to the tip
+		bls.s	.g1
+		move.w	-2(a3),d5
+.g1:	move.w	morphTm,d6			; (0..2: less as the torpedoes take
+		beq.s	.g3					; over; 3: as it goes over to the small
+		cmp.w	#3,d7				; flame)
+		beq.s	.g2
+		neg.w	d6
+		add.w	#AB_TM,d6
+		mulu	d6,d5
+		lsr.l	#4,d5				; (/ AB_TM)
+		bra.s	.g3
+.g2:	neg.w	d6
+		add.w	#AB_TM/2,d6
+		bpl.s	.g4
+		moveq	#0,d6
+.g4:	mulu	d6,d5
+		lsr.l	#3,d5				; (/ AB_TM/2)
+.g3:	move.w	(a1),d6				; softly there
+		sub.w	d6,d5
+		asr.w	#2,d5
+		add.w	d6,d5
+		move.w	d5,(a1)+
+		move.w	d5,4(a0)
+		subq.b	#1,(a5,d7.w)		; its frame: on now and then
+		bpl.s	.f9
+		moveq	#1,d6				; (0 and 2: every 2 frames, 1 and 3:
+		btst	#0,d7				; every 3)
+		beq.s	.f0
+		moveq	#2,d6
+.f0:	move.b	d6,(a5,d7.w)
+		move.b	(a6,d7.w),d6
+		addq.b	#1,d6
+		btst	d7,morphFlRn+1		; (1 or 2 on)
+		beq.s	.f1
+		addq.b	#1,d6
+.f1:	and.b	#abFrames-1,d6
+		move.b	d6,(a6,d7.w)
+.f9:	moveq	#0,d6				; its flicker: on, off (4 frames round)
+	ifne	AB_FLICK
+		move.b	morphFrame,d6
+		and.w	#3,d6
+		lea		.flk(pc),a3
+		move.b	(a3,d7.w),d5
+		btst	d6,d5
+		seq		d6
+		lea		.max+2(pc),a3		; (back on the caps)
+		add.w	d7,a3
+		add.w	d7,a3
+	endc
+		move.b	d6,6(a0)			; (0: shown)
+		addq.l	#8,a0
+		addq.w	#1,d7
+		cmp.w	#4,d7
+		blo		.g
+		rts
+.want:	ds.w	4
+.max:	dc.w	4*16,5*16,6*16,7*16	; (R * 16 at most: 4, 5, 6, 7)
+.flk:	dc.b	%1111,%0101,%0110,%1001	; (frame & 3 -> bit: shown)
+morphChC:	dc.b	0,1,0,2			; frames till a glow's next frame ...
+morphChF:	dc.b	0,1,2,3			; ... its frame now
+		even
+
+; d7 = a glow of the chain (0..3): into the sprite at a2 -> d0 = its
+; pointer (s3Null: none - too small, flickered off, off the screen)
+morphChPut:
+		move.w	d7,d0
+		lsl.w	#3,d0
+		lea		morphChP,a0
+		add.w	d0,a0
+		tst.b	6(a0)				; (flickered off)
+		bne.s	.null
+		move.w	4(a0),d6			; R
+		addq.w	#8,d6
+		lsr.w	#4,d6
+		beq.s	.null
+		add.w	morphFlJ,d6
+		cmp.w	#1,d6
+		bge.s	.r0
+		moveq	#1,d6
+.r0:	cmp.w	#MSPR_RMAX,d6
+		ble.s	.r1
+		moveq	#MSPR_RMAX,d6
+.r1:	move.w	d7,d2				; its rows: its kind, its frame, R
+		lsl.w	#2,d2				; (abFrames 4: kind * 4 + frame)
+		lea		morphChF,a1
+		add.b	(a1,d7.w),d2
+		add.w	d2,d2
+		lea		.kf(pc),a1
+		move.w	(a1,d2.w),d2
+		move.w	d6,d3
+		add.w	d3,d3
+		lea		.rr-2(pc),a1
+		add.w	(a1,d3.w),d2
+		lea		abImg,a1
+		add.w	d2,a1
+		movem.w	(a0),d0/d1			; its middle -> its left, top
+		subq.w	#7,d0
+		sub.w	d6,d1
+		move.w	d6,d5
+		add.w	d5,d5
+		addq.w	#1,d5
+		moveq	#4,d4
+		moveq	#0,d3
+		bra		morphSprPut
+.null:	move.l	#s3Null,d0
+		rts
+.kf:
+MCHI	set		0
+	rept	4*4					; (a kind's frame: its first byte; abFrames 4)
+		dc.w	MCHI*63*4
+MCHI	set		MCHI+1
+	endr
+.rr:
+MCHI	set		1
+	rept	MSPR_RMAX				; (R: its first row's byte)
+		dc.w	(MCHI*MCHI-1)*4
+MCHI	set		MCHI+1
+	endr
+; d0/d1 = the middle, d6 = R (clamped to 1..MSPR_RMAX): a glow (morphSprImg)
+; into the sprite at a2 -> d0 = its pointer
+morphGlowPut:
+		cmp.w	#1,d6
+		bge.s	.r0
+		moveq	#1,d6
+.r0:	cmp.w	#MSPR_RMAX,d6
+		ble.s	.r1
+		moveq	#MSPR_RMAX,d6
+.r1:	move.w	d6,d2				; its rows: from (R^2 - 1) on
+		mulu	d2,d2
+		subq.w	#1,d2
+		lsl.w	#2,d2
+		lea		morphSprImg,a1
+		add.w	d2,a1
+		moveq	#4,d4
+		moveq	#0,d3
+		sub.w	d6,d1
+		subq.w	#7,d0
+		move.w	d6,d5
+		add.w	d5,d5
+		addq.w	#1,d5
+		bra		morphSprPut
+
+; d0 = a sprite's pointer -> into elSpr at a3, a3 on to the next
+morphSprPtr:
+		move.w	d0,6(a3)
+		swap	d0
+		move.w	d0,2(a3)
+		addq.l	#8,a3
+		rts
+
+; d0/d1 = the image's left, top (game plane), a1 = its first row (plane A,
+; B), d4 = from one row to the next (bytes), d5 = rows, d3 = $80 attached
+; (the odd sprite of a pair), a2 = the sprite's buffer -> d0 = the sprite's
+; pointer (s3Null: not on the screen). cut at the top and the bottom.
+; uses d0-d2/d5/a1
+morphSprPut:
+		add.w	#96,d0				; HSTART
+		bmi.s	.null
+		cmp.w	#$1c0,d0
+		bhs.s	.null
+		tst.w	d1					; (rows above the plane: off)
+		bpl.s	.y0
+		add.w	d1,d5
+		neg.w	d1
+		mulu	d4,d1
+		add.w	d1,a1
+		moveq	#0,d1
+.y0:	move.w	d1,d2				; (and below it)
+		add.w	d5,d2
+		sub.w	#game_height,d2
+		ble.s	.y1
+		sub.w	d2,d5
+.y1:	tst.w	d5
+		ble.s	.null
+		add.w	#$20,d1				; VSTART, VSTOP: the control words
+		move.w	d1,d2
+		lsl.w	#8,d2
+		move.b	d0,d2				; (HSTART >> 1)
+		lsr.b	#1,d2
+		btst	#8,d0
+		beq.s	.h8
+		bset	#7,d2
+.h8:	move.w	d2,(a2)
+		move.w	d1,d2
+		add.w	d5,d2				; VSTOP
+		lsl.w	#8,d2
+		or.b	d3,d2				; (attached)
+		btst	#8,d1
+		beq.s	.c0
+		bset	#2,d2
+.c0:	move.w	d1,-(a7)
+		add.w	d5,d1
+		btst	#8,d1
+		beq.s	.c1
+		bset	#1,d2
+.c1:	move.w	(a7)+,d1
+		btst	#0,d0
+		beq.s	.c2
+		bset	#0,d2
+.c2:	move.w	d2,2(a2)
+		lea		4(a2),a0
+		subq.w	#1,d5
+.r:		move.l	(a1),(a0)+
+		add.w	d4,a1
+		dbf		d5,.r
+		clr.l	(a0)
+		move.l	a2,d0
+		rts
+.null:	move.l	#s3Null,d0
+		rts
+
+; the flame (both sizes): where the plate is, how big - its area (seen edge
+; on: small) times the thrust, softly (morphFlR16), the way out behind it;
+; the flicker: a new phase every 2..5 frames, the size a little up or down
+morphFlGeo:
+		subq.b	#1,morphFlPC
+		bpl.s	.ph
+		move.w	morphFlRn,d0
+		moveq	#3,d1
+		and.w	d0,d1
+		cmp.b	morphFlPh,d1
+		bne.s	.p0
+		addq.w	#1,d1
+		and.w	#3,d1
+.p0:	move.b	d1,morphFlPh
+		lsr.w	#2,d0
+		moveq	#3,d1
+		and.w	d0,d1
+		addq.w	#2,d1
+		move.b	d1,morphFlPC
+		lsr.w	#2,d0
+		moveq	#3,d1
+		and.w	d0,d1
+		subq.w	#1,d1				; -1 .. 2: (2 -> 0)
+		cmp.w	#2,d1
+		bne.s	.p1
+		moveq	#0,d1
+.p1:	move.w	d1,morphFlJ
+		move.w	morphFlRn+2,d0
+		moveq	#7,d1
+		and.w	d0,d1
+		subq.w	#4,d1
+		move.w	d1,morphFlTX
+		lsr.w	#3,d0
+		moveq	#7,d1
+		and.w	d0,d1
+		subq.w	#4,d1
+		move.w	d1,morphFlTY
+.ph:	moveq	#0,d6				; the size wanted (R * 16): none ...
+		tst.b	morphPShip
+		beq		.sz
+		tst.b	morphPGlow
+		beq		.sz
+		lea		morphPXY+7*4,a0		; ... or the plate's: its middle
+		move.w	(a0),d0
+		add.w	4(a0),d0
+		add.w	8(a0),d0
+		add.w	12(a0),d0
+		asr.w	#2,d0
+		move.w	d0,morphFlX
+		move.w	2(a0),d1
+		add.w	6(a0),d1
+		add.w	10(a0),d1
+		add.w	14(a0),d1
+		asr.w	#2,d1
+		move.w	d1,morphFlY
+		sub.w	morphPXY,d0			; the way out behind it: from the nose
+		move.w	d0,morphFlVX
+		sub.w	morphPXY+2,d1
+		move.w	d1,morphFlVY
+		move.w	8(a0),d2			; its area: the diagonals' cross product
+		sub.w	(a0),d2
+		move.w	10(a0),d3
+		sub.w	2(a0),d3
+		move.w	12(a0),d4
+		sub.w	4(a0),d4
+		move.w	14(a0),d5
+		sub.w	6(a0),d5
+		muls	d5,d2
+		muls	d4,d3
+		sub.l	d3,d2
+		bpl.s	.a0
+		neg.l	d2
+.a0:	moveq	#0,d6				; ... its root (the plate's size)
+		move.w	#128,d1
+.q:		move.w	d6,d3
+		add.w	d1,d3
+		move.w	d3,d4
+		mulu	d4,d4
+		cmp.l	d2,d4
+		bhi.s	.q1
+		move.w	d3,d6
+.q1:	lsr.w	#1,d1
+		bne.s	.q
+		moveq	#0,d1				; the fireball: the plate, up to half as
+		move.b	morphPGP+1,d1		; big again with the thrust (R * 16 =
+		lsr.w	#1,d1				; root/2 * (256 + thrust/2) / 16)
+		add.w	#256,d1
+		mulu	d1,d6
+		lsr.l	#5,d6
+.sz:	move.w	morphFlR16,d0		; softly there
+		sub.w	d0,d6
+		asr.w	#2,d6
+		add.w	d6,d0
+		move.w	d0,morphFlR16
+		addq.w	#8,d0
+		lsr.w	#4,d0
+		move.w	d0,morphFlR			; (0: none)
+		rts
+
+; -> morphFlRn (two words): the next random numbers (xorshift). uses d0/d1
+morphFlRand:
+		move.l	morphFlRn,d0
+		move.l	d0,d1
+		lsl.l	#8,d1
+		lsl.l	#5,d1
+		eor.l	d1,d0
+		move.l	d0,d1
+		clr.w	d1
+		swap	d1
+		lsr.l	#1,d1
+		eor.l	d1,d0
+		move.l	d0,d1
+		lsl.l	#5,d1
+		eor.l	d1,d0
+		move.l	d0,morphFlRn
+		rts
+morphFlRn:	dc.l	$6c8e9cf5
+
+; the sprite colours 17..31: the torpedoes' (17-19, 21-23: rim, middle,
+; core) ...
+morphColTorp:	dc.w	$0a20,$0f60,$0ffe,0,$0a20,$0f60,$0ffe,0,0,0,0,0,0,0,0
+; ... the afterburner's (17-19: white, light yellow, yellow - glows 0, 1;
+; 21-23: orange, red, dark red - glows 2, 3)
+morphColAb:		dc.w	$0fff,$0ffb,$0fe4,0,$0f80,$0e30,$0810
+
+; once (morphInit): the glows' rows - the torpedoes' and the small flame's
+; (rim, middle, core: 1, 2, 3) by the distance from the middle. (the
+; afterburner's: abgen.py -> abflame.i)
 morphSprMake:
 		movem.l	d0-d7/a0,-(a7)
-		lea		morphSprImg,a0
+		lea		morphSprImg,a0		; the glows
 		moveq	#1,d6				; R
 		moveq	#MSPR_RMAX-1,d7
-.sz:
-		move.w	d6,d5
+.sz:	move.w	d6,d5
 		mulu	d5,d5				; R^2: the bounds (* 100) of the core,
 		move.l	d5,d0				; the middle, the rim (R^2 + R/2: rounder)
 		mulu	#16,d0
@@ -1177,11 +1601,7 @@ morphSprMake:
 		moveq	#-7,d3				; dx
 .px:	add.l	d0,d0				; (the next pixel)
 		add.l	d1,d1
-		move.w	d3,d2
-		muls	d2,d2
-		move.w	d4,d5
-		muls	d5,d5
-		add.l	d5,d2
+		bsr		morphSqD
 		mulu	#100,d2				; d^2 * 100
 		cmp.l	.thC(pc),d2
 		bhi.s	.p1
@@ -1210,11 +1630,21 @@ morphSprMake:
 .thC:	dc.l	0
 .thM:	dc.l	0
 .thR:	dc.l	0
+
+; d3 = dx, d4 = dy -> d2 = dx^2 + dy^2. keeps the rest
+morphSqD:
+		move.w	d3,d2
+		muls	d2,d2
+		move.w	d4,-(a7)
+		muls	d4,d4
+		add.l	d4,d2
+		move.w	(a7)+,d4
+		rts
+
 ; the torpedoes into the draw table: a plasma ball - a diamond that
 ; twinkles, its size by its distance - then a spark, then a dot; and its
 ; engine's flare behind it once it burns
 morphPTorpDraw:
-		bsr		morphTorpSpr
 		move.w	morphPTorpN,d7
 		subq.w	#1,d7
 		bmi.s	.out
@@ -4081,10 +4511,14 @@ simTorps:
 		rts
 
 		section "morphchip",bss_c
-morphSprBuf:	ds.b	2*3*MSPR_LEN	; (morphTorpSpr) two frames' sprites
+morphSprBuf:	ds.b	2*4*MSPR_LEN	; (morphSprFrame) two frames' sprites 0..3
+
+		section "morphdata",data	; (CPU only: copied into the sprites)
+		include	"abflame.i"
 
 		section "morphbss",bss
 morphSprImg:	ds.l	3+5+7+9+11+13+15	; (morphSprMake) the glows' rows
+
 morphRcp:	ds.w	morphRcpN
 ; the flight, frame by frame (the sim writes, the play reads)
 morphRecSize	= 64*1024
