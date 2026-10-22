@@ -47,13 +47,14 @@ S3VX		= morphVX	; the middle of the field (game plane x, y): where we fly
 S3VY		= morphVY
 S3BITC		= (S3VX+1)&7	; s3ExpX's bit: -px - this (its low 3 bits the bit)
 S3ZNEAR		= 36		; quarter z: nearer than this a star is past us
-S3ZMAX		= 2400		; ... the furthest (s3Begin's back layer: 2296)
+S3ZMAX		= 3700		; ... the furthest (new stars: up to 3623)
 S3SPAN8		= (S3ZMAX-S3ZNEAR)*8
 S3DB		= 2016		; the logs' range: L(x z0) - L(z) from -S3DB on ...
 S3HN		= 6144		; ... S3HN steps (a half of the tables: x >= 0, x < 0)
 S3HX		= S3HN*4
 S3HY		= S3HN*2
-S3ZFAR		= 2048		; new stars come from this far
+S3ZFAR		= 2600		; new stars come from this far (and up to 1023 more:
+						; depth)
 S3ZBRIGHT	= 448		; nearer: bright (plane 3) ...
 S3ZMID		= 1700		; ... the middle one (plane 2), else dim (plane 1):
 						; as the Defender layers were (256 .. 2048)
@@ -217,10 +218,18 @@ s3Init::
 		sub.w	#S3VY,d1			; y
 		move.w	d0,d4
 		bsr		s3Rand
-		and.w	#63,d0
+		move.l	d0,d5
+		and.w	#1023,d0
 		move.w	d0,d2
 		add.w	#S3ZFAR,d2
-		move.w	d4,d0
+		swap	d5					; its place drawn in towards the middle
+		and.w	#127,d5				; (0.16 .. 0.65): it leaves the screen
+		add.w	#40,d5				; somewhere between far and near - so
+		move.w	d4,d0				; every depth has its stars
+		muls	d5,d0
+		asr.l	#8,d0
+		muls	d5,d1
+		asr.l	#8,d1
 		moveq	#S3K0,d3
 		bsr		s3Make				; (s3ZTot is 0: z * 8 as it is ...
 		sub.w	#S3ZNEAR*8,-4(a3)	; ... from the near end: s3Field's d6)
@@ -702,8 +711,8 @@ s3Field::
 
 ; straight ahead (s3Field, a frame): the field grows richer - two more
 ; depths bright and middle a frame (s3ZTab's planes), and every 4th frame
-; the dim, middle and bright colours a step nearer their full ones (the
-; hues stay). keeps d5
+; the dim, middle and bright colours a step nearer the field's own (far
+; dark blue, red, near green). keeps d5
 s3Grow:
 		lea		s3ZTab-S3ZNEAR*8+4,a0	; (the plane by the depth)
 		move.w	s3ZB,d0
@@ -757,7 +766,8 @@ s3Grow:
 		move.w	s3Cols+2,6(a0)		; middle (2)
 		move.w	s3Cols+4,14(a0)		; bright (4)
 .out:	rts
-s3ColsTo:	dc.w	$0248,$05b3,$0fc8	; (the same hues, brighter)
+s3ColsTo:	dc.w	$0137,$0b22,$05e3	; (far: dark blue, then red, near: green -
+							; the brightest)
 
 
 ;---------------------------------------------

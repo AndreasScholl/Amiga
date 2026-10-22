@@ -7558,8 +7558,8 @@ elSpr::	dc.w	$120,0,$122,0,$124,0,$126,0
 		dc.w	$138,0,$13a,0,$13c,0,$13e,0
 		dc.w	$0180,$0000
 		dc.w	$01a2,ELC3,$01a4,ELC5,$01a6,ELC7	; the torpedoes' glows (morph.i
-		dc.w	$01aa,ELC3,$01ac,ELC5,$01ae,ELC7	; morphTorpSpr: sprites 0, 2, 4):
-		dc.w	$01b2,ELC3,$01b4,ELC5,$01b6,ELC7	; rim, middle, core
+		dc.w	$01aa,ELC3,$01ac,ELC5,$01ae,ELC7	; morphTorpSpr: sprites 0, 1, 2):
+									; rim, middle, core
 elCol0::
 		ELCOLS
 		dc.w	$0190,gameColor,$0192,gameColor,$0194,gameColor,$0196,gameColor

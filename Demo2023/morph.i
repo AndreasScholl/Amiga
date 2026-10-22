@@ -138,6 +138,7 @@ morphTorpHitAge = 31*morphBeat	; frames from the drop to the hit (14.9 s)
 morphTorpR	= 8*16		; their size (radius, 1/16 units)
 morphTorpHissT = 40		; frames their hiss is heard after the whoosh
 MSPR_LEN	= 4+15*4+4	; (morphTorpSpr) a sprite: control, 15 rows, the end
+MSPR_RMAX	= 7			; ... its glow's R at most
 ; --- the flight
 morphKV		= 11		; our speed (1/16 units a frame) = the stars' (8.8) * this
 						; >> 8: 7 units a frame at top speed
@@ -1036,7 +1037,7 @@ morphGlowSize:
 		bls.s	.o
 		moveq	#4,d2
 .o:		rts
-; the torpedoes' glows: sprites 0, 2 and 4, in front of everything - so
+; the torpedoes' glows: sprites 0, 1 and 2, in front of everything - so
 ; they show over the logo too, where the star planes do not (stars3d.i
 ; s3Glow). round blobs, rim, middle, core (morphSprMake), a bigger one the
 ; frame its engine fires. double buffered: built now, the copper takes the
@@ -1055,20 +1056,21 @@ morphTorpSpr:
 		bhs		.null
 		btst	#TF_BURN,5(a4)
 		beq		.null
-		moveq	#0,d0				; its size: inside its diamond (in front
-		move.b	4(a4),d0			; of it: the lines show round it), R 3
-		subq.w	#1,d0				; at least (far: a spark); the flash
-		btst	#TF_FLASH,5(a4)		; bigger than the diamond
-		beq.s	.s0
-		addq.w	#4,d0
-.s0:	cmp.w	#3,d0
-		bge.s	.s
-		moveq	#3,d0
-.s:		bsr		morphGlowSize		; d2 = 0..4
+		moveq	#0,d3				; its size: inside its diamond (in front
+		move.b	4(a4),d3			; of it: the lines show round it) - far
+		subq.w	#1,d3				; off smaller and smaller, down to a
+		btst	#TF_FLASH,5(a4)		; spark (R 1); the flash bigger than the
+		beq.s	.s0					; diamond
+		addq.w	#4,d3
+.s0:	cmp.w	#1,d3
+		bge.s	.s1
+		moveq	#1,d3
+.s1:	cmp.w	#MSPR_RMAX,d3
+		ble.s	.s
+		moveq	#MSPR_RMAX,d3
+.s:		move.w	d3,d2				; R: the image
+		subq.w	#1,d2
 		move.w	d2,.sz
-		lea		morphSprR,a0		; R
-		moveq	#0,d3
-		move.b	(a0,d2.w),d3
 		move.w	(a4),d0				; HSTART: its left (x - 7) + 96
 		add.w	#96-7,d0
 		bmi		.null
@@ -1134,7 +1136,8 @@ morphTorpSpr:
 .ptr:	move.w	d0,6(a3)
 		swap	d0
 		move.w	d0,2(a3)
-		lea		16(a3),a3			; (sprites 0, 2, 4)
+		addq.l	#8,a3				; (sprites 0, 1, 2: the wide fetch, DDFSTRT
+									; $28, takes the higher ones' slots)
 		lea		MSPR_LEN(a2),a2
 		addq.l	#8,a4
 		addq.w	#1,d7
@@ -1143,19 +1146,17 @@ morphTorpSpr:
 		movem.l	(a7)+,d0-d7/a0-a4
 		rts
 .sz:	dc.w	0
-morphSprR:	dc.b	2,3,4,6,7		; the glows' R (px; s3GlR, the last 7: a
-		even						; sprite is 16 wide)
-morphSprOff: dc.w	0,5*4,(5+7)*4,(5+7+9)*4,(5+7+9+13)*4
+morphSprOff: dc.w	0,3*4,8*4,15*4,24*4,35*4,48*4	; the glows by R (1..7: a sprite
+								; is 16 wide), their first rows
 
 ; once (morphInit): the glows' rows for the sprites - rim, middle, core
 ; (colours 1, 2, 3: plane A, B, both) by the distance from the middle
 morphSprMake:
-		movem.l	d0-d7/a0-a1,-(a7)
+		movem.l	d0-d7/a0,-(a7)
 		lea		morphSprImg,a0
-		lea		morphSprR(pc),a1
-		moveq	#5-1,d7
-.sz:	moveq	#0,d6
-		move.b	(a1)+,d6			; R
+		moveq	#1,d6				; R
+		moveq	#MSPR_RMAX-1,d7
+.sz:
 		move.w	d6,d5
 		mulu	d5,d5				; R^2: the bounds (* 100) of the core,
 		move.l	d5,d0				; the middle, the rim (R^2 + R/2: rounder)
@@ -1202,8 +1203,9 @@ morphSprMake:
 		addq.w	#1,d4
 		cmp.w	d6,d4
 		ble.s	.row
+		addq.w	#1,d6
 		dbf		d7,.sz
-		movem.l	(a7)+,d0-d7/a0-a1
+		movem.l	(a7)+,d0-d7/a0
 		rts
 .thC:	dc.l	0
 .thM:	dc.l	0
@@ -4082,7 +4084,7 @@ simTorps:
 morphSprBuf:	ds.b	2*3*MSPR_LEN	; (morphTorpSpr) two frames' sprites
 
 		section "morphbss",bss
-morphSprImg:	ds.l	5+7+9+13+15		; (morphSprMake) the glows' rows
+morphSprImg:	ds.l	3+5+7+9+11+13+15	; (morphSprMake) the glows' rows
 morphRcp:	ds.w	morphRcpN
 ; the flight, frame by frame (the sim writes, the play reads)
 morphRecSize	= 64*1024
