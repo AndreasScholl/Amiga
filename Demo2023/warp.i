@@ -205,6 +205,10 @@ warpStart::
 ;---------------------------------------------
 ; updateStars comes here once it has started
 warpStep:
+	ifne	elite3
+		tst.b	s3On				; (stars3d.i: the field in bitplanes)
+		bne		s3Field
+	endc
 		movem.l	a2-a5,-(a7)
 		bsr.s	.go
 		movem.l	(a7)+,a2-a5
@@ -216,6 +220,13 @@ warpStep:
 		beq		warpField
 		cmp.b	#2,d0
 		beq		warpThin
+	ifne	elite3
+		cmp.b	#4,d0			; (the field's second frame of making)
+		bne.s	.g1
+		jsr		s3Begin2
+		bra		starsParallax
+.g1:
+	endc
 		bsr.s	warpFade
 		bra		starsParallax
 
@@ -265,6 +276,11 @@ warpFade:
 		bsr.s	.step
 		tst.w	d5
 		bne.s	.out
+	ifne	elite3
+		jsr		s3Begin				; all there: every star into 3D, in
+		move.b	#4,warpState		; bitplanes (stars3d.i), two frames
+		rts
+	endc
 		move.b	#2,warpState		; all there: the thinning
 		clr.w	warpT
 		clr.w	warpKept
@@ -917,7 +933,7 @@ warpSpawn:
 		rts
 
 ;---------------------------------------------
-warpState::		dc.b	0		; 0 off, 1 colours, 2 thinning, 3 the field
+warpState::		dc.b	0		; 0 off, 1 colours, 2 thinning, 3 the field, 4 its making (stars3d.i)
 warpThinDone:	dc.b	0		; (2: all the dying ones gone)
 				even
 warpT::			dc.w	0		; frames in the state

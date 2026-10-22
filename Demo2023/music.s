@@ -25,7 +25,8 @@ initMusic::
         bsr		LSP_MusicDriver_CIA_Start
 
         move.w	#$e000,$dff09a
-        bra     sfxInit
+        bsr     sfxInit
+        bra     sfxGen
 
         ; Include simple CIA toolkit
         include	"LSP\LightSpeedPlayer_cia.asm"
@@ -89,6 +90,9 @@ SFX_LASER       = 3
 SFX_THRUST      = 4
 SFX_ZAP         = 5                 ; the TV goes off (scroller.s tvStart)
 SFX_BIGBOOM     = 6                 ; SFX_BOOM once it is Defender (sfxWide)
+SFX_DROP        = 7                 ; (morph.i) a torpedo drops out of the ship
+SFX_IGNITE      = 8                 ; (morph.i) ... and its engine fires
+SFX_SHIPIGN     = 9                 ; (morph.i) the fighter's engine fires
 
 ; one effect: sample, length (words), period, volume, ticks (0: loops),
 ; priority, ticks before the same one may start again over itself
@@ -115,6 +119,12 @@ sfxTable:
                 dc.w    sfxZapS_len/2,443,64,58,4,0
                 dc.l    sfxBigBoomBuf                       ; SFX_BIGBOOM
                 dc.w    sfxBigBoomS_len/2,520,64,50,2,sfxBoomAgain      ; (period 520: lower, more bass)
+                dc.l    sfxDropBuf                          ; SFX_DROP: a clunk
+                dc.w    sfxDropLen/2,360,64,8,3,0
+                dc.l    sfxIgnBuf                           ; SFX_IGNITE: a whoosh
+                dc.w    sfxIgnLen/2,300,64,30,4,0
+                dc.l    sfxIgnBuf                           ; SFX_SHIPIGN: the whoosh,
+                dc.w    sfxIgnLen/2,430,64,42,4,0           ; lower, bigger
 sfxBoomAgain    = 9                 ; a big boom rolls on this long at least
 
 ; the channels of each effect once it is Defender (bits 0..3). rink-a-dink:
@@ -122,9 +132,9 @@ sfxBoomAgain    = 9                 ; a big boom rolls on this long at least
 ; the time), so the booms go on 1 and 3, its quiet ones (hi-hat on 3) -
 ; still left and right, in the middle
         IFEQ    MUSIC-MUSIC_RINK
-sfxChW:         dc.b    0,%1000,%0011,%1000,%1000,%0011,%0011
+sfxChW:         dc.b    0,%1000,%0011,%1000,%1000,%0011,%0011,%0010,%1000,%0010
         ELSE
-sfxChW:         dc.b    0,%1000,%1010,%1000,%1000,%1010,%1010
+sfxChW:         dc.b    0,%1000,%1010,%1000,%1000,%1010,%1010,%0010,%1000,%0010
         ENDC
                 even
 
@@ -175,7 +185,297 @@ sfxTick::
         addq.w  #1,d7
         cmp.w   #4,d7
         blo.s   .ch
+        tst.l   sfxDroneOn                  ; (no drone, none running: done)
+        bne.s   sfxDrones
+        tst.l   sfxDroneRun
+        bne.s   sfxDrones
         rts
+
+; --- drones: sounds that go on and on, their pitch and volume set every
+;     frame from outside (morph.i: the fighter's engine, the torpedoes'),
+;     the Doppler in the pitch. one per channel, sfxDroneOn says which; an
+;     effect on the same channel comes first, the drone starts again after
+;     it. the music keeps off the channel meanwhile (sfxKeep), as for the
+;     effects; the sample goes in again every tick (the music may have put
+;     its own into the loop registers)
+sfxDrones:
+        lea     sfxVoices,a3
+        moveq   #0,d7
+.ch:
+        move.w  d7,d0
+        lsl.w   #4,d0
+        lea     $dff0a0,a0
+        add.w   d0,a0
+        lea     sfxDroneRun,a1
+        tst.b   v_on(a3)                    ; an effect here first
+        beq.s   .free
+        sf      (a1,d7.w)
+        bra.s   .next
+.free:
+        lea     sfxDroneOn,a2
+        tst.b   (a2,d7.w)
+        bne.s   .want
+        tst.b   (a1,d7.w)
+        beq.s   .next
+        sf      (a1,d7.w)                   ; off: back to the music
+        clr.w   8(a0)
+        moveq   #0,d1
+        bset    d7,d1
+        move.w  d1,$dff096
+        bset    d7,sfxKeep
+        bra.s   .next
+.want:
+        move.w  d7,d0
+        lsl.w   #3,d0
+        lea     sfxDroneSmp,a2
+        add.w   d0,a2
+        cmp.w   #3,d7                       ; (3: the engine as well, near -
+        bne.s   .w0                         ; morph.i sfxEng3)
+        tst.b   sfxEng3
+        beq.s   .w0
+        lea     sfxDroneSmp+8,a2
+.w0:
+        tst.b   (a1,d7.w)
+        bne.s   .run
+        st      (a1,d7.w)                   ; on: a new start
+        moveq   #0,d1
+        bset    d7,d1
+        move.w  d1,$dff096
+        bclr    d7,sfxKeep
+        move.l  (a2),(a0)
+        move.w  4(a2),4(a0)
+        move.l  LSP_State+m_dmaconPatch,a2
+        bset    d7,(a2)
+        bra.s   .regs
+.run:
+        move.l  (a2),(a0)
+        move.w  4(a2),4(a0)
+.regs:
+        move.w  d7,d0
+        add.w   d0,d0
+        lea     sfxDronePer,a2
+        move.w  (a2,d0.w),6(a0)
+        lea     sfxDroneVol,a2
+        move.w  (a2,d0.w),8(a0)
+.next:
+        addq.l  #v_size,a3
+        addq.w  #1,d7
+        cmp.w   #4,d7
+        blo     .ch
+        rts
+
+sfxDroneOn::    dc.b    0,0,0,0         ; wanted, a channel each (from outside)
+sfxDroneRun:    dc.b    0,0,0,0         ; running
+sfxDronePer::   dc.w    400,400,400,400 ; (from outside, every frame)
+sfxDroneVol::   dc.w    0,0,0,0
+sfxEng3::       dc.b    0               ; channel 3's drone: the engine, not the hiss
+                even
+; each channel's drone: the loop, its length in words (ch1: the fighter's
+; engine - the music's quiet pad; ch3: a torpedo's hiss, briefly - the
+; drums; the music's main voices 0 and 2 are never taken)
+sfxDroneSmp:    dc.l    sfxHissBuf
+                dc.w    sfxHissLen/2,0
+                dc.l    sfxEngBuf
+                dc.w    sfxEngLen/2,0
+                dc.l    sfxHissBuf
+                dc.w    sfxHissLen/2,0
+                dc.l    sfxHissBuf
+                dc.w    sfxHissLen/2,0
+
+; --- the ending's sounds, made at the start (no samples on the disk):
+;     noise from a shift register, a saw, envelopes. a5 the noise state
+sfxEngLen       = 8192                  ; the engine: a long loop (0.8 s), a rumble,
+                                        ; a hum and a throb - nothing repeats fast
+sfxHissLen      = 256                   ; the torpedoes' engines: a loop, a hiss
+sfxDropLen      = 1400                  ; a torpedo drops: a clunk
+sfxIgnLen       = 5000                  ; its engine fires: a whoosh
+sfxGen:
+        move.l  #$1d872b41,d6           ; the noise
+        ; the engine. a rumble: noise, low passed hard - once round to warm
+        ; the filter up, then again from the same noise, so the loop's end
+        ; meets its start. two saws, 64 and 67 rounds a loop (a hum that
+        ; beats slowly against itself), and a throb over it all (3 a loop)
+        moveq   #0,d5
+        move.w  #sfxEngLen-1,d7
+.eng0:
+        bsr     .noise
+        sub.w   d5,d0
+        asr.w   #4,d0
+        add.w   d0,d5
+        dbf     d7,.eng0
+        move.l  #$1d872b41,d6
+        lea     sfxEngBuf,a0
+        moveq   #0,d3                   ; the saws' phases
+        moveq   #0,d4
+        moveq   #0,d2                   ; t
+        move.w  #sfxEngLen-1,d7
+.eng:
+        bsr     .noise
+        sub.w   d5,d0
+        asr.w   #4,d0
+        add.w   d0,d5                   ; the rumble
+        add.w   #64*65536/sfxEngLen,d3
+        add.w   #67*65536/sfxEngLen,d4
+        move.w  d3,d0
+        asr.w   #8,d0
+        asr.w   #1,d0                   ; -64..63
+        move.w  d4,d1
+        asr.w   #8,d1
+        asr.w   #1,d1
+        add.w   d1,d0
+        asr.w   #1,d0                   ; the hum, -64..63
+        move.w  d2,d1                   ; + a saw an octave below (32 a loop):
+        lsl.w   #8,d1                   ; the body
+        asr.w   #8,d1
+        asr.w   #1,d1
+        add.w   d1,d0
+        move.w  d5,d1
+        add.w   d1,d1
+        add.w   d1,d0                   ; + the rumble
+        move.w  d0,d1                   ; driven a little (x1.25, clipped):
+        asr.w   #2,d1                   ; fat, not thin
+        add.w   d1,d0
+        movem.w d0/d2,-(a7)             ; the throb: 0.75 .. 1
+        move.w  d2,d1
+        mulu    #3*360,d1
+        divu    #sfxEngLen,d1
+        and.l   #$ffff,d1
+        divu    #360,d1
+        swap    d1                      ; degrees
+        lsl.w   #2,d1
+        lea     sctab,a1
+        move.w  (a1,d1.w),d1
+        asr.w   #2,d1
+        add.w   #24576,d1
+        movem.w (a7)+,d0/d2
+        muls    d1,d0
+        add.l   d0,d0
+        swap    d0
+        bsr     .clip
+        move.b  d0,(a0)+
+        addq.w  #1,d2
+        dbf     d7,.eng        ; the hiss: noise, a little low passed
+        lea     sfxHissBuf,a0
+        moveq   #0,d5
+        move.w  #sfxHissLen-1,d7
+.hiss:
+        bsr     .noise
+        sub.w   d5,d0
+        asr.w   #1,d0
+        add.w   d0,d5
+        move.w  d5,d0
+        bsr     .clip
+        move.b  d0,(a0)+
+        dbf     d7,.hiss
+        ; the clunk: two sines that die away (a hollow thump), a click first
+        lea     sfxDropBuf,a0
+        moveq   #0,d4                   ; t
+        move.w  #sfxDropLen-1,d7
+.drop:
+        move.w  d4,d0                   ; envelope: 127 down to 0
+        mulu    #127,d0
+        divu    #sfxDropLen,d0
+        neg.w   d0
+        add.w   #127,d0
+        mulu    d0,d0
+        lsr.w   #7,d0                   ; (squared: it dies fast)
+        move.w  d0,d3
+        move.w  d4,d0                   ; sin, 60 samples a round
+        mulu    #6,d0                   ; (degrees: t * 360/60)
+        divu    #360,d0
+        swap    d0
+        lsl.w   #2,d0
+        lea     sctab,a1
+        move.w  (a1,d0.w),d1
+        asr.w   #1,d1
+        move.w  d4,d0                   ; and 37 a round (a ring)
+        mulu    #360,d0
+        divu    #37,d0
+        ext.l   d0
+        divu    #360,d0
+        swap    d0
+        lsl.w   #2,d0
+        move.w  (a1,d0.w),d0
+        asr.w   #2,d0
+        add.w   d0,d1
+        muls    d3,d1
+        asr.l   #8,d1
+        asr.l   #7,d1
+        move.w  d1,d0
+        cmp.w   #60,d4                  ; the click
+        bhs.s   .d0
+        move.w  d0,d1
+        bsr     .noise
+        asr.w   #1,d0
+        add.w   d1,d0
+.d0:
+        bsr     .clip
+        move.b  d0,(a0)+
+        addq.w  #1,d4
+        dbf     d7,.drop
+        ; the whoosh: noise, quick up, slowly away, darker as it goes (the
+        ; low pass closes)
+        lea     sfxIgnBuf,a0
+        moveq   #0,d4
+        moveq   #0,d5
+        move.w  #sfxIgnLen-1,d7
+.ign:
+        move.w  d4,d3                   ; envelope: up over 300, then down
+        cmp.w   #300,d3
+        bhs.s   .i0
+        mulu    #127,d3
+        divu    #300,d3
+        bra.s   .i1
+.i0:    sub.w   #300,d3
+        mulu    #127,d3
+        divu    #sfxIgnLen-300,d3
+        neg.w   d3
+        add.w   #127,d3
+.i1:    bsr     .noise
+        sub.w   d5,d0
+        move.w  d4,d1                   ; the low pass: 1/2 at first, 1/16 at
+        lsr.w   #8,d1                   ; the end
+        lsr.w   #2,d1
+        addq.w  #1,d1
+        cmp.w   #4,d1
+        bls.s   .i2
+        moveq   #4,d1
+.i2:    asr.w   d1,d0
+        add.w   d0,d5
+        move.w  d5,d0
+        muls    d3,d0
+        asr.l   #6,d0                   ; (x2: the low pass makes it quiet)
+        bsr     .clip
+        move.b  d0,(a0)+
+        addq.w  #1,d4
+        dbf     d7,.ign
+        rts
+; -> d0 = noise -128..127 (d6: a 32 bit xorshift)
+.noise:
+        move.l  d6,d0
+        lsl.l   #8,d0
+        lsl.l   #5,d0
+        eor.l   d0,d6
+        move.l  d6,d0
+        clr.w   d0
+        swap    d0
+        lsr.l   #1,d0
+        eor.l   d0,d6
+        move.l  d6,d0
+        lsl.l   #5,d0
+        eor.l   d0,d6
+        move.l  d6,d0
+        and.w   #$ff,d0
+        sub.w   #128,d0
+        rts
+.clip:
+        cmp.w   #127,d0
+        ble.s   .c0
+        moveq   #127,d0
+.c0:    cmp.w   #-128,d0
+        bge.s   .c1
+        moveq   #-128,d0
+.c1:    rts
 
 ; one channel, d7. a0 its registers, a3 its state
                 rsreset
@@ -360,3 +660,7 @@ sfxBoomBuf:     ds.b    sfxBoomS_len
 sfxThrustBuf:   ds.b    sfxThrustS_len
 sfxZapBuf:      ds.b    sfxZapS_len
 sfxBigBoomBuf:  ds.b    sfxBigBoomS_len
+sfxEngBuf:      ds.b    sfxEngLen       ; (sfxGen) the ending's sounds
+sfxHissBuf:     ds.b    sfxHissLen
+sfxDropBuf:     ds.b    sfxDropLen
+sfxIgnBuf:      ds.b    sfxIgnLen

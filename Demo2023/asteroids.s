@@ -1788,7 +1788,7 @@ shot_collision:
 word_scatter:
 		st		word_scattered
 		move.l	enemy_con,d4
-		lea		enemy_structs(pc),a1
+		lea		enemy_structs,a1
 		moveq	#31,d7
 .letter:
 		btst	d7,d4
@@ -5960,6 +5960,9 @@ seq_rowNear		= 36		; that near the spot on the row: there
 seq_deadT0		= 250		; (tvLate) frames the bar stays dark before it rises
 seq_darkX		= 196		; ... the ship meanwhile over the bar
 seq_darkY		= 128
+seq_goRowX		= 300		; over to the row once the message's first letter is in
+							; this far (it is there well before seq_dfireX)
+seq_rowLate		= 400		; (no message: over to the row anyway, this much later)
 seq_rowT		= 170		; ... and this long after that over to the row (the
 							; message starts ~290 frames after it is let in)
 seq_hopHits		= 3			; a new spot after this many hits ...
@@ -6315,6 +6318,9 @@ seq_huntHop:
 ; the reverse and round again - then onto the row, nose right, and the
 ; first shot once the first word is far enough in
 seq_deftest:
+	ifne	elite3					; (the Elite ending's flight is worked out
+		jsr		morphSimInit			; from here on, in the frames' time left:
+	endc							; morph.i)
 		tst.b	seq_dThere			; at the row (or on the way)?
 		bne		.toRow
 		cmp.w	#1,seq_timer
@@ -6326,10 +6332,13 @@ seq_deftest:
 		bne.s	.notYet
 		st		seq_defReady
 .notYet:
-		tst.b	msgStarted			; it is coming in - or it soon will: over to
-		bne.s	.goRow				; the row
-		cmp.w	#seq_passT+seq_rowT,seq_timer
-		bhs.s	.goRow
+		jsr		msgLeftX			; the message's first letter well in: over
+		tst.w	d0					; to the row now (not while the question
+		bmi.s	.noMsg				; marks still go by - just in time for it)
+		cmp.w	#seq_goRowX,d0
+		bls.s	.goRow
+.noMsg:	cmp.w	#seq_passT+seq_rowT+seq_rowLate,seq_timer
+		bhs.s	.goRow				; (no message after all: anyway)
 		bsr		seq_tshoot			; meanwhile: the text hunted for fun
 .out0:
 		rts
@@ -6401,6 +6410,9 @@ seq_deftest:
 		rts
 ; on the row: the laser, a word a shot, each one just before the twist
 seq_deffire:
+	ifne	elite3					; (the Elite ending's flight is worked out
+		jsr		morphSimInit			; from here on, in the frames' time left:
+	endc							; morph.i)
 		move.w	#90,seq_dface
 		moveq	#seq_dswayX,d2		; to and fro, up and down a little, on
 		moveq	#seq_dswayY,d3		; the row: the laser goes off where the
@@ -6826,15 +6838,18 @@ seq_after:
 
 	ifne	elite3
 ; (switches.i elite3) the words are gone and the ship stays a Defender ship:
-; nose to the right, it glides over to the middle (seq_mX/seq_mY), on a
-; slow figure of eight there, while the fast stars go by. after seq_mWait
-; frames it unfolds into the fighter, settles, turns to the viewer and the
-; camera flies past it (morph.i morphTick: the timeline)
-seq_mX			= 140		; where it unfolds (the middle of the model)
+; nose to the right, it glides over to the middle (seq_mX/seq_mY) and
+; enjoys the quiet a few seconds, on a slow figure of eight there, while
+; the fast stars go by - a pilot breathing out: now and then a small
+; correction, which it overshoots a little and catches. meanwhile morph.i
+; works out the flight to come (morphSimInit). after seq_mWait frames it
+; unfolds into the fighter, settles, and the flight is played (morph.i
+; morphTick: the timeline)
+seq_mX			= 157		; where it unfolds (the middle of the model)
 seq_mY			= 142
 seq_mSwayX		= 10		; the figure of eight there
 seq_mSwayY		= 5
-seq_mWait		= 70		; frames before it starts
+seq_mWait		= 200		; frames before it starts (the rest)
 seq_morph:
 		move.w	#90,seq_dface
 		tst.b	morphKept			; the fighter is done: it settles in the
@@ -6871,14 +6886,39 @@ seq_morph:
 		bsr		seq_dfloat
 		add.w	#seq_mX-seq_defX,d0
 		add.w	#seq_mY-seq_defY,d1
+		subq.w	#1,seq_mNudgeT		; now and then a correction
+		bpl.s	.nu
+		move.w	d0,-(a7)
+		jsr		getRandomNumber
+		move.w	d0,d2
+		and.w	#31,d2
+		add.w	#45,d2
+		move.w	d2,seq_mNudgeT		; 45..76 frames to the next
+		swap	d0
+		moveq	#7,d2
+		and.w	d0,d2
+		subq.w	#4,d2
+		move.w	d2,seq_mNx			; -4..3 px across
+		lsr.w	#8,d0
+		and.w	#7,d0
+		subq.w	#4,d0
+		asr.w	#1,d0
+		move.w	d0,seq_mNy			; -2..1 up and down
+		move.w	(a7)+,d0
+.nu:	add.w	seq_mNx,d0
+		add.w	seq_mNy,d1
 .move:	bsr		seq_dmoveA
 		moveq	#0,d0
 .time:
 		tst.b	morphOn				; the first frame: the unfolding starts
-		bne.s	.on					; seq_mWait frames from now
-		st		morphOn
+		bne.s	.on					; seq_mWait frames from now, the flight
+		st		morphOn				; is worked out from now on
 		move.w	#-seq_mWait-1,morphT
+		jsr		morphSimInit
 .on:	jmp		morphTick			; (morph.i: the timeline)
+seq_mNudgeT:	dc.w	0
+seq_mNx:		dc.w	0
+seq_mNy:		dc.w	0
 	endc
 
 ; -> d0/d1 = the Defender spot on a slow figure of eight, d2 px to and fro
@@ -8312,12 +8352,12 @@ clear:					;<switch screens and clear>
 		bne.s	.s0
 		move.w	#0,bp0+2
 		move.w	#0,bp1+2
-		move.l	#$78000,screenloc
+		move.l	#bufB,screenloc
 		bra.s	.s1
 .s0:		
 		move.w	#$8000,bp0+2
 		move.w	#$8000,bp1+2
-		move.l	#$70000,screenloc
+		move.l	#bufA,screenloc
 .s1:
 		jsr		bbusy
 		move.l	screenloc,$54(a6)
@@ -8330,7 +8370,7 @@ clear:					;<switch screens and clear>
 screenToggle:		
 		dc.w	0
 screenloc::		
-		dc.l	$70000
+		dc.l	bufA
 ;---------------------------------------------
 ; y -> y*game_lineBytes. built once, used by drawline and set_point.
 		even
@@ -8761,7 +8801,7 @@ objects_draw:
 ;----------------------------------------
 ;-------------------------------------------------------
 ; sin cos table
-sctab:
+sctab::
  dc.l $00007fff,$023c7ffa,$04787feb,$06b37fd2,$08ee7faf,$0b287f82
  dc.l $0d617f4b,$0f997f0b,$11d07ec0,$14067e6c,$163a7e0d,$186c7da5
  dc.l $1a9d7d33,$1ccb7cb7,$1ef77c32,$21217ba2,$23487b0a,$256c7a67
@@ -9611,4 +9651,5 @@ collList:		ds.b	coll_len*32		; shootable boxes, see updateEnemies
 		include	"warp.i"
 	ifne	elite3
 		include	"morph.i"
+		include	"stars3d.i"
 	endc

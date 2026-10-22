@@ -6,7 +6,9 @@
 		INCLUDE     "graphics/graphics_lib.i"
 		INCLUDE     "hardware/cia.i"
 
-src_adr			= $6e000		; scroll buffer source adress
+; src_adr: the scroll buffer's source, in chip memory the system gives us
+; (section "screens" at the end; it was the fixed address $6e000, never
+; reserved - the loaded program could lie there and get drawn over)
 src_line 		= $32			; source line width
 
 ; screenHeight (the buffer height) is defined further down, after gameTop
@@ -70,8 +72,7 @@ screenHeight	= screenBottom-gameTop	; 158
 fullTop			= $20			; first line of the display window
 topLines		= gameTop-fullTop	; 110
 gameLines		= topLines+screenHeight	; 268, asteroids.s game_height
-bufA			= $70000
-bufB			= $78000
+; bufA/bufB: section "screens" at the end (were the fixed $70000/$78000)
 scrollA			= bufA+topLines*li
 scrollB			= bufB+topLines*li
 ; planes 2 of the empty rows above and below the logo read this. it can not
@@ -86,7 +87,7 @@ ho				= li*sc_offset	; dst height start offset
 yTop			= sc_offset-23	; scroller top y pos (for copy and pixel effect)
 sc_top			= yTop*li		;
 
-ss		 		= $6e014		; source start of scoller turn
+ss		 		= src_adr+$14	; source start of scoller turn
 ds		 		= $14			; destination start	of scroller turn
 
 ; --- where the scroll text stops being drawn and turns into dots -------
@@ -207,6 +208,7 @@ initScroller::
 	ifne	tvLate
 		sf		flickPhase
 	endc
+		bsr		patchScreens		; the screens' addresses into the copper
 		bsr		buildLogoPadded
 		move.l	#zeroArea,d0		; plane 2 above and below the logo
 		move.w	d0,topZero2l
@@ -235,6 +237,26 @@ initScroller::
 
  		move.l	#clist,$dff080
 		clr.w	$dff088
+		rts
+; the screens are where the system put them (section "screens"): their
+; addresses into the copper lists, once
+patchScreens:
+		move.l	#src_adr-li,d0		; the blank line above and below the logo
+		move.w	d0,blankTop1l
+		move.w	d0,blankTop3l
+		move.w	d0,blankMid1l
+		move.w	d0,blankMid3l
+		swap	d0
+		move.w	d0,blankTop1h
+		move.w	d0,blankTop3h
+		move.w	d0,blankMid1h
+		move.w	d0,blankMid3h
+		move.l	#scrollA+(li*(51+gameShift))-2,d0	; the bar's shadow plane
+		move.w	d0,shadowL
+		move.w	d0,tvShadowL
+		swap	d0
+		move.w	d0,shadowH
+		move.w	d0,tvShadowH
 		rts
 ;-------
 ; --- intro build up ---------------------------------------------------
@@ -455,6 +477,11 @@ updateScroller::
 
 		lea		$dff000,a6
 .noGame:
+	ifne	elite3
+		; --- the Elite ending's flight is worked out ahead in what is left
+		;     of the frame (morph.i), last of all
+		jsr		morphSimRun
+	endc
 .scrollerEnded:
 		RASTER	$0000
 		clr.b	kcode
@@ -480,19 +507,35 @@ clearScroller:				;<switch screens and clear>
 		lea		$dff000,a6
 		not.b	screenToggleScroller
 		bne.s	.s0
-		move.w	#scrollA&$ffff,bp0+2		; show A ...
-		move.w	#(scrollA+screenHeight*li)&$ffff,emberbpl
-		move.w	#bufA&$ffff,gamebpl4
+		move.l	#bufA,d0					; show A ...
 		move.l	#scrollB,screenlocScroller	; ... draw B
 		move.l	#bufB,screenloc				; asteroids draw on the whole screen
 		bra.s	.s1
 .s0:
-		move.w	#scrollB&$ffff,bp0+2
-		move.w	#(scrollB+screenHeight*li)&$ffff,emberbpl
-		move.w	#bufB&$ffff,gamebpl4
+		move.l	#bufB,d0
 		move.l	#scrollA,screenlocScroller
 		move.l	#bufA,screenloc
-.s1:
+.s1:	; the shown buffer into the copper (high words too: the buffers are
+		; where the system put them)
+		move.w	d0,gamebpl4
+		swap	d0
+		move.w	d0,gamebpl4h
+		swap	d0
+		add.l	#topLines*li,d0				; the scroller part
+		move.w	d0,bp0+2
+		swap	d0
+		move.w	d0,gamebp0h
+		swap	d0
+		add.l	#screenHeight*li,d0			; the ember plane
+		move.w	d0,emberbpl
+		swap	d0
+		move.w	d0,emberbplh
+	ifne	elite3
+		tst.b	s3Cop				; (the Elite ending: its own copper list,
+		beq.s	.ne					; stars3d.i)
+		jsr		s3Flip
+.ne:
+	endc
 		bsr		bbusy
 		move.l	screenloc,$54(a6)			; game top, scroller, ember
 		move.l	#-1,$44(a6)
@@ -3839,6 +3882,8 @@ buildDebrisRnd:
 ; the text has been cut off (seqTextOff): is any of it still in the part of
 ; the source that gets shown? -> scrollGone
 checkScrollGone:
+		tst.b	scrollGone			; (gone is gone: no new text comes)
+		bne.s	.out
 		lea		src_adr+dissolveByte,a0
 		moveq	#0,d0
 		moveq	#hitRows-1,d7
@@ -3850,7 +3895,7 @@ checkScrollGone:
 		dbf		d7,.line
 		tst.l	d0
 		seq		scrollGone
-		rts
+.out:	rts
 
 ;-------
 ; the first lit column of the right block between screen x d0 and d1
@@ -4102,7 +4147,7 @@ FS_TESTLOOP		= 9				; a text over and over till the ship is ready
 								; for the message (seq_defReady), then on
 FS_TAIL			= 10			; with finalAttackOn: on with feedTailAttack
 FS_BROKEN		= 11			; a text with some of its glyphs broken
-msgGap			= 20			; spaces before the message (3.2 s)
+msgGap			= 5				; spaces before the message (0.8 s)
 cuePause		= 20			; spaces between the dashes and the message
 glitchRampChars	= 2				; chars per glitchLevel step down
 stutterPerLevel	= 7				; hang odds (out of 256) per level ...
@@ -6116,7 +6161,7 @@ tabend2:
 setupScroller:
 		bsr		mctab
 
-		lea		$6e000-li,a0		; one more line for empty line -> sprite display
+		lea		src_adr-li,a0		; one more line for empty line -> sprite display
 		move.l	#(li*8)/4,d7
 .clear:
 		clr.l	(a0)+
@@ -6859,8 +6904,10 @@ introRestart:
 introHideLogo:
 			move.w	#$1200,logoPlanes		; one plane instead of three
 			move.w	#$ffd2,logoPlaneMod
-			move.w	#$0006,logobp0h			; ... aimed at the empty line
-			move.w	#$e000-li,logobp0l
+			move.l	#src_adr-li,d0			; ... aimed at the empty line
+			move.w	d0,logobp0l
+			swap	d0
+			move.w	d0,logobp0h
 			rts
 
 introShowLogo:
@@ -6882,8 +6929,10 @@ introShowLogo:
 ; rewrites bp0 every frame, so the hide has to be reapplied each frame.
 ;---------------------------------------------
 introHideGame:
-			move.w	#$0006,gamebp0h
-			move.w	#$e000-li,bp0+2
+			move.l	#src_adr-li,d0
+			move.w	d0,bp0+2
+			swap	d0
+			move.w	d0,gamebp0h
 			move.w	#$ffd2,gamePlaneMod		; -li, repeats the blank line
 			move.w	#$1200,gamePlanes2		; one plane, no dual playfield
 			move.w	#$1200,gamePlanes3
@@ -6896,8 +6945,7 @@ introHideGame:
 			rts
 
 introShowGame:
-			move.w	#$0007,gamebp0h
-			move.w	#$0000,gamePlaneMod
+			move.w	#$0000,gamePlaneMod	; (gamebp0h: clearScroller, each frame)
 			move.w	#$3600,gamePlanes2		; (+ the ember plane: the fireworks' colours)
 			move.w	#$3600,gamePlanes3		; + ember plane, see emberTop
 			move.w	#$4200,topPlanes		; game plane 4 above gameTop
@@ -7476,8 +7524,65 @@ logoColorsOrig:
 gameColor		= $0eee		; ship, shots and letters, same as colour 1 below
 
 ; copperlist
-clist:
-		dc.w	BPLCON0,$0200		; bitplanes off
+;--------------------------------------------------------------
+; the Elite ending's copper list (stars3d.i puts the copper over to it):
+; the stars in planes 1..3 (colours 1..7: dim, middle, bright, and the
+; engines' glow), the game's lines in plane 4 in front of them (8..15)
+; from the top of the window to the bottom - one buffer each, no tricks.
+; the logo is clist's own part: a jump there, and back here once it is
+; through (stars3d.i s3Activate patches clist right after logoEndWait).
+; the pointers: s3Flip (each frame), s3MidPatch (below the logo)
+ELC1			= $0125		; dim (warp.i warpCol1)
+ELC2			= $0371		; middle (warpCol2)
+ELC3			= $0a20		; the glow's rim
+ELC4			= $0842		; bright (warpCol3)
+ELC5			= $0f60		; the glow
+ELC6			= $0fb3
+ELC7			= $0ffe		; ... its core
+ELCOLS	macro
+		dc.w	$0182,ELC1,$0184,ELC2,$0186,ELC3,$0188,ELC4
+		dc.w	$018a,ELC5,$018c,ELC6,$018e,ELC7
+		endm
+		cnop	0,4
+clistElite::
+		dc.w	BPLCON0,$0200
+		dc.w	$0102,$0000,$0104,$0000,$0108,$0000,$010a,$0000
+		dc.w	DDFSTRT,$0028
+		dc.w	DDFSTOP,$00d8
+		dc.w	DIWSTRT,(fullTop<<8)+$81
+		dc.w	DIWSTOP,((screenBottom&$ff)<<8)+$c1
+elSpr::	dc.w	$120,0,$122,0,$124,0,$126,0
+		dc.w	$128,0,$12a,0,$12c,0,$12e,0
+		dc.w	$130,0,$132,0,$134,0,$136,0
+		dc.w	$138,0,$13a,0,$13c,0,$13e,0
+		dc.w	$0180,$0000
+elCol0::
+		ELCOLS
+		dc.w	$0190,gameColor,$0192,gameColor,$0194,gameColor,$0196,gameColor
+		dc.w	$0198,gameColor,$019a,gameColor,$019c,gameColor,$019e,gameColor
+		dc.w	((fullTop-1)<<8)+$01,$fffe
+elTop::	dc.w	$00e0,0,$00e2,0,$00e4,0,$00e6,0
+		dc.w	$00e8,0,$00ea,0,$00ec,0,$00ee,0
+		dc.w	BPLCON0,$4200
+		dc.w	$0084
+elJmpH::
+		dc.w	0
+		dc.w	$0086
+elJmpL::
+		dc.w	0
+		dc.w	$008a,$0000		; into clist for the logo
+eliteMid::							; ... and back: the star planes again
+		dc.w	$00e0,0,$00e2,0,$00e4,0,$00e6,0,$00e8,0,$00ea,0
+		dc.w	BPLCON0,$4200
+		dc.w	$0108,$0000
+elCol1::
+		ELCOLS
+		dc.w	$ffdf,$fffe
+		dc.w	((screenBottom&$ff)<<8)+$01,$fffe
+		dc.w	BPLCON0,$0200
+		dc.w	$ffff,$fffe
+
+clist:		dc.w	BPLCON0,$0200		; bitplanes off
 		dc.w	$0102,$0000		; no scroll delay. the bar sets its own per
 								; line, and when glitchFrame tears its last
 								; lines that would hang on into the logo
@@ -7546,15 +7651,25 @@ starColours::					; (warp.i fades these over to its ramp)
 		; would show the buffer that is being cleared and redrawn right now
 		; - the ship and letters flicker or vanish above gameTop. by line
 		; fullTop-1 clearScroller (the first thing in the frame) is done.
-		dc.w	$00ec,bufA>>16
+		dc.w	$00ec
+gamebpl4h:
+		dc.w	0				; (clearScroller)
 		dc.w	$00ee
 gamebpl4:
-		dc.w	bufA&$ffff
+		dc.w	0
 		dc.w	$0182,$0000	   ; black plane
-		dc.w	$00e0,$0006
-		dc.w	$00e2,$e000-li
-		dc.w	$00e8,$0006
-		dc.w	$00ea,$e000-li
+		dc.w	$00e0
+blankTop1h:
+		dc.w	0				; (the blank line: patchScreens)
+		dc.w	$00e2
+blankTop1l:
+		dc.w	0
+		dc.w	$00e8
+blankTop3h:
+		dc.w	0
+		dc.w	$00ea
+blankTop3l:
+		dc.w	0
 		dc.w	$00e4
 topZero2h:
 		dc.w	0
@@ -7568,7 +7683,7 @@ topPlanes:
 
 ; the logo start can be as high as fullTop itself, so this block must stay
 ; short enough to finish before DDFSTRT on that line.
-logoStartWait:
+logoStartWait::
  		dc.w	$4001,$fffe
         ; note: logo bp0 has to be set here as we have a empty bitplane 0
         ;       before the logo starts or else the sprites (stars) won't display
@@ -7616,14 +7731,22 @@ logoColors:
 	; dc.w	$0194,$0fff
 		blk.w	((2+(logo_color_count*2))*logo_area_height)-2,0
 
-logoEndWait:
+logoEndWait::
  		dc.w	$6c01,$fffe			; logo end wait
 		; same as above the logo: empty planes 1..3, game plane 4 runs on.
 		; eight moves, all done before the first fetch at DDFSTRT $28.
-		dc.w	$00e0,$0006
-		dc.w	$00e2,$e000-li
-		dc.w	$00e8,$0006
-		dc.w	$00ea,$e000-li
+		dc.w	$00e0
+blankMid1h:
+		dc.w	0
+		dc.w	$00e2
+blankMid1l:
+		dc.w	0
+		dc.w	$00e8
+blankMid3h:
+		dc.w	0
+		dc.w	$00ea
+blankMid3l:
+		dc.w	0
 		dc.w	$00e4
 midZero2h:
 		dc.w	0
@@ -7639,7 +7762,7 @@ midPlanes:
 		dc.w	BPLCON0,$1200	; 1 bitplanes on
 		dc.w	$00e0
 gamebp0h:
-		dc.w	$0007			; bitplane 0, patched to the blank line while
+		dc.w	0				; bitplane 0, patched to the blank line while
 							; the game has not started yet
 bp0:	dc.w	$00e2,$0000		;
 
@@ -7657,10 +7780,12 @@ gamePlaneMod:
 		; is set up here while plane 3 is still off, so it sits untouched
 		; until gamePlanes3 at $ef switches the plane on. emberbpl is
 		; flipped with bp0.
-		dc.w	$00e8,$0007
+		dc.w	$00e8
+emberbplh:
+		dc.w	0
 		dc.w	$00ea
 emberbpl:
-		dc.w	screenHeight*li
+		dc.w	0
 		dc.w	$0186,$0f93	; dot glowing out, orange (plane 1 + ember)
 		dc.w	$0184,$0a32	; dot glowing out, red (ember only)
 
@@ -7693,11 +7818,15 @@ gamePlanes2:
 		dc.w	$3600			; 2 bitplanes on	(dual playfield mode), patched
 							; to $1200 so the shadow plane is not fetched
 							; before the game starts
-		dc.w	$00e4,(scrollA+(li*(51+gameShift))-2)>>16	; bitplane 01
+		dc.w	$00e4
+shadowH:
+		dc.w	0				; bitplane 01 (patchScreens)
 		; dc.w	$00e6,(li*75)-2		; + lines offset to adjust shadow pos
 		; shifted with the rest of the buffer content so the shadow keeps
 		; reading the same lines it used to
-		dc.w	$00e6,(scrollA+(li*(51+gameShift))-2)&$ffff	; + lines offset to adjust shadow pos
+		dc.w	$00e6
+shadowL:
+		dc.w	0				; + lines offset to adjust shadow pos
 		dc.w	$0192,$0000	   ; shadow color
 
 		dc.w	$c501,$fffe
@@ -7904,8 +8033,12 @@ tvList:
 		dc.w	$0100
 tvPlanes2:
 		dc.w	$3600
-		dc.w	$00e4,(scrollA+(li*(51+gameShift))-2)>>16
-		dc.w	$00e6,(scrollA+(li*(51+gameShift))-2)&$ffff
+		dc.w	$00e4
+tvShadowH:
+		dc.w	0
+		dc.w	$00e6
+tvShadowL:
+		dc.w	0
 		dc.w	$0192,$0000
 		TV_COL
 		TV_LINE	$c5
@@ -8092,3 +8225,14 @@ logoFade:		incbin	"logo_fade.bin"		; see logoFadeLit / logoFadeLevels
 		section "scrollerchip",bss_c
 logoPadded:		ds.b	3*logo_height*li	; the logo at the game plane's width
 zeroArea:		ds.b	zeroLines*li		; plane 2 above and below the logo
+
+;--------------------------------------------------------------
+; the screens: the scroll text's source (with a blank line in front of it,
+; which the empty planes repeat) and the two game buffers, one after the
+; other as they were at $6e000-li, $6e000, $70000, $78000 - now in chip
+; memory the system has given us, so the program itself never lies there
+		section "screens",bss_c
+		ds.b	li					; the blank line
+src_adr::		ds.b	$2000
+bufA::			ds.b	$8000
+bufB::			ds.b	$8000
