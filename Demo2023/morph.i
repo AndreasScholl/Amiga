@@ -23,10 +23,11 @@
 ;           sag, the engine fires (the glow flares, the sound comes in, the
 ;           stars go into depth), a feint left - and hard round to the
 ;           right until it faces us, a little overshoot, then it sits
-;   PASS    we pick up speed and come up to it, it comes on slowly; its
-;           nose follows the camera as we go past on its right
+;   PASS    we pick up speed and come up to it, it comes on slowly; then it
+;           sees us: the afterburner, a dip, and hard up into a loop - we
+;           catch up with it as it climbs: out at the top over our heads
 ;   LOOP    it is behind us, flying a loop (unseen, heard)
-;   ENTRY   it comes up from the lower left corner, faster than we are,
+;   ENTRY   it comes down from the upper right corner, faster than we are,
 ;           and settles ahead of us; we speed up with it (top speed)
 ;   ESCORT  it drops its torpedoes (they fall, then their engines fire)
 ;           and flies ahead of us: the maneuvers of morphEscList
@@ -79,10 +80,26 @@ morphVzPass	= 20		; the stars at the end of it: this many times the start's
 morphClose0	= 16		; we gain on it (1/16 units a frame): at first ...
 morphClose1	= 62		; ... and at the end (it flies our way, a little slower)
 morphPassBehind = 150*16	; ... heard on until it is this far behind us
-morphDodgeZ	= 180		; units: this near, it dodges - a quick roll and a
-morphDodgeT	= 50		; ... jink (frames) to our left (units across,
-morphDodgeX	= -70		; down)
-morphDodgeY	= 24
+morphJkZ	= 780		; units: this near (on a beat) it sees us - two heavy
+morphJk1	= 3*morphBeat	; swerves: left (frames) ...
+morphJkL	= -60*16	; ... this far (1/16 units)
+morphLrX	= 30*16		; ... then right and down to here (1/16 units:
+morphLrY	= 20*16		; low on the right), where it waits
+morphJkT	= 8*morphBeat	; frames from the swerves to the afterburner
+morphJk2	= morphJkT-morphBeat	; (the swerve right: frames)
+morphEvA	= 2*morphBeat	; (simEvade) frames it takes to get faster than we
+morphEvB	= 24		; are, by this (1/16 units a frame)
+morphEvD	= 32		; frames: then the dip, the nose down to
+morphEvDip	= -5*16		; ... this (1/16 degrees)
+morphEvG	= 48		; frames: then up, the turn building up to
+morphEvW	= 40		; ... this (1/16 degrees a frame: 2.5)
+morphEvLean	= 40*16		; the loop leans over to the left this far (1/16
+						; degrees: rolling into it from the dip on)
+morphEvThMax = 200*16	; (the nose no further round: it is gone by then)
+morphEvLoss	= 179		; going up it loses (1/512 units a frame, a frame:
+						; heavy - a loop costs speed)
+morphFlyMin	= 2*4096	; (simFly) its way ahead never slower than this
+						; (1/4096 units a frame): its nose stays ahead
 ; --- the loop and the attack run
 morphLoopT	= 144		; frames it is behind us, at least (then: on a beat)
 morphVzLoop	= 6			; ... we ease off to this speed meanwhile,
@@ -109,20 +126,26 @@ morphNear	= 25*16		; nearer than this it is past us: not drawn
 morphClipZ	= 240		; a point nearer the eye than this (1/16): not drawn
 ; --- the torpedoes
 morphTorpN	= 3			; torpedoes
-morphTorpGap = morphBeat	; frames from one drop to the next (on the beat)
+morphTorpGap = 3*morphBeat/2	; frames from one drop to the next (on the grid)
 morphTorpBelow = 8*16	; dropped this far below the ship's middle
-morphTorpDropT = morphBeat	; frames they fall before their engines fire
-morphTorpDropV = 115	; ... falling (1/256 units a frame)
+morphTorpDropT0 = morphBeat	; frames they fall at least before their engines fire
+morphTorpDropV = 77		; ... falling (1/256 units a frame) ...
+morphTorpDropG = 8		; ... faster and faster (a frame)
+morphTorpDropT1 = 2*morphBeat	; ... at most (else: once this far from the ship -
+morphTorpFireD = 45		; |dx| + |dy| + |dz|, units: it maneuvers)
 morphTorpAcc = 6		; then they speed up (1/256 units a frame, a frame)
 morphTorpHitAge = 31*morphBeat	; frames from the drop to the hit (14.9 s)
 morphTorpR	= 8*16		; their size (radius, 1/16 units)
 morphTorpHissT = 40		; frames their hiss is heard after the whoosh
+MSPR_LEN	= 4+15*4+4	; (morphTorpSpr) a sprite: control, 15 rows, the end
 ; --- the flight
 morphKV		= 11		; our speed (1/16 units a frame) = the stars' (8.8) * this
 						; >> 8: 7 units a frame at top speed
 morphVzMax	= 10		; the stars at top speed: this many times the start's
-morphSpK	= 1			; the spring its place follows: pull, damping (1/256) -
-morphSpD	= 20		; heavy: it takes its time, overshoots a little, sits
+morphSpK	= 4			; the spring its place follows: pull, damping (1/1024) -
+morphSpD	= 80		; heavy: it takes its time, overshoots a little, sits
+morphSpK2	= 3			; ... from the pass on heavier still (as damped)
+morphSpD2	= 70
 morphTurnK	= 4			; (MV_TURNTO) the heading's spring
 morphTurnD	= 42
 morphTurnBank = 5		; ... its bank by the turn's speed
@@ -320,11 +343,14 @@ morphCache:		ds.b	2*morphNE*line_entry
 morphPMask:		dc.w	0		; the faces seen
 morphPGP:		dc.w	0		; the glow: radius (px) << 8 | thrust
 morphPTorpN:	dc.w	0		; torpedoes
+morphSprB:		dc.b	0		; (morphTorpSpr) the sprite buffer built now
+				even
 morphPXY:		ds.w	2*morphNP	; the points
 morphPTorps:	ds.b	8*morphTorpN	; x, y, radius, flags, flare x, flare y
 TF_BURN		= 0			; (flags) its engine burns: it glows
 TF_FLARE	= 1			; ... its flare is shown
 TF_DOT		= 2			; ... far: a dot
+TF_FLASH	= 3			; ... its engine fires this frame: a flash
 
 ; --- the turn and the points: the live ship's (the unfolding, the hold)
 ;     and the sim's both - swapped (morphSwap) while both are about
@@ -367,6 +393,9 @@ tp_kx:			rs.w	1
 tp_ky:			rs.w	1
 tp_ax:			rs.w	1
 tp_ay:			rs.w	1
+tp_fv:			rs.w	1		; its fall (1/256 units a frame), dying away once
+						; it burns
+tp_burn:		rs.w	1		; frames its engine has burnt (0: falling still)
 tp_len:			rs.b	0
 morphTorps:		ds.b	morphTorpN*tp_len
 morphTorpNext:	dc.w	0		; the next one to go
@@ -1007,24 +1036,183 @@ morphGlowSize:
 		bls.s	.o
 		moveq	#4,d2
 .o:		rts
-; a plasma ball's glow: d0 = its radius, d3/d4 its middle - its hot core,
-; at most R 4 (the frame's time: three of them). keeps all
-morphBallGlow:
-		movem.l	d0-d2,-(a7)
-		addq.w	#1,d0
-		bsr.s	morphGlowSize
-		cmp.w	#2,d2
-		bls.s	.s
-		moveq	#2,d2
-.s:		move.w	d3,d0
-		move.w	d4,d1
-		jsr		s3Glow
-		movem.l	(a7)+,d0-d2
+; the torpedoes' glows: sprites 0, 2 and 4, in front of everything - so
+; they show over the logo too, where the star planes do not (stars3d.i
+; s3Glow). round blobs, rim, middle, core (morphSprMake), a bigger one the
+; frame its engine fires. double buffered: built now, the copper takes the
+; pointers (clistElite elSpr) at the top of the next frame. keeps all
+morphTorpSpr:
+		movem.l	d0-d7/a0-a4,-(a7)
+		not.b	morphSprB
+		lea		morphSprBuf,a2
+		tst.b	morphSprB
+		beq.s	.b0
+		lea		3*MSPR_LEN(a2),a2
+.b0:	lea		elSpr,a3
+		lea		morphPTorps,a4
+		moveq	#0,d7
+.t:		cmp.w	morphPTorpN,d7
+		bhs		.null
+		btst	#TF_BURN,5(a4)
+		beq		.null
+		moveq	#0,d0				; its size: inside its diamond (in front
+		move.b	4(a4),d0			; of it: the lines show round it), R 3
+		subq.w	#1,d0				; at least (far: a spark); the flash
+		btst	#TF_FLASH,5(a4)		; bigger than the diamond
+		beq.s	.s0
+		addq.w	#4,d0
+.s0:	cmp.w	#3,d0
+		bge.s	.s
+		moveq	#3,d0
+.s:		bsr		morphGlowSize		; d2 = 0..4
+		move.w	d2,.sz
+		lea		morphSprR,a0		; R
+		moveq	#0,d3
+		move.b	(a0,d2.w),d3
+		move.w	(a4),d0				; HSTART: its left (x - 7) + 96
+		add.w	#96-7,d0
+		bmi		.null
+		cmp.w	#$1c0,d0
+		bhs		.null
+		move.w	2(a4),d1			; its top row (game plane y)
+		sub.w	d3,d1
+		moveq	#0,d4				; (rows cut off at the top)
+		tst.w	d1
+		bpl.s	.y0
+		move.w	d1,d4
+		neg.w	d4
+		moveq	#0,d1
+.y0:	move.w	d3,d5				; rows: 2R+1, less those
+		add.w	d5,d5
+		addq.w	#1,d5
+		sub.w	d4,d5
+		ble		.null
+		move.w	d1,d6				; (and those below the plane)
+		add.w	d5,d6
+		cmp.w	#game_height,d6
+		bls.s	.y1
+		move.w	#game_height,d5
+		sub.w	d1,d5
+		ble		.null
+.y1:	add.w	#$20,d1			; VSTART, VSTOP
+		move.w	d1,d6
+		add.w	d5,d6
+		move.w	d1,d3				; the control words
+		lsl.w	#8,d3
+		move.w	d0,d2
+		lsr.w	#1,d2
+		move.b	d2,d3
+		move.w	d3,(a2)
+		move.w	d6,d3
+		lsl.w	#8,d3
+		btst	#8,d1
+		beq.s	.c0
+		bset	#2,d3
+.c0:	btst	#8,d6
+		beq.s	.c1
+		bset	#1,d3
+.c1:	btst	#0,d0
+		beq.s	.c2
+		bset	#0,d3
+.c2:	move.w	d3,2(a2)
+		move.w	.sz(pc),d2			; its rows
+		add.w	d2,d2
+		lea		morphSprOff,a0
+		move.w	(a0,d2.w),d2
+		lea		morphSprImg,a0
+		add.w	d2,a0
+		lsl.w	#2,d4
+		add.w	d4,a0
+		lea		4(a2),a1
+		subq.w	#1,d5
+.r:		move.l	(a0)+,(a1)+
+		dbf		d5,.r
+		clr.l	(a1)
+		move.l	a2,d0
+		bra.s	.ptr
+.null:	move.l	#s3Null,d0
+.ptr:	move.w	d0,6(a3)
+		swap	d0
+		move.w	d0,2(a3)
+		lea		16(a3),a3			; (sprites 0, 2, 4)
+		lea		MSPR_LEN(a2),a2
+		addq.l	#8,a4
+		addq.w	#1,d7
+		cmp.w	#3,d7
+		blo		.t
+		movem.l	(a7)+,d0-d7/a0-a4
 		rts
+.sz:	dc.w	0
+morphSprR:	dc.b	2,3,4,6,7		; the glows' R (px; s3GlR, the last 7: a
+		even						; sprite is 16 wide)
+morphSprOff: dc.w	0,5*4,(5+7)*4,(5+7+9)*4,(5+7+9+13)*4
+
+; once (morphInit): the glows' rows for the sprites - rim, middle, core
+; (colours 1, 2, 3: plane A, B, both) by the distance from the middle
+morphSprMake:
+		movem.l	d0-d7/a0-a1,-(a7)
+		lea		morphSprImg,a0
+		lea		morphSprR(pc),a1
+		moveq	#5-1,d7
+.sz:	moveq	#0,d6
+		move.b	(a1)+,d6			; R
+		move.w	d6,d5
+		mulu	d5,d5				; R^2: the bounds (* 100) of the core,
+		move.l	d5,d0				; the middle, the rim (R^2 + R/2: rounder)
+		mulu	#16,d0
+		move.l	d0,.thC
+		move.l	d5,d0
+		mulu	#49,d0
+		move.l	d0,.thM
+		mulu	#100,d5
+		move.w	d6,d0
+		mulu	#50,d0
+		add.l	d0,d5
+		move.l	d5,.thR
+		move.w	d6,d4
+		neg.w	d4					; dy
+.row:	moveq	#0,d0				; plane A, B
+		moveq	#0,d1
+		moveq	#-7,d3				; dx
+.px:	add.l	d0,d0				; (the next pixel)
+		add.l	d1,d1
+		move.w	d3,d2
+		muls	d2,d2
+		move.w	d4,d5
+		muls	d5,d5
+		add.l	d5,d2
+		mulu	#100,d2				; d^2 * 100
+		cmp.l	.thC(pc),d2
+		bhi.s	.p1
+		addq.l	#1,d0				; core: 3
+		addq.l	#1,d1
+		bra.s	.pn
+.p1:	cmp.l	.thM(pc),d2
+		bhi.s	.p2
+		addq.l	#1,d1				; middle: 2
+		bra.s	.pn
+.p2:	cmp.l	.thR(pc),d2
+		bhi.s	.pn
+		addq.l	#1,d0				; rim: 1
+.pn:	addq.w	#1,d3
+		cmp.w	#9,d3
+		blt.s	.px
+		move.w	d0,(a0)+
+		move.w	d1,(a0)+
+		addq.w	#1,d4
+		cmp.w	d6,d4
+		ble.s	.row
+		dbf		d7,.sz
+		movem.l	(a7)+,d0-d7/a0-a1
+		rts
+.thC:	dc.l	0
+.thM:	dc.l	0
+.thR:	dc.l	0
 ; the torpedoes into the draw table: a plasma ball - a diamond that
 ; twinkles, its size by its distance - then a spark, then a dot; and its
 ; engine's flare behind it once it burns
 morphPTorpDraw:
+		bsr		morphTorpSpr
 		move.w	morphPTorpN,d7
 		subq.w	#1,d7
 		bmi.s	.out
@@ -1039,8 +1227,7 @@ morphPTorpDraw:
 		move.w	d4,d1
 		jsr		set_point
 		bra.s	.nx
-.ball:	movem.w	d3/d4,-(a7)
-		bsr		morphBallGlow		; (the plasma: its glow in the star planes)
+.ball:	movem.w	d3/d4,-(a7)			; (its glow: a sprite, morphTorpSpr)
 		cmp.w	#4,d0
 		bhs.s	.dia
 		bsr		.cross				; (small: a cross, two lines)
@@ -1593,6 +1780,7 @@ morphLine:
 ; of a unit apart (4.12) - no division a point once the ship is unfolded
 morphInit:
 		jsr		s3Init				; (stars3d.i: its tables)
+		bsr		morphSprMake		; (the torpedoes' glows)
 		lea		morphRcp,a0
 		moveq	#0,d1
 .r:		move.w	d1,d2
@@ -1692,7 +1880,17 @@ simFishH:		dc.w	0
 simThrust:		dc.w	0		; 0..256
 simThrT:		dc.w	0		; ... where it goes
 simJit:			dc.w	0		; (the pilot) frames till the next correction
-simDodgeT:		dc.w	0		; (the pass) frames into its dodge
+simDodgeT:		dc.w	0		; (the pass) frames into its evade, + 1
+simEvV:			dc.w	0		; ... its speed in the world (1/256 units a frame)
+simEvTh:		dc.w	0		; ... its nose (1/16 degrees: 0 ahead, 90 up)
+simEvG:			dc.w	0		; ... its way (following the nose)
+simEvB:			dc.w	0		; ... its loop's lean (1/16 degrees, + left)
+simEvH:			dc.w	0		; ... its heading, roll in the loop (simEvPose)
+simEvR:			dc.w	0
+simEvHr:		dc.w	0		; ... what it had of a heading (dying away)
+simJkT:			dc.w	0		; (the pass) frames into its swerves, + 1
+simSpK:			dc.w	morphSpK	; the spring its place follows (simSpringP)
+simSpD:			dc.w	morphSpD
 simJX:			dc.w	0		; ... its offset (1/16 units)
 simJY:			dc.w	0
 simRnd:			dc.l	$2545f491	; its own random numbers: the same flight always
@@ -1770,6 +1968,9 @@ morphSimInit::
 		clr.w	simThrT
 		clr.w	simJit
 		clr.w	simDodgeT
+		clr.w	simJkT
+		move.w	#morphSpK,simSpK
+		move.w	#morphSpD,simSpD
 		clr.w	simJX
 		clr.w	simJY
 		move.l	#$2545f491,simRnd
@@ -2115,6 +2316,8 @@ simPass:
 		tst.w	simPT
 		bne.s	.p
 		st		simFlyNew			; (the nose along its way from here)
+		move.w	#morphSpK2,simSpK	; (heavier from here on)
+		move.w	#morphSpD2,simSpD
 .p:		; the stars faster and faster (u^3): we fly
 		move.w	simPT,d0
 		move.w	#morphPassT,d1
@@ -2135,49 +2338,89 @@ simPass:
 		mulu	#morphClose1-morphClose0,d1
 		lsr.l	#8,d1
 		add.w	d1,d0
+		tst.w	simDodgeT			; (in its evade: its own way)
+		beq.s	.c0
+		bsr		simEvade
+		bra.s	.c9
+.c0:	move.w	d0,d5
 		asl.l	#8,d0
 		sub.l	d0,simZ
 		move.w	#128,simThrT
-		; as we come near: its dodge - a quick roll and a jink to the side
-		moveq	#0,d5
-		cmp.l	#(morphDodgeZ*16)<<8,simZ
-		bgt.s	.nd
-		move.w	simDodgeT,d0
-		cmp.w	#morphDodgeT,d0
-		bhs.s	.nd1
-		addq.w	#1,simDodgeT
-		move.w	#256,simThrT		; (it howls)
-.nd1:	move.w	simDodgeT,d0
-		move.w	#morphDodgeT,d1
-		bsr		morphUnit
-		move.w	d1,d5
-.nd:	move.w	d5,simA0
-		move.w	#360*16,d0			; (the dodge's roll, left)
-		mulu	d5,d0
-		lsr.l	#8,d0
-		move.w	d0,simMR
-		; across and up/down: a correction now and then, the jink
+		; on a beat, coming near: it sees us ("I'm being followed") - two
+		; heavy swerves, left, then right and down: there it waits, low on
+		; the right; six beats on (a beat): the afterburner (from the next
+		; frame on: simEvade)
+		moveq	#0,d0
+		move.w	simT,d0
+		addq.w	#1,d0				; (the next frame)
+		divu	#morphBeat,d0
+		swap	d0					; (0: on a beat)
+		move.w	simJkT,d1
+		bne.s	.j1
+		tst.w	d0
+		bne.s	.ne
+		cmp.l	#(morphJkZ*16)<<8,simZ
+		bgt.s	.ne
+		move.w	#1,simJkT			; (the swerves from the next frame on)
+		bra.s	.ne
+.j1:	addq.w	#1,simJkT
+		cmp.w	#morphJkT,d1
+		blo.s	.ne
+		tst.w	d0
+		bne.s	.ne
+		neg.w	d5
+		move.w	d5,simEvV			; (coming nearer: its speed from us < 0)
+		move.w	#1,simDodgeT
+.ne:	; across and up/down: where it is held (the swerves), a correction
+		; now and then
 		bsr		simJitter
-		move.w	#morphDodgeX*16,d0
-		muls	simA0,d0
-		asr.l	#8,d0
-		add.w	simX0,d0
+		move.w	simX0,d0
+		move.w	simY0,d1
+		move.w	simJkT,d2
+		beq.s	.h
+		subq.w	#2,d2				; (frames in)
+		cmp.w	#morphJk1,d2
+		bhs.s	.h1
+		move.w	d2,d0				; left (eased) ...
+		move.w	#morphJk1,d1
+		bsr		simSmooth
+		move.w	simX0,d2
+		move.w	d2,d3
+		add.w	#morphJkL,d3
+		bsr		simLerpF
+		move.w	d2,d0
+		move.w	simY0,d1
+		bra.s	.h
+.h1:	sub.w	#morphJk1,d2		; ... then right, and down (eased)
+		move.w	d2,d0
+		move.w	#morphJk2-morphJk1,d1
+		bsr		simSmooth
+		move.w	d0,-(a7)
+		move.w	simX0,d2
+		add.w	#morphJkL,d2
+		move.w	#morphLrX,d3
+		bsr		simLerpF
+		move.w	(a7)+,d0
+		move.w	d2,-(a7)
+		move.w	simY0,d2
+		move.w	#morphLrY,d3
+		bsr		simLerpF
+		move.w	d2,d1
+		move.w	(a7)+,d0
+.h:		move.w	d1,-(a7)
 		add.w	simJX,d0
 		ext.l	d0
 		asl.l	#8,d0
 		lea		simX,a1
 		bsr		simSpringP
-		move.w	#morphDodgeY*16,d0
-		muls	simA0,d0
-		asr.l	#8,d0
-		add.w	simY0,d0
+		move.w	(a7)+,d0
 		add.w	simJY,d0
 		ext.l	d0
 		asl.l	#8,d0
 		lea		simY,a1
 		bsr		simSpringP
 		st		simFlyOn			; the nose along its way, banked into turns
-		tst.b	simGone
+.c9:	tst.b	simGone
 		bne.s	.gone
 		rts
 .gone:	; past us: on behind us (heard), then its loop
@@ -2186,6 +2429,268 @@ simPass:
 		move.w	#SP_LOOP,simPhase
 		move.w	#-1,simPT
 .out:	rts
+
+; --- the evade (the pass, simDodgeT from 1 on): it has seen us, and we
+;     cannot turn - we rush on straight ahead. a fighter's loop, in the
+;     world: the afterburner (a boom), a little faster than we are; a dip
+;     (it gathers speed, its way follows the nose late); then it pulls up,
+;     the turn building up slowly (the G), rolling left into it - the loop
+;     leans over to the upper left; going up it loses speed. less and less
+;     of its speed goes ahead: we catch up with it - it sweeps from low on
+;     the right up across the screen, bigger and bigger, and out at the top
+;     left close by us, its nose up, still in its loop (the rest unseen: the
+;     loop). its speed in the world simEvV, its nose simEvTh in the loop
+;     (0 ahead, 90 up), its way simEvG, the loop's lean simEvB
+simEvade:
+		move.w	simDodgeT,d7
+		subq.w	#1,d7				; frames into it
+		addq.w	#1,simDodgeT
+		tst.w	d7
+		bne.s	.e0
+		or.w	#1<<RB_BOOM,simEv
+		move.w	#256,simThrust
+		move.w	simEvV,d0			; (from us: its speed in the world, 1/256)
+		add.w	simVc,d0
+		lsl.w	#4,d0
+		move.w	d0,simA1
+		clr.w	simEvTh
+		clr.w	simEvG
+		clr.w	simEvB
+		move.w	simHead,simEvHr		; (what it had of a heading: dies away)
+.e0:	move.w	#256,simThrT		; (it howls)
+		cmp.w	#morphEvA,d7
+		bhs.s	.e1
+		move.w	d7,d0				; the afterburner: a little faster than
+		move.w	#morphEvA,d1		; we are
+		bsr		simSmooth
+		move.w	simA1,d2
+		move.w	simVc,d3
+		add.w	#morphEvB,d3
+		lsl.w	#4,d3
+		bsr		simLerpF
+		move.w	d2,simEvV
+		bra		.go
+.e1:	sub.w	#morphEvA,d7
+		move.w	d7,d0				; the lean: rolling into it, from the dip
+		move.w	#morphEvD+morphEvG,d1	; on
+		bsr		simSmooth
+		mulu	#morphEvLean,d0
+		lsr.l	#8,d0
+		lsr.l	#4,d0
+		move.w	d0,simEvB
+		cmp.w	#morphEvD,d7
+		bhs.s	.e2
+		move.w	d7,d0				; the dip: the nose down, slowly
+		move.w	#morphEvD,d1
+		bsr		simSmooth
+		moveq	#0,d2
+		move.w	#morphEvDip,d3
+		bsr		simLerpF
+		move.w	d2,simEvTh
+		bra.s	.go
+.e2:	sub.w	#morphEvD,d7		; up: the turn builds up, slowly
+		move.w	d7,d0
+		move.w	#morphEvG,d1
+		bsr		simSmooth
+		mulu	#morphEvW,d0
+		lsr.l	#8,d0
+		lsr.l	#4,d0
+		add.w	simEvTh,d0
+		cmp.w	#morphEvThMax,d0
+		ble.s	.e3
+		move.w	#morphEvThMax,d0
+.e3:	move.w	d0,simEvTh
+		bsr		morphSinCos16		; going up it loses speed
+		tst.w	d0
+		ble.s	.go
+		muls	#morphEvLoss,d0
+		swap	d0
+		sub.w	d0,simEvV
+.go:	move.w	simEvTh,d0			; its way follows the nose, late
+		sub.w	simEvG,d0
+		asr.w	#2,d0
+		add.w	d0,simEvG
+		move.w	simEvB,d0			; the lean: sin, cos (d4, d5)
+		bsr		morphSinCos16
+		move.w	d0,d4
+		move.w	d1,d5
+		move.w	simEvG,d0			; its way this frame, in the world, less
+		bsr		morphSinCos16		; ours: ahead S cos - us; S sin up,
+		move.w	simEvV,d2			; leaning over to the left
+		muls	d2,d1
+		asr.l	#8,d1
+		asr.l	#3,d1				; (1/256 units * Q15 -> 1/4096)
+		moveq	#0,d3
+		move.w	simVc,d3
+		lsl.l	#8,d3
+		sub.l	d3,d1
+		add.l	d1,simZ
+		muls	d2,d0				; S sin (1/256 units)
+		add.l	d0,d0
+		swap	d0
+		move.w	d0,d1
+		muls	d5,d0				; up: * cos lean
+		asr.l	#8,d0
+		asr.l	#3,d0
+		sub.l	d0,simY
+		muls	d4,d1				; left: * sin lean
+		asr.l	#8,d1
+		asr.l	#3,d1
+		sub.l	d1,simX
+		bsr		simEvPose			; the nose, the top to the loop's middle
+		move.w	simEvHr,d0			; what it had of a heading and a bank
+		asr.w	#3,d0				; dies away
+		sub.w	d0,simEvHr
+		move.w	simBank,d0
+		asr.w	#3,d0
+		sub.w	d0,simBank
+		move.w	simEvH,d0
+		add.w	simEvHr,d0
+		move.w	d0,simHead
+		move.w	simEvR,d0
+		sub.w	simBank,d0
+		move.w	d0,simRoll
+		rts
+
+; the nose (simEvTh, in the loop) and the loop's lean (simEvB) as the
+; pose's heading, tilt and roll (as morphPoseW turns: the roll about its
+; length, then the tilt, then the heading). the nose n = (-sl st, cl st,
+; ct) (right, up, ahead), its top u = (-sl ct, cl ct, -st) (towards the
+; loop's middle) -> simEvH, simTilt, simEvR
+simEvPose:
+		move.w	simEvB,d0
+		bsr		morphSinCos16
+		move.w	d0,evSL
+		move.w	d1,evCL
+		move.w	simEvTh,d0
+		bsr		morphSinCos16
+		move.w	d0,evST
+		move.w	d1,evCT
+		move.w	evSL,d2				; n across
+		muls	evST,d2
+		add.l	d2,d2
+		swap	d2
+		neg.w	d2
+		move.w	d2,evNX
+		move.w	evCL,d2				; ... up
+		muls	evST,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,evNU
+		move.w	evNX,d0				; the heading: atan2(across, ahead)
+		move.w	evCT,d1
+		bsr		morphAtan2
+		move.w	d0,simEvH
+		bsr		morphSinCos16
+		move.w	d0,evSH
+		move.w	d1,evCH
+		move.w	evNX,d2				; the tilt: atan2(up, along the ground)
+		muls	evSH,d2
+		move.w	evCT,d3
+		muls	evCH,d3
+		add.l	d3,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	evNU,d0
+		move.w	d2,d1
+		bsr		morphAtan2
+		move.w	d0,simTilt
+		bsr		morphSinCos16
+		move.w	d0,evS2
+		move.w	d1,evC2
+		move.w	evSL,d2				; u across: -sl ct
+		muls	evCT,d2
+		add.l	d2,d2
+		swap	d2
+		neg.w	d2
+		move.w	d2,d4
+		muls	evCH,d2				; x1 = ux ch - uz sh = ux ch + st sh
+		move.w	evST,d3
+		muls	evSH,d3
+		add.l	d3,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,evX1
+		muls	evSH,d4				; z1 = ux sh + uz ch = ux sh - st ch
+		move.w	evST,d3
+		muls	evCH,d3
+		sub.l	d3,d4
+		add.l	d4,d4
+		swap	d4
+		move.w	evCL,d2				; uy = cl ct
+		muls	evCT,d2
+		add.l	d2,d2
+		swap	d2
+		muls	evC2,d2				; y2 = uy c2 - z1 s2
+		muls	evS2,d4
+		sub.l	d4,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,d1
+		move.w	evX1,d0				; the roll: atan2(-x2, y2) (+: its left
+		neg.w	d0					; wing down)
+		bsr		morphAtan2
+		move.w	d0,simEvR
+		rts
+evSL:	dc.w	0
+evCL:	dc.w	0
+evST:	dc.w	0
+evCT:	dc.w	0
+evNX:	dc.w	0
+evNU:	dc.w	0
+evSH:	dc.w	0
+evCH:	dc.w	0
+evS2:	dc.w	0
+evC2:	dc.w	0
+evX1:	dc.w	0
+
+; d0 = frames in, d1 = frames -> d0 = the smoothstep of (d0+1)/d1, fine:
+; 0..4096 (clamped). uses d1
+simSmooth:
+		bsr.s	simUQ
+; d0 = u (0..4096, clamped) -> d0 = its smoothstep (0..4096). uses d1
+simSS:
+		cmp.w	#4096,d0
+		blo.s	.s0
+		move.w	#4096,d0
+		rts
+.s0:	move.w	d0,d1
+		mulu	d1,d1
+		lsr.l	#8,d1
+		lsr.l	#4,d1				; u^2
+		add.w	d0,d0
+		neg.w	d0
+		add.w	#3*4096,d0			; 3 - 2u
+		mulu	d1,d0
+		lsr.l	#8,d0
+		lsr.l	#4,d0
+		rts
+
+; d0 = frames in, d1 = frames -> d0 = (d0+1)/d1, 0..4096 (clamped)
+simUQ:
+		addq.w	#1,d0
+		cmp.w	d1,d0
+		blo.s	.u0
+		move.w	#4096,d0
+		rts
+.u0:	tst.w	d0
+		bgt.s	.u1
+		moveq	#0,d0
+		rts
+.u1:	ext.l	d0
+		lsl.l	#8,d0
+		lsl.l	#4,d0
+		divu	d1,d0
+		rts
+
+; d2 = from, d3 = to, d0 = 0..4096 -> d2
+simLerpF:
+		sub.w	d2,d3
+		muls	d0,d3
+		asr.l	#8,d3
+		asr.l	#4,d3
+		add.w	d3,d2
+		rts
 
 ; --- the loop: unseen; we ease off. on a beat: the attack
 simLoop:
@@ -2224,7 +2729,8 @@ simLoop:
 		move.w	#-90*16,simYaw
 .out:	rts
 
-; --- the entry: up from the lower left corner, faster than we are,
+; --- the entry: down from the upper right corner (out of its loop),
+;     faster than we are,
 ;     slowing down to our speed ahead of us; we speed up with it
 simEntry:
 		move.w	simPT,d0
@@ -2339,11 +2845,11 @@ simBreak:
 		move.w	simRoll,simA1
 		move.w	simTilt,simA2
 .b:		move.w	simPT,d0
-		addq.w	#1,d0
 		move.w	#morphBreakT,d1
-		bsr		morphUnit			; d0 u 0..256
+		bsr		simUQ				; d0 u 0..4096 (fine)
 		move.w	d0,d6
-		move.w	d1,d5				; (eased in and out)
+		bsr		simSS
+		move.w	d0,d5				; (eased in and out)
 		move.w	simA0,d2			; the nose round
 		move.w	#morphBreakA*16,d3
 		bsr		simLerp
@@ -2392,18 +2898,20 @@ simBreak:
 		sub.l	d0,simVZ
 		; banked hard over to the right at once, then less as it comes round
 		move.w	(a7)+,d0			; (u)
-		cmp.w	#86,d0
+		cmp.w	#86*16,d0
 		bhs.s	.r1
 		mulu	#3,d0
-		move.w	#256,d1
-		bsr.s	morphUnit2
+		bsr		simSS
+		move.w	d0,d5
 		move.w	simA1,d2
 		move.w	#-morphBreakRoll*16,d3
 		bsr		simLerp
 		bra.s	.r2
-.r1:	sub.w	#86,d0
-		move.w	#256-86,d1
-		bsr.s	morphUnit2
+.r1:	sub.w	#86*16,d0
+		mulu	#4096,d0
+		divu	#4096-86*16,d0
+		bsr		simSS
+		move.w	d0,d5
 		move.w	#-morphBreakRoll*16,d2
 		move.w	#-morphBreakOut*16,d3
 		bsr		simLerp
@@ -2414,11 +2922,6 @@ simBreak:
 		move.w	#SP_WAIT,simPhase
 		move.w	#-1,simPT
 .out:	rts
-; d0 of d1 -> d5 = its smoothstep (0..256)
-morphUnit2:
-		bsr		morphUnit
-		move.w	d1,d5
-		rts
 
 ; --- gone past us: on behind us (heard) till the torpedoes are there
 simWait:
@@ -2475,24 +2978,27 @@ simTargets:
 		bra		simSpringP
 
 ; a1 = a spring (place, speed: longs, 1/4096 units), d0.l = where it is
-; pulled: one frame of it (morphSpK, morphSpD)
+; pulled: one frame of it (simSpK, simSpD: 1/1024)
 simSpringP:
-		moveq	#morphSpK,d2
-		moveq	#morphSpD,d3
+		move.w	simSpK,d2
+		move.w	simSpD,d3
 		move.l	d0,d1
+		moveq	#4,d4
+		bra.s	simSpr
 ; (d1 = where, d2 = pull, d3 = damping, both 1/256)
 simSpring:
-		sub.l	(a1),d1				; off by
+		moveq	#2,d4
+simSpr:	sub.l	(a1),d1				; off by
 		asr.l	#6,d1
 		bsr.s	.clamp
 		muls	d2,d1
-		asr.l	#2,d1
+		asr.l	d4,d1
 		move.l	4(a1),d0
 		asr.l	#6,d0
 		exg		d0,d1
 		bsr.s	.clamp
 		muls	d3,d1
-		asr.l	#2,d1
+		asr.l	d4,d1
 		sub.l	d1,d0				; the push this frame
 		add.l	d0,4(a1)
 		move.l	4(a1),d0
@@ -2506,11 +3012,12 @@ simSpring:
 		move.l	#-32767,d1
 .c1:	rts
 
-; d2 = from, d3 = to, d5 = 0..256 -> d2
+; d2 = from, d3 = to, d5 = 0..4096 -> d2
 simLerp:
 		sub.w	d2,d3
 		muls	d5,d3
 		asr.l	#8,d3
+		asr.l	#4,d3
 		add.w	d3,d2
 		rts
 
@@ -2572,7 +3079,10 @@ simFly:
 		move.w	simVc,d2
 		asl.l	#8,d2
 		add.l	d2,d1				; ahead, in the world
-		asr.l	#2,d1
+		cmp.l	#morphFlyMin,d1		; (never a crawl: else as it hangs still
+		bge.s	.fm					; in the world its nose would swing round
+		move.l	#morphFlyMin,d1		; to any small way it has)
+.fm:	asr.l	#2,d1
 		move.l	d1,-(a7)
 		bsr		morphAtan2L
 		add.w	simMH,d0
@@ -2607,7 +3117,8 @@ simFly:
 		bge.s	.b4
 		move.w	#-morphBankMax,d0
 .b4:	sub.w	simBank,d0			; (slowly: a heavy ship)
-		asr.w	#4,d0
+		muls	#3,d0
+		asr.l	#6,d0
 		add.w	d0,simBank
 		; the bank (right: - , the right wing down) and the block's own
 		move.w	simMR,d0
@@ -2655,12 +3166,11 @@ simBlock:
 		dc.w	mvKnife-.tab,mvHold-.tab,mvVRoll-.tab,mvSalute-.tab
 		dc.w	mvMove-.tab,mvClimb-.tab,mvWeave-.tab
 
-; d0 = frames in, d1 = frames -> d5 = the smoothstep of (d0+1)/d1. keeps
-; d0/d1
+; d0 = frames in, d1 = frames -> d5 = the smoothstep of (d0+1)/d1 (0..4096,
+; fine: no steps from a table). keeps d0/d1
 simU:	movem.w	d0/d1,-(a7)
-		addq.w	#1,d0
-		bsr		morphUnit
-		move.w	d1,d5
+		bsr		simSmooth
+		move.w	d0,d5
 		movem.w	(a7)+,d0/d1
 		rts
 
@@ -2855,7 +3365,8 @@ mvBarrel:
 		bsr		simU
 		move.w	d5,d0
 		mulu	#360*16,d0
-		lsr.l	#8,d0				; the roll so far
+		lsr.l	#8,d0
+		lsr.l	#4,d0				; the roll so far
 		move.w	d0,d4
 		muls	6(a2),d4
 		neg.w	d4					; (p2 1: right - right wing down first)
@@ -2922,9 +3433,10 @@ mvKnife:
 		move.w	d2,d3
 .k2:	movem.w	d0/d1,-(a7)
 		move.w	d3,d0
+		subq.w	#1,d0
 		move.w	d2,d1
-		bsr		morphUnit
-		move.w	d1,d5
+		bsr		simSmooth
+		move.w	d0,d5
 		movem.w	(a7)+,d0/d1
 		move.w	4(a2),d3
 		lsl.w	#4,d3
@@ -2948,6 +3460,7 @@ mvVRoll:
 		move.w	d5,d0
 		mulu	#360*16,d0
 		lsr.l	#8,d0
+		lsr.l	#4,d0
 		muls	6(a2),d0
 		neg.w	d0
 		move.w	d0,simMR
@@ -2961,7 +3474,7 @@ mvClimb:
 		bne.s	.c
 		move.w	simHead,simA0
 		move.w	simY0,simA1
-.c:		bsr		simU				; d5 eased 0..256
+.c:		bsr		simU				; d5 eased 0..4096
 		move.w	simA0,d2
 		move.w	4(a2),d3
 		lsl.w	#4,d3
@@ -2971,6 +3484,7 @@ mvClimb:
 		lsl.w	#4,d3
 		muls	d5,d3
 		asr.l	#8,d3
+		asr.l	#4,d3
 		move.w	simA1,d2
 		sub.w	d3,d2
 		move.w	d2,simY0
@@ -3060,6 +3574,7 @@ morphTorpFire:
 		lea		morphTorps,a1
 		add.w	d0,a1
 		move.w	#1,tp_age(a1)
+		clr.w	tp_burn(a1)
 		move.l	simX,d0				; (1/4096 -> 1/256 units)
 		asr.l	#4,d0
 		move.l	d0,tp_x(a1)
@@ -3084,6 +3599,7 @@ morphTorpFire:
 		divs	#morphF,d0
 		move.w	d0,tp_ky(a1)
 		move.l	(a2,d2.w),tp_ax(a1)	; (its aim on the screen too)
+		move.w	#morphTorpDropV,tp_fv(a1)
 		or.w	#1<<RB_DROP,simEv
 		rts
 
@@ -3094,13 +3610,35 @@ morphTorpMove:
 .t:		move.w	tp_age(a1),d0
 		ble.s	.n
 		addq.w	#1,tp_age(a1)
-		cmp.w	#morphTorpDropT,d0
-		bhs.s	.burn
-		add.l	#morphTorpDropV,tp_y(a1)	; falling out
-		bra.s	.n
-.burn:	bne.s	.b0
-		or.w	#1<<RB_IGN,simEv	; its engine fires
-.b0:	add.l	#morphTorpAcc,tp_vz(a1)
+		move.w	tp_fv(a1),d1		; falling out (once it burns: its fall
+		ext.l	d1					; dies away)
+		add.l	d1,tp_y(a1)
+		tst.w	tp_burn(a1)
+		bne.s	.burn
+		addq.w	#morphTorpDropG,tp_fv(a1)
+		cmp.w	#morphTorpDropT1,d0	; its engine fires: far enough from the
+		bhs.s	.fire				; ship (it maneuvers), or late anyway
+		cmp.w	#morphTorpDropT0,d0
+		blo.s	.n
+		move.l	tp_x(a1),d2			; (|dx| + |dy| + |dz|, 1/256 units)
+		move.l	simX,d3
+		bsr.s	.d
+		move.l	d2,d4
+		move.l	tp_y(a1),d2
+		move.l	simY,d3
+		bsr.s	.d
+		add.l	d2,d4
+		move.l	tp_z(a1),d2
+		move.l	simZ,d3
+		bsr.s	.d
+		add.l	d2,d4
+		cmp.l	#morphTorpFireD<<8,d4
+		blo.s	.n
+.fire:	or.w	#1<<RB_IGN,simEv
+.burn:	addq.w	#1,tp_burn(a1)
+		asr.w	#3,d1
+		sub.w	d1,tp_fv(a1)
+		add.l	#morphTorpAcc,tp_vz(a1)
 		move.l	tp_vz(a1),d0
 		add.l	d0,tp_z(a1)
 		move.w	d0,d1				; (the way ahead this frame, a word)
@@ -3119,6 +3657,12 @@ morphTorpMove:
 .n:		lea		tp_len(a1),a1
 		dbf		d7,.t
 		rts
+; d2 = the torpedo's (1/256 units), d3 = the ship's (1/4096) -> d2 = |d2-d3|
+.d:		asr.l	#4,d3
+		sub.l	d3,d2
+		bpl.s	.d0
+		neg.l	d2
+.d0:	rts
 
 ;---------------------------------------------
 ; the sound: the fighter's engine (music.s drone on channel 1, the music's
@@ -3203,10 +3747,9 @@ simSound:
 		moveq	#morphTorpN-1,d7
 		move.l	#$7fffffff,d2
 		sub.l	a3,a3
-.t:		move.w	tp_age(a2),d0
-		cmp.w	#morphTorpDropT,d0
-		blt.s	.tn
-		cmp.w	#morphTorpDropT+morphTorpHissT,d0
+.t:		move.w	tp_burn(a2),d0
+		beq.s	.tn
+		cmp.w	#morphTorpHissT,d0
 		bhs.s	.tn
 		cmp.l	tp_z(a2),d2
 		ble.s	.tn
@@ -3225,8 +3768,8 @@ simSound:
 		cmp.w	#48,d1
 		bls.s	.t0
 		moveq	#48,d1
-.t0:	move.w	#morphTorpDropT+morphTorpHissT,d0	; (dying away)
-		sub.w	tp_age(a3),d0
+.t0:	move.w	#morphTorpHissT,d0	; (dying away)
+		sub.w	tp_burn(a3),d0
 		mulu	d0,d1
 		divu	#morphTorpHissT,d1
 		cmp.w	#2,d1
@@ -3463,7 +4006,15 @@ simTorps:
 		lsr.l	d6,d0
 		divu	d5,d0				; px
 		move.w	tp_age(a4),d1
-		btst	#0,d1				; the twinkle
+		move.w	tp_burn(a4),d2		; (falling: cold, still)
+		beq.s	.tw
+		cmp.w	#1,d2				; the first frame it burns: a flash,
+		bne.s	.tw0				; half as big again
+		move.w	d0,d2
+		lsr.w	#1,d2
+		addq.w	#1,d2
+		add.w	d2,d0
+.tw0:	btst	#0,d1				; the twinkle
 		beq.s	.tw
 		addq.w	#1,d0
 .tw:	cmp.w	#127,d0
@@ -3476,9 +4027,13 @@ simTorps:
 		cmp.w	#2,d0
 		bhs.s	.f0
 		bset	#TF_DOT,d2
-.f0:	cmp.w	#morphTorpDropT,d1
-		blo.s	.f9
+.f0:	move.w	tp_burn(a4),d6
+		beq.s	.f9
 		bset	#TF_BURN,d2
+		cmp.w	#1,d6
+		bne.s	.f1
+		bset	#TF_FLASH,d2
+.f1:
 		btst	#0,d1				; (every other frame: it flickers)
 		bne.s	.f9
 		; the flare: 2r + 0..3 long, from its aim through the ball
@@ -3523,7 +4078,11 @@ simTorps:
 		movem.l	(a7)+,d7/a3
 		rts
 
+		section "morphchip",bss_c
+morphSprBuf:	ds.b	2*3*MSPR_LEN	; (morphTorpSpr) two frames' sprites
+
 		section "morphbss",bss
+morphSprImg:	ds.l	5+7+9+13+15		; (morphSprMake) the glows' rows
 morphRcp:	ds.w	morphRcpN
 ; the flight, frame by frame (the sim writes, the play reads)
 morphRecSize	= 64*1024

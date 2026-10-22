@@ -7546,7 +7546,8 @@ ELCOLS	macro
 		cnop	0,4
 clistElite::
 		dc.w	BPLCON0,$0200
-		dc.w	$0102,$0000,$0104,$0000,$0108,$0000,$010a,$0000
+		dc.w	$0102,$0000,$0104,$0024,$0108,$0000,$010a,$0000	; (the
+							; sprites - the torpedoes' glows - in front)
 		dc.w	DDFSTRT,$0028
 		dc.w	DDFSTOP,$00d8
 		dc.w	DIWSTRT,(fullTop<<8)+$81
@@ -7556,6 +7557,9 @@ elSpr::	dc.w	$120,0,$122,0,$124,0,$126,0
 		dc.w	$130,0,$132,0,$134,0,$136,0
 		dc.w	$138,0,$13a,0,$13c,0,$13e,0
 		dc.w	$0180,$0000
+		dc.w	$01a2,ELC3,$01a4,ELC5,$01a6,ELC7	; the torpedoes' glows (morph.i
+		dc.w	$01aa,ELC3,$01ac,ELC5,$01ae,ELC7	; morphTorpSpr: sprites 0, 2, 4):
+		dc.w	$01b2,ELC3,$01b4,ELC5,$01b6,ELC7	; rim, middle, core
 elCol0::
 		ELCOLS
 		dc.w	$0190,gameColor,$0192,gameColor,$0194,gameColor,$0196,gameColor
