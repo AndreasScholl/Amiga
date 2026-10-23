@@ -4177,7 +4177,12 @@ FS_TESTLOOP		= 9				; a text over and over till the ship is ready
 								; for the message (seq_defReady), then on
 FS_TAIL			= 10			; with finalAttackOn: on with feedTailAttack
 FS_BROKEN		= 11			; a text with some of its glyphs broken
+	ifne	defLine
+msgGap			= 12			; spaces before the message (the ship's move
+								; onto the Defender spot comes in between)
+	else
 msgGap			= 5				; spaces before the message (0.8 s)
+	endc
 cuePause		= 20			; spaces between the dashes and the message
 glitchRampChars	= 2				; chars per glitchLevel step down
 stutterPerLevel	= 7				; hang odds (out of 256) per level ...
@@ -4283,6 +4288,14 @@ feedNext:
 		addq.w	#1,feedPos
 		cmp.b	#' ',d0					; the ship has opened fire (seq_defshoot):
 		bne		.plain					; at the next gap between words the cry
+	ifne	def2Cine
+		move.l	cmtReq,d0				; (def2Cine) the bridge has something to
+		beq.s	.noCmt					; say: at the next gap, in it goes
+		move.l	d0,insPtr
+		clr.l	cmtReq
+		bra		.space
+.noCmt:
+	endc
 		tst.b	whatHellReq				; comes in, once
 		beq		.space
 		tst.b	whatHellDone
@@ -4299,6 +4312,13 @@ feedNext:
 		bra		.plain
 .insEnd:
 		clr.l	insPtr					; the loop goes on where it was
+	ifne	def2Cine
+		move.l	cmtReq,d0				; (def2Cine: the next comment right after
+		beq.s	.noChain				; it, no loop text between)
+		move.l	d0,insPtr
+		clr.l	cmtReq
+.noChain:
+	endc
 		bra		.cmd
 .notLoop:
 		cmp.w	#FS_SPACES,d1
@@ -4360,13 +4380,35 @@ feedNext:
 		moveq	#0,d0
 		move.b	(a1),d0
 		bne.s	.char
+	ifne	defLine
+	ifne	def2Cine
+		cmp.l	#whatText2,2(a0)		; the question marks all put in
+	else
+		cmp.l	#whatText,2(a0)
+	endc
+		bne.s	.notWhat
+		st		whatDone
+.notWhat:
+	endc
 		cmp.w	#FS_MSG,d1				; the end of the message
-		bne.s	.next6
+		bne		.next6
 		bsr		.slotX
 		move.w	d0,msgEndAbs
 		st		msgEnded
 		bra.s	.next6
 .char:
+	ifne	def2Cine
+		tst.w	feedPos					; (def2Cine) where the question marks
+		bne.s	.notWS					; start: the ship fires at them only
+		cmp.l	#whatText2,2(a0)
+		bne.s	.notWS
+		move.w	d0,-(a7)
+		bsr		.slotX
+		move.w	d0,whatAbs
+		st		whatStarted
+		move.w	(a7)+,d0
+.notWS:
+	endc
 		cmp.w	#FS_MSG,d1
 		bne.s	.notStart
 		tst.w	feedPos
@@ -4691,9 +4733,27 @@ feedScript:
 		dc.w	FS_SALAD
 		dc.l	saladText
 		dc.w	FS_LEVEL,12				; mending, a step at a time: the scene talk
-		dc.w	FS_DOTS,4,48			; on the bridge comes through still broken,
-		dc.w	FS_BROKEN				; fewer glyphs each time - and the tears
-		dc.l	testText1				; and the stutter wear off with it
+	ifne	a1Cine						; on the bridge comes through still broken,
+		dc.w	FS_DOTS,2,48			; fewer glyphs each time - and the tears
+		dc.w	FS_BROKEN				; and the stutter wear off with it
+		dc.l	testText1				; (a1Cine: a little faster, and the text
+		dc.w	150						; says it is back)
+		dc.w	FS_LEVEL,8
+		dc.w	FS_DOTS,2,32
+		dc.w	FS_BROKEN
+		dc.l	testText2
+		dc.w	80
+		dc.w	FS_LEVEL,4
+		dc.w	FS_BROKEN
+		dc.l	testText3
+		dc.w	30
+		dc.w	FS_LEVEL,1
+		dc.w	FS_TEXT
+		dc.l	onlineText
+	else
+		dc.w	FS_DOTS,4,48
+		dc.w	FS_BROKEN
+		dc.l	testText1
 		dc.w	190
 		dc.w	FS_LEVEL,8
 		dc.w	FS_DOTS,3,32
@@ -4704,6 +4764,7 @@ feedScript:
 		dc.w	FS_BROKEN
 		dc.l	testText3
 		dc.w	56
+	endc
 		dc.w	FS_TAIL					; (the old way, with finalAttackOn)
 feedMended:
 		dc.w	FS_CALM					; mended: from here it runs clean - and at
@@ -4715,8 +4776,15 @@ feedMended:
 		dc.w	FS_TESTLOOP
 		dc.l	crewText
 		dc.w	FS_CALM					; ... till the ship is ready for the
+	ifne	defSalvo					; (defSalvo: the bridge's words well ahead
+		dc.w	FS_SPACES,14			; of them - a level shot meets what is
+	endc								; first on its way)
 		dc.w	FS_TEXT					; message: a few question marks, and
-		dc.l	whatText				; a pause, then it
+	ifne	def2Cine					; a pause, then it
+		dc.l	whatText2				; (def2Cine: closer together)
+	else
+		dc.l	whatText
+	endc
 		dc.w	FS_SPACES,msgGap
 	ifeq	defWords				; (switches.i: with defWords the message
 		dc.w	FS_MSG					; comes as the game's letters instead,
@@ -4744,6 +4812,8 @@ testText2:
 		dc.b	"NO GURU TODAY!  ",0
 testText3:
 		dc.b	"50 FPS OR DIE!   ",0
+onlineText:
+		dc.b	"  TEXT ONLINE AGAIN!   ",0
 ; mended: a word from the bridge (short - the attack comes soon)
 glyphTest1:
 		dc.b	"   REAL CODERS USE THE COPPER!    ",0
@@ -4764,6 +4834,8 @@ whatHellText:
 		dc.b	"   ??? WHAT THE HELL ???      ",0
 whatText:
 		dc.b	"   ?    ??   ???",0
+whatText2:
+		dc.b	" ?  ??  ???",0
 testText4:
 		dc.b	"-      -   -    -          -- - - -    ---"
 testText4End:
@@ -5199,9 +5271,13 @@ msgPredAbs::	dc.w	0		; ... and where it will be, from the cue on
 msgEndAbs:		dc.w	0		; ... and of its end
 feedPtr:		dc.l	0		; feedScript command now
 feedPos:		dc.w	0
-insPtr:			dc.l	0		; FS_TESTLOOP: a text put in, char now (0: none)
+insPtr::		dc.l	0		; FS_TESTLOOP: a text put in, char now (0: none)
+cmtReq::		dc.l	0		; (def2Cine) a comment to put in next (asteroids.s)
 whatHellReq::	dc.b	0		; seq_defshoot: it has opened fire - the cry
 whatHellDone:	dc.b	0		; ... is in
+whatDone::		dc.b	0		; (defLine) whatText all put in
+whatStarted::	dc.b	0		; (def2Cine) ... its first char put in
+whatAbs::		dc.w	0		; ... at screen x + scrollSteps
 glitchLevel::	dc.w	0		; how broken the scroller is, 0..16
 glitchTarget::	dc.w	0
 rampCount:		dc.w	0

@@ -5426,10 +5426,17 @@ seq_thrustSnd	= 0			; the thrust sound: 1 on (it is off - only shots
 		dc.w	seq_a1move-.states
 		dc.w	seq_a1shoot-.states
 		dc.w	seq_repos-.states
+	ifeq	dropRun
 		dc.w	seq_run-.states
 		dc.w	seq_clean-.states
 		dc.w	seq_leave-.states
 		dc.w	seq_hold-.states
+	else
+		dc.w	seq_none-.states
+		dc.w	seq_none-.states
+		dc.w	seq_none-.states
+		dc.w	seq_none-.states
+	endc
 		dc.w	seq_defshoot-.states
 		dc.w	seq_deflap-.states
 		dc.w	seq_defgo-.states
@@ -5513,11 +5520,20 @@ seq_a1move:
 		cmp.w	#1,seq_timer		; a spot to shoot from, never the same
 		bne.s	.fly				; (seq_huntHop)
 		move.w	#seq_tflyV,seq_vmax
+	ifne	a1Cine
+		move.w	#seq_a1vmax,seq_vmax	; (calmly, to a spot for the one shot -
+		move.w	#seq_a1bFrom,seq_hFrom	; letters coming in: time to look at
+	else								; the hole afterwards)
 		move.w	#seq_a1from,seq_hFrom
+	endc
 		move.w	#seq_a1to,seq_hTo
 		st		seq_hText
 		move.w	#seq_a1gap,seq_hGap
 		bsr		seq_huntInit
+	ifne	a1Cine
+		clr.w	seq_a1Miss
+		jsr		seq_a1Pick			; (its AI's spot, not the hunt's)
+	endc
 .fly:
 		movem.w	seq_ax,d0/d1
 		moveq	#seq_arrive,d2
@@ -5541,11 +5557,25 @@ seq_a1move:
 		clr.w	seq_shots
 		clr.w	seq_gap
 		clr.w	seq_aimT
+	ifne	a1Cine
+		clr.b	seq_a1Ph
+		sf		seq_a1Pair
+		clr.w	seq_a1Wait
+		clr.w	seq_a1T
+		clr.w	seq_a1Miss
+		clr.w	seq_a1Re
+		sf		seq_a1Shot
+		move.w	hitTotal,seq_tHit0
+		st		seq_aimFine
+	endc
 		bra		seq_next
 .done:
 		rts
 
 seq_a1shoot:
+	ifne	a1Cine
+		jmp		seq_a1cRun			; (staged: not chip)
+	endc
 		move.w	seq_a1n,d0
 		cmp.w	seq_shots,d0
 		bls		.watch
@@ -5992,6 +6022,33 @@ seq_burnT		= 6			; burn: the thrust sounds this many frames on
 								; (if seq_thrustSnd, see seq_pilot)
 seq_dswayX		= 16		; firing: the ship moves about this far to and
 seq_dswayY		= 3			; fro, and up and down
+	ifne	defLine
+; (switches.i defLine) the way onto the row: the pastime (seq_qfire) till
+; seq_lnT0, then over seq_lnDur frames (eased) to the right of the Defender
+; spot at the row's height, swaying up and down there, the nose round to
+; the right, firing at every glyph - then the move onto the spot
+seq_lnT0		= 60		; DEFTEST frames before it starts over
+seq_lnDur		= 120		; ... the way, frames
+seq_lnX			= 124		; ... where to (x; y the row)
+seq_lnBobY		= 6			; ... there up and down this far ...
+seq_lnBobX		= 5			; ... and to and fro this far
+seq_lnBobA		= 2			; ... degrees a frame (3 s a round)
+seq_lnFrom		= 186		; the glyphs it fires at: from the twist ...
+seq_lnTo		= 344		; ... to just in (a shot meets them ~70 px on)
+seq_lnAimY		= seq_textY-2	; ... at this height: level, a shot only meets what is
+							; on that one line (a question mark's middle is empty)
+seq_lnGap		= 6			; frames between its shots there (the text comes
+							; a glyph each 8 frames: it keeps up)
+seq_lnEarlyTo	= 250		; (def2Cine) before the question marks: glyphs up to here
+seq_lnLateX		= 280		; the message's first letter this far in: over
+							; now, whatever is left (never needed so far)
+seq_lnBeat		= 14		; enough: a moment still, the nose right
+seq_lnAcc		= 13		; the burn (and the brake at most 3 times it),
+							; 1/128 px a frame a frame (0.1)
+seq_lnFlipT		= 12		; frames of the reverse (180 / seq_dreverse)
+seq_lnSettle	= 24		; on the spot this long before the laser
+seq_lnLast		= 186		; (the laser anyway, settled or not - never)
+	endc
 
 seq_defshoot:
 		cmp.w	#1,seq_timer
@@ -6027,9 +6084,11 @@ seq_deflap:
 		cmp.w	#1,seq_timer
 		bne.s	.on
 		st		barFlickOn			; (scroller.s)
-		clr.w	starTarget			; the stars slow down, then turn round
-		move.w	#seq_starAcc,starAcc
+	ifeq	def2Cine				; (def2Cine: not yet - once the monitor is
+		clr.w	starTarget			; off, seq_d2Stage)
+		move.w	#seq_starAcc,starAcc	; the stars slow down, then turn round
 		st		starTurn
+	endc
 		sf		seq_shotsLive
 		sf		seq_dOn				; the lap: off and away, a pirouette
 		st		seq_dWin
@@ -6234,11 +6293,17 @@ seq_hunt:
 seq_qX			= 104
 seq_qY			= seq_textY+60
 seq_qGap		= 6				; frames between its shots: all it has
+	ifne	def2Cine
+seq_qGapP		= 12			; (def2Cine: the pastime takes its time -
+	else						; there is a lot to see meanwhile)
+seq_qGapP		= seq_qGap
+	endc
 seq_qTopFrom	= 80			; the top row: glyphs from here ...
 seq_qTopTo		= 152			; ... to here (right above the spot)
 seq_qTopDy		= 22			; ... this many lines over the bottom row
 seq_qRowX		= 250			; (over to the row a little later: it is
 								; near it already)
+	ifeq	defSalvo				; (defSalvo: not used - seq_svHunt)
 seq_qfire:
 		tst.w	seq_gap
 		beq.s	.g0
@@ -6275,8 +6340,9 @@ seq_qfire:
 .fire:	bsr		seq_fireAt
 		clr.w	seq_aimT
 		addq.w	#1,seq_shots
-		move.w	#seq_qGap,seq_gap
+		move.w	#seq_qGapP,seq_gap
 .out:	rts
+	endc
 	endc
 
 ; on to a new spot: left of the letter (seq_hTgt, or the middle of the
@@ -6361,6 +6427,15 @@ seq_huntHop:
 		bge.s	.far
 		move.w	d2,d4
 .far:
+	ifne	a1Cine
+		move.w	d0,-(a7)			; (never a spot up in the logo: it only
+		jsr		seq_a1LogoY			; ever flies across it)
+		add.w	#seq_a1Room,d0
+		cmp.w	d0,d4
+		bge.s	.fy
+		move.w	d0,d4
+.fy:	move.w	(a7)+,d0
+	endc
 		move.w	d0,seq_ax
 		move.w	d4,seq_ay
 		sf		seq_tThere
@@ -6383,11 +6458,21 @@ seq_deftest:
 		bne.s	.on
 		move.w	#999,d0				; (as many as there are)
 		bsr		seq_tshootInit
+	ifne	defSalvo
+		move.w	#seq_svVmax,seq_vmax	; (calm: from spot to spot)
+	endc
 .on:
+	ifne	def2Cine
+		jsr		seq_d2Stage			; (the stars, the bridge's comments - then
+	else							; the message may come: not chip)
 		cmp.w	#seq_passT,seq_timer	; the message may come now (scroller.s)
 		bne.s	.notYet
 		st		seq_defReady
+	endc
 .notYet:
+	ifne	defLine
+		jmp		seq_lnRun			; (the way onto the row: not chip)
+	endc
 		jsr		msgLeftX			; the message's first letter well in: over
 		tst.w	d0					; to the row now (not while the question
 		bmi.s	.noMsg				; marks still go by - just in time for it)
@@ -6400,7 +6485,9 @@ seq_deftest:
 .noMsg:	cmp.w	#seq_passT+seq_rowT+seq_rowLate,seq_timer
 		bhs.s	.goRow				; (no message after all: anyway)
 	ifne	fixQmarks
+	ifeq	defSalvo
 		bsr		seq_qfire			; meanwhile: every glyph shot out
+	endc
 	else
 		bsr		seq_tshoot			; meanwhile: the text hunted for fun
 	endc
@@ -6451,10 +6538,28 @@ seq_deftest:
 		bsr		seq_dfloat
 		add.w	#seq_rowY-seq_defY,d1
 		bsr		seq_dmoveA
+	ifne	defLine
+		move.w	obj_yc(a0),d0		; settled: on the row, nose right, a while
+		sub.w	#seq_rowY,d0
+		bpl.s	.sy
+		neg.w	d0
+.sy:	cmp.w	#seq_dswayY+1,d0
+		bhi.s	.unset
+		cmp.w	#90,obj_angle(a0)
+		bne.s	.unset
+		addq.w	#1,seq_lnSet
+		bra.s	.setOk
+.unset:	clr.w	seq_lnSet
+.setOk:
+	endc
 		jsr		msgLeftX			; the first word
 		tst.w	d0
 		bmi.s	.out
+	ifne	defLine
+		cmp.w	#seq_lnLast,d0		; (never: it is there long before)
+	else
 		cmp.w	#seq_dlastX,d0		; (not a frame later than this)
+	endc
 		bls.s	.fire
 		cmp.w	#seq_dfireX,d0
 		bhi.s	.out
@@ -6467,6 +6572,10 @@ seq_deftest:
 		bhi.s	.out
 		cmp.w	#90,obj_angle(a0)
 		bne.s	.out
+	ifne	defLine
+		cmp.w	#seq_lnSettle,seq_lnSet
+		blo.s	.out
+	endc
 .fire:
 		clr.w	seq_gap
 		bra		seq_next			; -> DEFFIRE
@@ -7101,6 +7210,7 @@ SR_APPROACH		= 1
 SR_BREAK		= 2
 SR_ROAM			= 3
 
+	ifeq	dropRun				; (switches.i dropRun: the old last attack, never flown - finalAttackOn is 0)
 seq_run:
 		move.w	seq_phase,d0
 		beq.s	.lap
@@ -7489,6 +7599,7 @@ seq_faceMove:
 		bmi		obj_subangle
 		bra		obj_addangle
 
+	endc
 ; every frame, from updateScroller once this frame's text is drawn: every
 ; shot in the air against the text as it is shown (textShot). a shot that
 ; hits is gone at once
@@ -7534,6 +7645,7 @@ seqShotScan::
 .done:
 		movem.l	(a7)+,d0-d7/a0-a6
 		rts
+	ifeq	dropRun
 ;--- CLEAN, LEAVE, HOLD -----------------------
 seq_clean:
 		bsr		seq_hover
@@ -7572,6 +7684,9 @@ seq_hold:
 		st		tvGo				; switch the TV off
 .done:
 		rts
+	else
+seq_none:		rts				; (dropRun: RUN .. HOLD never come)
+	endc
 
 seq_next:
 		addq.b	#1,seq_state
@@ -7777,6 +7892,17 @@ seq_aim:
 		bpl.s	.cPos
 		neg.l	d4
 .cPos:
+	ifne	defLine
+		tst.b	seq_aimTight		; (level shots: 1.5 px, no slack - a level
+		beq.s	.loose				; shot meets only the lines it is on)
+		cmp.l	#3<<14,d4
+		blo.s	.on
+		sf		seq_onTarget
+		cmp.l	#12<<15,d4
+		blo.s	.fine
+		bra.s	.coarse
+.loose:
+	endc
 		cmp.l	#3<<15,d4			; cross >> 15 is the miss in pixels
 		blo.s	.on
 		tst.b	seq_onTarget		; lined up a moment ago: the nose stays
@@ -9706,6 +9832,730 @@ z_coords:
 ;---------------------------------------------
 ; only the CPU touches these, so they need not be in chip memory, and as
 ; bss they cost nothing in the executable
+	ifne	defLine
+;--- (switches.i defLine) the way onto the row - DEFTEST's steps from
+; seq_lnT0 on (CPU only: not in chip memory)
+		section "morphcode",data
+	; --- (switches.i defLine) the way onto the row, a step (seq_lnPh) at a
+	;     time: 0 the pastime, 1 over to the row's height, swaying, firing,
+	;     2 enough - a beat, 3 the reverse, 4 the burn, 5 the reverse again,
+	;     6 the brake onto the spot - then .row
+seq_lnRun:
+		moveq	#0,d0
+		move.b	seq_lnPh,d0
+		beq.s	.lnPast
+		addq.w	#1,seq_lnT
+		subq.w	#1,d0
+		beq.s	.lnLine
+		subq.w	#1,d0
+		beq		.lnBeat
+		subq.w	#1,d0
+		beq		.lnFlip1
+		subq.w	#1,d0
+		beq		.lnBurn
+		subq.w	#1,d0
+		beq		.lnFlip2
+		bra		.lnBrake
+.lnPast:
+	ifne	defSalvo
+		cmp.b	#6,seq_d2Ph			; (defSalvo: a while after the bridge's last
+		bhs.s	.lnStart			; word - meanwhile hunting, in salvos)
+		bra		seq_svHunt
+	endc
+	ifne	def2Cine
+		cmp.b	#4,seq_d2Ph			; (def2Cine: with the bridge's last word)
+	else
+		cmp.w	#seq_lnT0,seq_timer
+	endc
+		bhs.s	.lnStart
+	ifeq	defSalvo
+		jmp		seq_qfire			; the pastime, as it was
+	endc
+.lnStart:
+		move.b	#1,seq_lnPh
+		clr.w	seq_lnT
+		move.w	obj_xc(a0),seq_lnX0
+		move.w	obj_yc(a0),seq_lnY0
+		; --- over to the right of the spot, eased (s 0..256: 3u2 - 2u3)
+.lnLine:
+		moveq	#0,d0
+		move.w	seq_lnT,d0
+		cmp.w	#seq_lnDur,d0
+		bls.s	.lu
+		move.w	#seq_lnDur,d0
+.lu:	lsl.l	#8,d0
+		divu	#seq_lnDur,d0		; u
+		move.w	d0,d1
+		mulu	d0,d1
+		lsr.l	#8,d1				; u*u
+		move.w	#768,d2
+		sub.w	d0,d2
+		sub.w	d0,d2
+		mulu	d2,d1
+		lsr.l	#8,d1				; s
+		move.w	d1,seq_lnS
+		; the sway there: round a small ellipse, more of it the nearer
+		move.w	seq_lnA,d0
+		addq.w	#seq_lnBobA,d0
+		cmp.w	#360,d0
+		blo.s	.la
+		sub.w	#360,d0
+.la:	move.w	d0,seq_lnA
+		lea		sctab,a3
+		lsl.w	#2,d0
+		move.w	(a3,d0.w),d3		; sin: up and down
+		move.w	2(a3,d0.w),d4		; cos: to and fro
+		muls	#seq_lnBobY,d3
+		add.l	d3,d3
+		swap	d3
+		muls	d1,d3
+		asr.l	#8,d3
+		muls	#seq_lnBobX,d4
+		add.l	d4,d4
+		swap	d4
+		muls	d1,d4
+		asr.l	#8,d4
+		move.w	#seq_lnX,d0			; x
+		sub.w	seq_lnX0,d0
+		muls	d1,d0
+		asr.l	#8,d0
+		add.w	seq_lnX0,d0
+		add.w	d4,d0
+		move.w	#seq_rowY,d2		; y
+		sub.w	seq_lnY0,d2
+		muls	d1,d2
+		asr.l	#8,d2
+		add.w	seq_lnY0,d2
+		add.w	d3,d2
+		move.w	d2,d1
+		bsr		seq_glide			; (the nose stays free to aim)
+		; every glyph that comes along the row, as long as there are any
+		tst.w	seq_gap
+		beq.s	.lg
+		subq.w	#1,seq_gap
+.lg:	jsr		msgLeftX			; (never the message: that is the laser's)
+		move.w	#seq_lnTo,d1
+		tst.w	d0
+		bmi.s	.lt
+		subq.w	#8,d0
+		cmp.w	d0,d1
+		ble.s	.lt
+		move.w	d0,d1
+.lt:	jsr		seq_claimX
+		cmp.w	#seq_lnFrom,d0
+		bge.s	.lf
+		move.w	#seq_lnFrom,d0
+.lf:
+	ifne	def2Cine
+		tst.b	whatStarted			; (def2Cine) till the question marks come in:
+		bne.s	.lw					; only what has been on show a while - the
+		cmp.w	#seq_lnEarlyTo,d1	; bridge's words are there to be read
+		ble.s	.lf2
+		move.w	#seq_lnEarlyTo,d1
+		bra.s	.lf2
+.lw:								; (then all of it: a level shot meets
+.lf2:								; the first glyph on its way anyway)
+	endc
+		jsr		findSolid
+		move.w	d0,seq_hTgt
+		bmi.s	.lNone
+		move.w	d0,d3
+		move.w	#seq_lnAimY,d1
+		moveq	#seq_textv,d2
+		st		seq_aimTight
+		jsr		seq_aim
+		sf		seq_aimTight
+		tst.w	seq_gap
+		bne.s	.lChk
+		tst.w	d0
+		beq.s	.lChk
+		jsr		seq_fireAt
+		clr.w	seq_aimT
+		addq.w	#1,seq_shots
+	ifne	defSalvo
+		bsr		seq_salvoNext		; short salvos - but a question mark near the
+		cmp.w	#seq_svUrgent,seq_hTgt	; twist: the next one at once
+		bge.s	.lChk
+		move.w	#seq_svGap,seq_gap
+	else
+		move.w	#seq_lnGap,seq_gap
+	endc
+		bra.s	.lChk
+.lNone:	cmp.w	#128,seq_lnS		; nothing to fire at: the nose round to the
+		blo.s	.lChk				; right, slowly
+		move.w	#90,d0
+		moveq	#2,d1
+		jsr		seq_turnTo
+		; enough? there, the question marks all in - and nothing left on the
+		; row before the message (or the message too near: anyway)
+.lChk:	cmp.w	#seq_lnDur,seq_lnT
+		blo.s	.lOut
+		jsr		msgLeftX
+		tst.w	d0
+		bmi.s	.lNoM
+		cmp.w	#seq_lnLateX,d0		; (the message this near: now, whatever is
+		bls.s	.lGo				; still there)
+	ifne	defSalvo
+		cmp.w	#seq_lnGoX,d0		; (defSalvo: only once the last sentence is
+		bhi.s	.lOut				; coming in)
+	endc
+		tst.w	seq_hTgt			; (still a glyph to fire at: not clear)
+		bpl.s	.lOut
+		move.w	d0,d1
+		subq.w	#1,d1
+		bra.s	.lScan
+.lNoM:
+	ifne	defSalvo
+		bra.s	.lOut
+	endc
+		tst.w	seq_hTgt
+		bpl.s	.lOut
+		move.w	#375,d1
+.lScan:	tst.b	whatDone
+		beq.s	.lOut
+		moveq	#0,d0
+	ifne	def2Cine
+		move.w	whatAbs,d0			; (def2Cine: from the question marks on)
+		sub.w	scrollSteps,d0
+		subq.w	#4,d0
+	endc				; (a glyph with body: what it fires at -
+		jsr		findSolid			; specks of a dot just go by)
+		tst.w	d0
+		bpl.s	.lOut
+.lGo:	move.b	#2,seq_lnPh
+		clr.w	seq_lnT
+		sf		seq_shotsLive		; (a shot still out spares the message)
+		move.w	seq_timer,seq_lnGoT	; (testing)
+.lOut:	rts
+		; --- a moment still: the nose right, onto the row's height
+.lnBeat:
+		move.w	#seq_lnX,d0
+		move.w	#seq_rowY,d1
+		jsr		seq_glide
+		move.w	#90,d0
+		moveq	#seq_turnrate,d1
+		jsr		seq_turnTo
+		cmp.w	#seq_lnBeat,seq_lnT
+		blo.s	.lOut
+.lnNext:
+		addq.b	#1,seq_lnPh
+		clr.w	seq_lnT
+		rts
+		; --- the reverse: nose round to the left
+.lnFlip1:
+		bsr		.lnYc
+		move.w	#270,d0
+		moveq	#seq_dreverse,d1
+		jsr		seq_turnTo
+		tst.w	d0
+		bne.s	.lnNext
+		rts
+		; --- the burn, to the left, till what it takes to stop on the spot
+		;     (the reverse coasting, then the brake) is the way that is left
+.lnBurn:
+		bsr		.lnYc
+		sub.w	#seq_lnAcc,obj_xvelo(a0)
+		bsr		.lnTx
+		move.w	obj_xc(a0),d2
+		sub.w	d0,d2				; the way left, px
+		move.w	obj_xvelo(a0),d0
+		neg.w	d0					; v
+		ble.s	.lOut
+		move.w	d0,d1
+		mulu	#seq_lnFlipT,d1
+		lsr.l	#7,d1				; through the reverse
+		mulu	d0,d0
+		lsr.l	#8,d0
+		divu	#seq_lnAcc,d0		; the brake
+		add.w	d0,d1
+		addq.w	#2,d1
+		cmp.w	d2,d1
+		bge.s	.lnNext
+		rts
+		; --- the reverse again
+.lnFlip2:
+		bsr		.lnYc
+		move.w	#90,d0
+		moveq	#seq_dreverse,d1
+		jsr		seq_turnTo
+		tst.w	d0
+		bne.s	.lnNext
+		rts
+		; --- the brake: just as hard as it takes to stop on the spot
+.lnBrake:
+		bsr		.lnYc
+		bsr		.lnTx
+		lsl.w	#7,d0
+		move.w	obj_xfloat(a0),d2
+		sub.w	d0,d2				; the way left, 1/128 px
+		move.w	obj_xvelo(a0),d0
+		neg.w	d0
+		ble.s	.lThere
+		cmp.w	#64,d2
+		blt.s	.lThere
+		mulu	d0,d0
+		add.w	d2,d2
+		divu	d2,d0				; v*v / 2 way
+		cmp.w	#3*seq_lnAcc,d0
+		bls.s	.lb0
+		moveq	#3*seq_lnAcc,d0
+.lb0:	tst.w	d0
+		bne.s	.lb1
+		moveq	#1,d0
+.lb1:	add.w	d0,obj_xvelo(a0)
+		bmi.s	.lOut
+.lThere:
+		clr.w	obj_xvelo(a0)		; there: the sway on the row (.row)
+		move.b	#7,seq_lnPh
+		st		seq_dThere
+		st		seq_rowAt
+		sf		seq_corr
+		sf		seq_shotsLive
+		clr.w	seq_lnSet
+		move.w	seq_timer,seq_lnAtT	; (testing)
+		rts
+; the height: onto the row (as seq_dmove0)
+.lnYc:
+		move.w	#seq_rowY,d1
+		sub.w	obj_yc(a0),d1
+		muls	#12,d1
+		cmp.l	#300,d1
+		ble.s	.y0
+		move.l	#300,d1
+.y0:	cmp.l	#-300,d1
+		bge.s	.y1
+		move.l	#-300,d1
+.y1:	sub.w	obj_yvelo(a0),d1
+		asr.w	#2,d1
+		add.w	d1,obj_yvelo(a0)
+		rts
+; -> d0 = the spot on the row (its middle: the sway takes over from there)
+.lnTx:
+		move.w	#seq_defX,d0
+		rts
+
+seq_lnPh:		dc.b	0		; DEFTEST: the way onto the row, its step
+				even
+seq_lnT:		dc.w	0		; ... frames in it
+seq_lnX0:		dc.w	0		; ... from where
+seq_lnY0:		dc.w	0
+seq_lnA:		dc.w	0		; ... the sway's angle
+seq_lnS:		dc.w	0		; ... how far over (0..256)
+seq_lnSet:		dc.w	0		; ... frames settled on the row
+seq_lnGoT:		dc.w	0		; (testing) DEFTEST frame of "enough" ...
+seq_lnAtT:		dc.w	0		; ... and of being on the spot
+seq_aimTight:	dc.b	0		; seq_aim: level shots, no slack
+				even
+		section "code",data,chip
+	endc
+
+	ifne	a1Cine
+;--- (switches.i a1Cine) the first attack, staged (CPU only: not chip) ---
+; bored: one shot, from where it is; a hit - it comes over, calmly, and has a
+; look at the hole, the nose on it; then, liking it, single and double
+; shots from spots it picks (seq_hunt), never more out than it takes to
+; make it a1Hits letters - the last one hits: the scroller breaks
+seq_a1vmax		= 120		; flying about: no faster than this (1/128 px a frame)
+seq_a1bFrom		= 316		; the bored shot: at letters from here on (time
+							; to look at the hole before it is at the twist)
+seq_a1Bored		= 50		; frames of boredom before it (and again if it misses)
+seq_a1lookDx	= 44		; the look: this far left of the hole ...
+seq_a1lookDy	= 34		; ... this far off the row (the ship's side)
+seq_a1lookT		= 100		; ... this long ...
+seq_a1lookX0	= 196		; ... or till the hole is at the twist
+seq_a1bTo		= 346		; (the bored shot: up to here - just in)
+seq_a1pairGap	= 7			; a double shot: frames between the two
+seq_a1gapT		= 40		; frames to the next shot, + 0..31
+seq_a1Reach		= 150		; the bored shot: only at a letter this near (max +
+							; min/2 - a shot gets ~190 px)
+seq_a1Ahead		= 40		; ... at least this far ahead of the ship
+seq_a1Stand		= 120		; its spot this far from where the letter will be ...
+seq_a1StandMin	= 64		; ... 24 nearer after each miss, not nearer than this
+seq_a1Lead		= 70		; (the letter moves on meanwhile: 70 px)
+seq_a1ReT		= 40		; a new spot no more often than this
+seq_a1Misses	= 3			; this many misses ...
+seq_a1Patience	= 600		; ... or this long bored: it just opens fire
+seq_a1LogoGap	= 6			; the logo's bottom + this: still the logo
+seq_a1Room		= 10		; its spot over the row: this far under that at least
+seq_a1MinDy		= 30		; ... and never nearer the row than this
+		section "morphcode",data
+seq_a1cRun:
+		moveq	#0,d0
+		move.b	seq_a1Ph,d0
+		beq.s	.bored
+		subq.w	#1,d0
+		beq		.look
+		bra		.hunt
+		; --- bored - and it wants a go at the scroller: it picks a letter
+		;     coming in and a spot to get it from (seq_a1Pick: its side of
+		;     the row, never the logo, close enough), goes there, turns its
+		;     nose onto the letter, takes aim - and fires once it is sure it
+		;     can reach it. a miss: it gets closer and tries again; three of
+		;     them, or too long: it loses patience and just opens fire
+.bored:
+		addq.w	#1,seq_a1T
+		cmp.w	#seq_a1Patience,seq_a1T
+		bhs		.impatient
+		jsr		seq_hover			; (at its spot, never quite still)
+		move.w	hitTotal,d0
+		sub.w	seq_tHit0,d0
+		bne		.hit1
+		tst.w	shot_con			; its shot still out: wait and see
+		bne		.bOut
+		tst.b	seq_a1Shot			; out and gone, and no hit: a miss
+		beq.s	.noMiss
+		sf		seq_a1Shot
+		addq.w	#1,seq_a1Miss
+		cmp.w	#seq_a1Misses,seq_a1Miss
+		bhs		.impatient
+		jsr		seq_a1Pick			; closer, then
+		clr.w	seq_a1Wait
+.noMiss:
+		addq.w	#1,seq_a1Wait
+		; the letter it is after: one in reach ahead of it
+		move.w	obj_xc(a0),d0
+		add.w	#seq_a1Ahead,d0
+		cmp.w	#seq_a1from,d0
+		bge.s	.bf
+		move.w	#seq_a1from,d0
+.bf:	move.w	#seq_a1bTo,d1
+		jsr		findText
+		tst.w	d0
+		bmi.s	.rePick				; nothing to get: somewhere better
+		move.w	d0,d3
+		sub.w	obj_xc(a0),d0		; in reach? (max + min/2)
+		bpl.s	.r0
+		neg.w	d0
+.r0:	move.w	#seq_textY,d1
+		sub.w	obj_yc(a0),d1
+		bpl.s	.r1
+		neg.w	d1
+.r1:	cmp.w	d1,d0
+		bhs.s	.r2
+		exg		d0,d1
+.r2:	lsr.w	#1,d1
+		add.w	d1,d0
+		cmp.w	#seq_a1Reach,d0
+		bhi.s	.rePick
+		move.w	#seq_textY,d1		; the nose onto it - deliberately
+		moveq	#seq_textv,d2
+		jsr		seq_aim
+		cmp.w	#seq_a1Bored,seq_a1Wait	; (a moment of looking first)
+		blo.s	.bOut
+		jsr		seq_a1Clear			; (never from up in the logo)
+		bmi.s	.bOut
+		tst.w	d0
+		beq.s	.bOut
+		jsr		seq_fireAt
+		addq.w	#1,seq_shots
+		st		seq_a1Shot
+		move.w	seq_claim,d0		; where the hole will be (moving with the
+		sub.w	#12,d0				; text)
+		move.w	d0,seq_a1Hx
+.bOut:	rts
+.rePick:
+		subq.w	#1,seq_a1Re			; (not every frame: a new spot now and
+		bpl.s	.bOut				; then, as the letters run on)
+		move.w	#seq_a1ReT,seq_a1Re
+		jmp		seq_a1Pick
+.impatient:							; enough waiting: it opens fire (the
+		bra		.lookDone			; hunt)
+.hit1:
+		move.b	#1,seq_a1Ph
+		clr.w	seq_a1Wait
+		move.w	#seq_textY-seq_a1lookDy,seq_a1Ly	; the look from its side of
+		cmp.w	#seq_textY,obj_yc(a0)			; the row
+		blo.s	.side
+		move.w	#seq_textY+seq_a1lookDy,seq_a1Ly
+.side:	rts
+		; --- the look: over to the hole, calmly, the nose on it
+.look:
+		addq.w	#1,seq_a1Wait
+		move.w	seq_a1Hx,d3
+		sub.w	scrollSteps,d3		; the hole now (at the twist it goes up: the
+		cmp.w	#seq_a1lookX0,d3	; ship stays there and looks on)
+		bge.s	.hx
+		move.w	#seq_a1lookX0,d3
+.hx:
+		move.w	d3,-(a7)
+		move.w	d3,d0
+		sub.w	#seq_a1lookDx,d0
+		move.w	seq_a1Ly,d1
+		jsr		seq_glide
+		move.w	(a7),d3
+		move.w	#seq_textY,d1
+		moveq	#seq_textv,d2
+		jsr		seq_aim
+		move.w	(a7)+,d3
+		cmp.w	#seq_a1lookT,seq_a1Wait
+		blo.s	.lOut
+.lookDone:
+		move.b	#2,seq_a1Ph
+		move.w	#seq_a1from,seq_hFrom
+		move.w	#seq_a1vmax,seq_vmax
+		move.w	#seq_a1gapT,seq_gap	; (a moment before the next)
+		jsr		seq_huntInit		; a spot to shoot from
+.lOut:	rts
+		; --- liking it: single and double shots, a1Hits letters in all
+.hunt:
+		move.w	hitTotal,d0
+		sub.w	seq_tHit0,d0
+		cmp.w	#a1Hits,d0
+		bhs.s	.broken
+		move.w	shot_con,d1			; + the shots still out: no more than it
+.cnt:	beq.s	.cnted				; takes
+		add.w	d1,d1
+		bcc.s	.cnt
+		addq.w	#1,d0
+		tst.w	d1
+		bra.s	.cnt
+.cnted:	cmp.w	#a1Hits,d0
+		blo.s	.may
+		cmp.w	#2,seq_gap
+		bhs.s	.may
+		move.w	#2,seq_gap			; (holds its fire)
+.may:	jsr		seq_a1Clear			; up in the logo: no shots from there
+		bpl.s	.mayOk
+		cmp.w	#2,seq_gap
+		bhs.s	.mayOk
+		move.w	#2,seq_gap
+.mayOk:	move.w	seq_shots,-(a7)
+		jsr		seq_hunt
+		move.w	(a7)+,d0
+		cmp.w	seq_shots,d0
+		beq.s	.hOut
+		tst.b	seq_a1Pair			; a shot: the second of a pair at once,
+		bne.s	.second				; else a while
+		jsr		getRandomNumber
+		btst	#4,d0
+		bne.s	.single
+		st		seq_a1Pair
+		move.w	#seq_a1pairGap,seq_gap
+		rts
+.second:
+		sf		seq_a1Pair
+.single:
+		jsr		getRandomNumber
+		and.w	#31,d0
+		add.w	#seq_a1gapT,d0
+		move.w	d0,seq_gap
+.hOut:	rts
+.broken:
+		jsr		startGlitch			; the scroller breaks
+		jmp		seq_next			; -> REPOS (seq_drift, the pirouette)
+; -> N set while the ship is up in the logo (its bottom bobs: logoEndWait,
+; the copper's wait under it) - no shots from there. keeps all registers
+seq_a1Clear:
+		move.w	d0,-(a7)
+		bsr.s	seq_a1LogoY
+		cmp.w	obj_yc(a0),d0
+		movem.w	(a7)+,d0			; (keeps the flags)
+		bhi.s	.in
+		move.w	#0,ccr
+		rts
+.in:	move.w	#8,ccr
+		rts
+; -> d0 = the first game line clear under the logo (and a little more)
+seq_a1LogoY:
+		moveq	#0,d0
+		move.b	logoEndWait,d0
+		sub.w	#$20-seq_a1LogoGap,d0
+		rts
+; Zeronine's AI picks where to get its letter from: the letter (the first
+; one coming in - or where the next will come), where that will be by the
+; time it is there, and a spot seq_a1Stand from it (24 nearer after each
+; miss) at an angle of its own, on the side of the row the ship is on - over
+; it only if there is room under the logo, else under it
+seq_a1Pick:
+		movem.l	d2-d5/a3,-(a7)
+		move.w	#seq_a1bFrom,d0
+		move.w	#seq_a1bTo,d1
+		jsr		findText
+		tst.w	d0
+		bpl.s	.t
+		move.w	#seq_a1bTo,d0
+.t:		sub.w	#seq_a1Lead,d0
+		move.w	d0,d5				; where the letter will be
+		move.w	seq_a1Miss,d4		; how far from it
+		mulu	#24,d4
+		neg.w	d4
+		add.w	#seq_a1Stand,d4
+		cmp.w	#seq_a1StandMin,d4
+		bge.s	.s
+		move.w	#seq_a1StandMin,d4
+.s:		jsr		getRandomNumber		; its angle: 25..56 degrees off the row
+		and.w	#31,d0
+		add.w	#25,d0
+		lea		sctab,a3
+		lsl.w	#2,d0
+		move.w	(a3,d0.w),d2
+		move.w	2(a3,d0.w),d3
+		muls	d4,d2
+		add.l	d2,d2
+		swap	d2					; up or down
+		muls	d4,d3
+		add.l	d3,d3
+		swap	d3					; back from it
+		sub.w	d3,d5
+		cmp.w	#seq_huntX0,d5
+		bge.s	.x0
+		move.w	#seq_huntX0,d5
+.x0:	cmp.w	#seq_huntX1,d5
+		ble.s	.x1
+		move.w	#seq_huntX1,d5
+.x1:	move.w	d5,seq_ax
+		cmp.w	#seq_textY,obj_yc(a0)	; its side of the row
+		bhs.s	.under
+		bsr.s	seq_a1LogoY			; over it: room under the logo?
+		add.w	#seq_a1Room,d0		; (and the sway)
+		move.w	#seq_textY,d1
+		sub.w	d2,d1
+		cmp.w	d0,d1
+		bge.s	.y
+		move.w	d0,d1				; as high as it may go ...
+		cmp.w	#seq_textY-seq_a1MinDy,d1
+		ble.s	.y
+.under:	move.w	#seq_textY,d1		; ... no room: under the row
+		add.w	d2,d1
+		cmp.w	#seq_textY+seq_a1MinDy,d1
+		bge.s	.u0
+		move.w	#seq_textY+seq_a1MinDy,d1
+.u0:	cmp.w	#seq_huntYMax,d1
+		ble.s	.y
+		move.w	#seq_huntYMax,d1
+.y:		move.w	d1,seq_ay
+		sf		seq_corr
+		movem.l	(a7)+,d2-d5/a3
+		rts
+seq_a1Ph:		dc.b	0		; 0 bored, 1 the look, 2 the hunt
+seq_a1Pair:		dc.b	0		; the first of a double shot is out
+seq_a1Wait:		dc.w	0
+seq_a1Hx:		dc.w	0		; the hole (screen x + scrollSteps)
+seq_a1Ly:		dc.w	0		; ... looked at from this height
+seq_a1T:		dc.w	0		; frames bored so far
+seq_a1Miss:		dc.w	0		; misses so far
+seq_a1Re:		dc.w	0		; frames to the next new spot at most
+seq_a1Shot:		dc.b	0		; its bored shot is out
+				even
+		section "code",data,chip
+	endc
+
+	ifne	def2Cine
+;--- (switches.i def2Cine) the monitor is off: the stars, step by step, and
+; the bridge says what it makes of it - each comment once the one before is
+; all in, the next step of the stars with it (CPU only: not chip)
+seq_d2Slow		= 2			; the stars run down: 8.8 a frame
+seq_d2Stand		= 120		; ... and stand this long
+		section "morphcode",data
+seq_d2Stage:
+		moveq	#0,d0
+		move.b	seq_d2Ph,d0
+	ifne	defSalvo
+		cmp.w	#6,d0
+	else
+		cmp.w	#5,d0
+	endc
+		bhs.s	.out
+		addq.w	#1,seq_d2T
+		add.w	d0,d0
+		move.w	.tab(pc,d0.w),d0
+		jmp		.tab(pc,d0.w)
+.tab:	dc.w	.p0-.tab,.p1-.tab,.p2-.tab,.p3-.tab,.p4-.tab
+	ifne	defSalvo
+		dc.w	.p5-.tab
+	endc
+.p0:	move.w	hitTotal,seq_d2H0	; the monitor has just gone off
+		move.l	#cmtMonitor,cmtReq
+		clr.w	starTarget			; the stars run down
+		move.w	#seq_d2Slow,starAcc
+		sf		starTurn
+		bra.s	.next
+.p1:	tst.w	starV				; they stand - and it has sunk in
+		bne.s	.out
+		bsr.s	.free
+		bne.s	.out
+		move.l	#cmtStarLed,cmtReq
+		bra.s	.next
+.p2:	cmp.w	#seq_d2Stand,seq_d2T	; stood a while: round the other way,
+		blo.s	.out				; faster and faster
+		move.w	#seq_defStar,starTarget
+		move.w	#seq_starAccD,starAcc
+		bra.s	.next
+.p3:	bsr.s	.free				; (once the last is all in)
+		bne.s	.out
+		move.l	#cmtReverse,cmtReq
+		bra.s	.next
+.p4:	move.w	hitTotal,d0			; enough hit, the last word taken (the feed
+		sub.w	seq_d2H0,d0			; puts it in all before the question
+		cmp.w	#def2Hits,d0		; marks): the message
+		blo.s	.out
+		tst.l	cmtReq
+		bne.s	.out
+	ifne	defSalvo
+		tst.l	insPtr				; (defSalvo: and it is all in)
+		bne.s	.out
+	endc
+		st		seq_defReady
+	ifne	defSalvo
+		bra.s	.next
+.p5:	cmp.w	#seq_d2LineT,seq_d2T	; a while on: it has had enough of
+		blo.s	.out				; this - over to the row (seq_lnRun)
+	endc
+.next:	addq.b	#1,seq_d2Ph
+		clr.w	seq_d2T
+.out:	rts
+; -> Z set when no comment waits (the one going in may still be: the
+; next follows it straight on, scroller.s .insEnd)
+.free:	tst.l	cmtReq
+		rts
+seq_d2Ph:		dc.b	0
+				even
+seq_d2T:		dc.w	0
+seq_d2H0:		dc.w	0		; hitTotal as the monitor went off
+	ifne	defSalvo
+;--- (switches.i defSalvo) after the monitor: hunting from spot to spot in
+; short salvos, never a stream - and in the Defender spot too
+seq_svVmax		= 150		; the hunt's flying: calm
+seq_svGap		= 6			; frames between the shots of a salvo
+seq_svPause		= 34		; ... and after one, + 0..31
+seq_svUrgent	= 280		; (on the row: a question mark left of here - at once)
+seq_d2LineT		= 100		; the message let in: this long, then over to the row
+seq_lnGoX		= 340		; the final move once the last sentence is in this far
+seq_svHunt:
+		move.w	seq_shots,-(a7)
+		jsr		seq_hunt
+		move.w	(a7)+,d0
+		cmp.w	seq_shots,d0
+		beq.s	.o
+		bsr.s	seq_salvoNext
+.o:		rts
+; a shot is out: the next of the salvo, or a pause and a new salvo of 1..3
+seq_salvoNext:
+		subq.w	#1,seq_svLeft
+		ble.s	.new
+		move.w	#seq_svGap,seq_gap
+		rts
+.new:	jsr		getRandomNumber
+		move.w	d0,d1
+		and.w	#31,d1
+		add.w	#seq_svPause,d1
+		move.w	d1,seq_gap
+		lsr.w	#8,d0
+		and.w	#3,d0				; 1, 2, 2, 3 shots
+		addq.w	#1,d0
+		cmp.w	#4,d0
+		bne.s	.n
+		moveq	#2,d0
+.n:		move.w	d0,seq_svLeft
+		rts
+seq_svLeft:		dc.w	1
+	endc
+cmtMonitor:		dc.b	"MONITOR DOWN ?! ",0
+cmtStarLed:		dc.b	"FUCK - STARLED DEACTIVATED !!! ",0
+cmtReverse:		dc.b	"REVERSED ?!? ",0
+				even
+		section "code",data,chip
+	endc
 		section	"gamebss",bss
 enemy_cache:	ds.b	cache_len*32	; one line cache per enemy slot
 collList:		ds.b	coll_len*32		; shootable boxes, see updateEnemies

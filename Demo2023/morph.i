@@ -878,7 +878,7 @@ ENC_HATN	= 16		; the bay's doors' points (values: x, y each)
 ENC_HATN	= 0
 	endc
 ENC_CHK		= 24		; (simEncStep) checks a step, about
-RECV2COST	= 7040		; bytes the record gives up for recV2's code and tables
+RECV2COST	= 8256		; bytes the record gives up for recV2's code and tables
 				rsreset
 fs_comp:		rs.b	1	; a frame as the sim made it (the encoding's ring)
 fs_glow:		rs.b	1

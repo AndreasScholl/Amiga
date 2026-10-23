@@ -51,6 +51,49 @@ sprTest			= 0
 ;              that comes by (the question marks too) - the hops round the
 ;              text got it there too seldom to fire
 fixQmarks		= 1
+; defLine   1: (with fixQmarks) before the message the ship works its way
+;              over to the right of the Defender spot, onto the row's height,
+;              nose round to the right - swaying a little up and down, still
+;              firing at every glyph that comes, the last question marks too.
+;              then it has had enough: a beat, the reverse, a burn, the
+;              reverse again and a brake onto the Defender spot - and the
+;              laser only once it has settled there. the message comes 11
+;              spaces later; 0: as it was
+defLine			= 1
+; a1Cine    1: the first attack staged: out of boredom a single shot - a hit -
+;              the ship comes over, slowly, and has a look at the hole; then,
+;              liking it, single and double shots from spots it picks, till
+;              exactly a1Hits letters are gone: the scroller breaks. it mends
+;              a little faster, with "TEXT ONLINE AGAIN!"
+;           0: 5..8 shots, hits or not, as it was
+a1Cine			= 1
+a1Hits			= 6
+; def2Cine  1: (with defLine) the second attack: the stars keep going till the
+;              monitor is off. then, a step at a time: they slow down to a
+;              stand, stand, turn round and speed up the Defender way - and the
+;              bridge comments it in the text, more and more upset. the text
+;              runs on till the ship has hit def2Hits letters from the monitor
+;              going off (and the stars are up to speed), then the question
+;              marks, and the way onto the Defender spot as before
+;           0: the stars turn round with the flicker, as it was
+def2Cine		= 1
+; dropRun   1: the old last attack (asteroids.s seq_run, seq_fly .. seq_hold)
+;              is left out of the build - it never runs (finalAttackOn is 0),
+;              and its bytes go to the flight's record; 0: built in, as it was
+dropRun			= 1
+; defSalvo  1: (with def2Cine) after the monitor the ship hunts the text from
+;              spot to spot in short salvos (no stream of fire); once all is
+;              said it goes over to the row, salvos from there too, and the
+;              final move comes only once the last sentence is coming in;
+;              0: the pastime under the row and the early move, as it was
+defSalvo		= 1
+; (def2Cine's def2Hits: with defSalvo none - the hunt lasts as long as the
+; bridge talks; salvos, not a stream: 20 hits would take half a minute)
+	ifne	defSalvo
+def2Hits		= 0
+	else
+def2Hits		= 20
+	endc
 ; starPal2  1: the stars in seven colours from the Defender's own: every
 ;              layer keeps its colour through the change; after it the
 ;              bands move out so a star goes through all of them
