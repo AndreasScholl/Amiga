@@ -70,13 +70,24 @@ morphBeat	= 24		; frames a beat
 morphBar	= 4*morphBeat
 morphCueTicks = $300	; (music.s musicPalTicks: its tick counter's round)
 morphHoldMin = 20		; frames the fighter holds still at least
+	ifne	quickAC
+morphHoldMax = morphHoldMin+morphBar+8	; ... at most (quickAC: a bar - 2.3 s)
+	else
 morphHoldMax = morphHoldMin+3*morphBar	; ... at most (no music: on anyway)
+	endc
+	ifne	simMore
+morphSimGo	= 2400		; (simMore) frames of the flight worked out before the
+	endc				; play may start (the rest: ahead of it, in its frames)
 	ifeq	escortMux
 morphSimLine = 222		; the sim works on till this raster line (a step is
 						; 6k cycles at most: the frame stays below 117k)
 	else
 	ifne	recV2
+	ifne	simMore
+morphSimLine = 250		; (simMore: the frame's time left - its longest steps
+	else				; end by ~136k of the frame's 141.9k)
 morphSimLine = 230		; (recV2: its frames cost more - the encoding, the
+	endc
 						; film's flight - and the film is longer: it stops by
 						; the beam, its longest step ends by line ~250)
 	else
@@ -97,6 +108,15 @@ morphLrX	= 30*16		; ... then right and down to here (1/16 units:
 morphLrY	= 20*16		; low on the right), where it waits
 morphJkT	= 8*morphBeat	; frames from the swerves to the afterburner
 morphJk2	= morphJkT-morphBeat	; (the swerve right: frames)
+	ifne	chaseSim
+	ifne	chaseShow
+morphChT	= 45*morphBeat	; (chaseSim) frames of the chase (its tracks' last
+	else				; key): then on the beat the afterburner
+morphChT	= 34*morphBeat	; (chaseShow: the dive, the climb, the roll)
+	endc
+morphChStarT = 480		; ... frames: the stars from slow to top speed
+morphChAoA	= 6*16		; its nose over its way, as it unfolded (1/16 degrees)
+	endc
 morphEvA	= 2*morphBeat	; (simEvade) frames it takes to get faster than we
 morphEvB	= 24		; are, by this (1/16 units a frame)
 morphEvD	= 32		; frames: then the dip, the nose down to
@@ -287,6 +307,24 @@ morphOpenList:
 		MV		MV_FEINT,2*morphBeat,30,-24,96		; a feint left ...
 		MV		MV_CLIMB,8*morphBeat,0,22,192		; ... then it pulls up and turns
 		dc.w	-1									; away into our way, slowly
+	ifne	chaseSim
+	ifeq	launchSeq
+	fail	"chaseSim needs launchSeq (MV_NOD is the 18th maneuver)"
+	endc
+MV_NOD		= 17		; the nose dips and comes up: p1 degrees, p2 times
+; (switches.i chaseSim) Zeronine wakes up - seen from behind, as it unfolded,
+; no flame yet: a breath, a slow wing rock, the elevators, a look left, a
+; look right, ahead again - then the engine (14 beats: the chase from there)
+morphChaseOpen:
+		MV		MV_HOLD,morphBeat,0,0,0				; still - a breath
+		MV		MV_WIGGLE,3*morphBeat,7,1,0			; the wings: one slow rock
+		MV		MV_NOD,2*morphBeat,5,1,0			; the nose dips, comes up
+		MV		MV_FEINT,2*morphBeat,9,-14,0		; a look left ...
+		MV		MV_FEINT,3*morphBeat,-11,24,0		; ... a longer one right ...
+		MV		MV_FEINT,2*morphBeat,5,-10,0		; ... and ahead again
+		MV		MV_IGNITE,morphBeat,0,0,256			; the engine fires
+		dc.w	-1
+	endc
 ; the escort, from the first drop on (the break comes after morphBreakAt
 ; frames, whatever is left: a list too short holds on the last place)
 morphEscList:
@@ -384,7 +422,11 @@ morphEM:
 		dc.w	$0003,$0005,$0018,$0028,$0012,$0024,$0041,$0048
 		dc.w	$00c0,$0140,$0082,$0090,$0104,$0120
 		dc.w	$0040,$0040,$0040,$0040,$0001,$0001,$0001	; (the canopy: on the top)
+	ifne	gunVis
+		dc.w	$01ff,$01ff		; (switches.i gunVis: the guns stick out past
+	else						; the wing tips - nothing ever hides them)
 		dc.w	$0012,$0024		; (the guns: with their wing's faces)
+	endc
 
 ; a face: three of its corners; (b-a) x (c-a) points out of the hull
 morphFaces:
@@ -458,6 +500,10 @@ morphFlR16:		dc.w	0		; ... its R * 16 (softly), R (0: none)
 morphFlR:		dc.w	0
 morphTm:		dc.w	0		; ... the chain over to the small flame (0..AB_TM)
 morphFlBoost:	dc.w	0		; ... the ignition's overshoot (* 256 of f)
+	ifne	abLong
+morphAbOn:		dc.b	0		; (abLong) the afterburner has kicked in: the
+				even			; whole chain, thrown further
+	endc
 morphChP:		ds.w	4*4		; ... the chain's glows: x, y, R*16, (b) off
 morphChR16:		ds.w	4		; ... their R * 16, softly
 morphChTip:		ds.w	4		; ... the plate's middle, the way to the tip
@@ -529,6 +575,9 @@ tp_hit:			rs.w	1		; its age at the hit
 	endc
 	ifne	cineFight
 tp_lift:		rs.w	1		; (cine.i) frames on the lift still (0: free)
+	ifne	torpHide
+tp_in:			rs.w	1		; (torpHide) still in the bay: not drawn
+	endc
 	endc
 tp_len:			rs.b	0
 morphTorps:		ds.b	morphTorpN*tp_len
@@ -546,7 +595,11 @@ morphMxSkip::	dc.w	0		; ... glows the play still had to leave out
 morphMxTwo::	dc.w	0		; ... sprites with two glows (frames)
 	endc
 ; where they hit (the logo, screen x/y)
-morphTorpAim:	dc.w	135,44, 177,54, 220,44
+	ifne	torpWide
+morphTorpAim:	dc.w	100,44, 280,44, 190,54	; (switches.i torpWide: the left
+	else										; third, the right third, the
+morphTorpAim:	dc.w	135,44, 177,54, 220,44	; third launched the middle)
+	endc
 
 ;---------------------------------------------
 ; d0 = degrees (any) -> d0 = sin, d1 = cos (Q15). uses a1
@@ -693,6 +746,56 @@ morphUnit:
 		lsl.w	#2,d0				; 0..256
 		rts
 
+	ifne	holdLive
+morphHlB	= 40		; (holdLive) the dip: 1/16 px (2.5 px)
+morphHlR	= 2*16		; ... the roll: 1/16 degrees
+morphBobE:	dc.w	0		; ... coming in from the warp on (0..64)
+morphBobPx:	dc.w	0		; ... the dip last built (px)
+; (holdLive) once a frame from morphTick: from the warp on the float comes
+; in; the picture built again when the dip moves a pixel - held after the
+; unfolding every frame (the roll). keeps all
+morphBobTick:
+		movem.l	d0-d3,-(a7)
+		cmp.b	#MP_PLAY,morphPhase
+		bhs.s	.x
+		cmp.b	#TC_WARP,tcPhase
+		blo.s	.x
+		cmp.w	#64,morphBobE
+		bhs.s	.e
+		addq.w	#1,morphBobE
+.e:		cmp.b	#MP_HOLD,morphPhase
+		beq.s	.d
+		bsr.s	morphBob
+		asr.w	#4,d0
+		cmp.w	morphBobPx,d0
+		beq.s	.x
+		move.w	d0,morphBobPx
+.d:		st		morphDirty
+.x:		movem.l	(a7)+,d0-d3
+		rts
+; -> d0 = the dip (1/16 px, down), d1 = the roll (1/16 degrees): a bar a
+; round (both 0 at the bar's start - the dip at rest there too: sin^2),
+; as far as come in. uses d2/d3
+morphBob:
+		bsr.s	morphBarPos			; ticks into the bar
+		mulu	#60,d0				; (a bar: 360 degrees, 1/16)
+		bsr		morphSinCos16		; d0 sin, d1 cos (Q15)
+		move.w	#32767,d2
+		sub.w	d1,d2				; 1 - cos: the dip B sin^2
+		mulu	#morphHlB,d2
+		swap	d2
+		muls	#morphHlR,d0		; the roll R sin
+		add.l	d0,d0
+		swap	d0
+		muls	morphBobE,d0
+		asr.l	#6,d0
+		move.w	d0,d1
+		mulu	morphBobE,d2
+		lsr.l	#6,d2
+		move.w	d2,d0
+		rts
+	endc
+
 ; -> d0 = music ticks into the bar (0..95)
 morphBarPos:
 		move.w	#morphCueTicks,d0
@@ -737,6 +840,9 @@ morphTick::
 		move.w	d0,-(a7)
 		addq.w	#1,morphT
 		addq.w	#1,morphPT
+	ifne	holdLive
+		bsr		morphBobTick		; (the live ship floats)
+	endc
 		moveq	#0,d1
 		move.b	morphPhase,d1
 		add.w	d1,d1
@@ -771,7 +877,13 @@ morphTick::
 .tab:	dc.w	.unfold-.tab,.hold-.tab,.play-.tab,.gone-.tab
 
 .unfold:
+	ifne	transAC
+		bsr		tcTick				; (transAC: the stars, A, B, C first)
+		cmp.b	#TC_BCD,tcPhase		; (before B the turn stays: new lines only
+		blo.s	.ud					; when the ship is on another pixel)
+	endc
 		st		morphDirty
+.ud:
 		cmp.w	#morphLen+morphGlow,morphT
 		blt.s	.out
 		st		morphKept
@@ -790,7 +902,14 @@ morphTick::
 .h2:	cmp.w	#morphHoldMin,morphPT
 		blo.s	.out
 		tst.b	morphSimEnd			; the whole flight worked out?
+	ifne	simMore
+		bne.s	.h3
+		cmp.w	#morphSimGo,morphSimN	; (simMore: or far enough ahead - it
+		blo.s	.out				; works on ahead of the play)
+.h3:
+	else
 		beq.s	.out
+	endc
 	cmp.w	#morphHoldMax,morphPT	; (no music: on anyway)
 		bhs.s	.go
 		bsr		morphBarPos
@@ -800,6 +919,9 @@ morphTick::
 		bhs.s	.out
 .go:	move.b	#MP_PLAY,morphPhase
 		clr.w	morphPT
+	ifne	holdGap
+		bra.s	.play				; (holdGap: its first frame now - no frame
+	endc							; without the ship)
 		rts
 
 .play:	move.l	a0,-(a7)
@@ -821,6 +943,227 @@ morphTick::
 		lea		sfxDroneOn,a1
 		clr.l	(a1)
 		rts
+
+	ifne	transAC
+;---------------------------------------------
+; (switches.i transAC) A-C: the Asteroids ship becomes a body in space.
+; the glide (seq_morph, as ever), then the stars go into depth while it
+; still floats, then on the next bar:
+;   A  it drifts and corrects itself as ever; its last tcACalm frames it
+;      goes to its place and comes to rest (seq_morph: tcStill)
+;   B  a pause - then it tips its nose into the stars: a push builds the
+;      turn up, it glides, a counter push stops it, a tiny overshoot. edge
+;      on, in true perspective, a line is left (its wings, upright)
+;   C  a hesitant little jet: a yaw to the left with a twitch back, a roll
+;      with the nose coming up, a correction - the flat triangle shows
+;   D  (for now) the unfolding as it was; the body's turn eases over to
+;      the unfolding's own, so the hold takes it on without a jump
+; every axis: the pilot's push - its set point moves impulse, glide,
+; counter (tcProf: a quarter accelerating, a quarter braking) - and the
+; body's inertia: it follows on a spring a little underdamped (k 1/8,
+; damping 1/2: lags a few frames, overshoots ~4 %, settles). the axes are
+; morphR16 (roll), P16 (pitch), H16 (heading), T16 (tilt), 1/16 degrees
+TC_GLIDE	= 0
+TC_WARP		= 1
+TC_A		= 2
+TC_BCD		= 3
+	ifne	quickAC
+tcWarpT		= 40				; (quickAC) frames from warpStart till A
+tcAT		= 100				; ... A (all: 2.8 s)
+tcPinT		= 10				; ... the arrow pinned (the stars' dear frames)
+	else
+tcWarpT		= 120				; frames from warpStart till A may start (the
+								; stars' turn into depth is done by then)
+tcAT		= 240				; A
+tcPinT		= 30
+	endc
+tcACalm		= 24				; ... its last frames: to rest
+tcDAt		= 72+168			; frames from B's start: D (the unfolding)
+				rsreset
+ta_from:		rs.w	1		; the set point: from, to (1/16 degrees),
+ta_to:			rs.w	1		; its start frame, its frames
+ta_t0:			rs.w	1
+ta_n:			rs.w	1
+ta_th:			rs.l	1		; the body: the angle (16.16), its speed
+ta_w:			rs.l	1
+ta_len:			rs.b	0		; 16
+; a move: frame (from B's start), axis (0 roll, 1 pitch, 2 heading, 3
+; tilt, 4 yaw in the screen's plane), where to (1/16 degrees), frames
+TCK		macro
+		dc.w	\1,\2,\3,\4
+		endm
+tcScript:
+	ifne	transBehind
+		; (switches.i transBehind) B: 12 frames still, then it turns its nose
+		; up the screen (yaw in the screen's plane, axis 4) and tips it into
+		; the stars (tilt): seen from behind, its wings level - a flat line
+		TCK		12,4,-90*16,40
+		TCK		16,3,-90*16,46
+		; C: hesitant - a yaw left (its nose in the depth), a twitch back, on
+		TCK		72,2,-10*16,20
+		TCK		72+20,2,-4*16,10
+		TCK		72+30,2,-18*16,26
+		; ... a roll (a bank on the screen now), the nose coming up a little
+		TCK		72+56,0,-35*16,50
+		TCK		72+62,3,-78*16,44
+		; ... a correction, not quite behind it
+		TCK		72+120,0,-6*16,40
+		TCK		72+120,3,-88*16,40
+		TCK		72+124,2,-6*16,40
+		; D: it unfolds as it flies, seen from behind and a touch from above
+		TCK		tcDAt,0,0,150
+		TCK		tcDAt,2,0,150
+		TCK		tcDAt,3,-84*16,150
+		dc.w	-1
+	endc
+		; B: 12 frames still, then the nose into the stars
+		TCK		12,1,-90*16,46
+		; C: hesitant - a yaw left, a twitch back, on
+		TCK		72,2,-10*16,20
+		TCK		72+20,2,-4*16,10
+		TCK		72+30,2,-18*16,26
+		; ... a roll (to the right), the nose coming up
+		TCK		72+56,0,-35*16,50
+		TCK		72+62,3,12*16,44
+		; ... a correction, not quite edge on
+		TCK		72+120,0,-6*16,40
+		TCK		72+120,3,2*16,40
+		TCK		72+124,2,-6*16,40
+		; D: over to the unfolding's own turn (roll, pitch as morphPose
+		; makes them at its end), eased over most of it
+		TCK		tcDAt,0,morphRoll*16,150
+		TCK		tcDAt,1,morphPitch*16,150
+		TCK		tcDAt,2,0,150
+		TCK		tcDAt,3,0,150
+		dc.w	-1
+; 0..64 of a move -> 0..4096 of the way: impulse (accelerating), glide,
+; counter (braking), each the third of it a quarter of the time
+tcProf:
+		dc.w	0,2,10,21,38,60,86,117,152,193,238,288,343
+		dc.w	402,467,536,610,688,771,860,951,1042,1134,1225,1317,1408
+		dc.w	1499,1591,1682,1774,1865,1957,2048,2139,2231,2322,2414,2505,2597
+		dc.w	2688,2779,2871,2962,3054,3145,3236,3325,3408,3486,3560,3629,3694
+		dc.w	3753,3808,3858,3903,3944,3979,4010,4036,4058,4075,4086,4094,4096
+
+; once a frame from morphTick's unfolding phase: the timeline before the
+; unfolding (morphT held at -1 till D)
+tcTick:
+		movem.l	d0-d4/a0-a2,-(a7)
+		addq.w	#1,tcT
+		move.b	tcPhase,d0
+		cmp.b	#TC_GLIDE,d0
+		bne.s	.n0
+		cmp.w	#seq_mWait,tcT		; the glide done: the stars into depth
+		blo		.hold
+		jsr		warpStart
+		move.b	#TC_WARP,tcPhase
+		clr.w	tcT
+	ifeq	quickAC
+		st		tcStill				; (it stops and watches meanwhile)
+	endc
+		bra		.hold
+.n0:	cmp.b	#TC_WARP,d0
+		bne.s	.n1
+		bsr		morphBarPos			; (the bar's position: a new bar?)
+		move.w	tcBarLast,d1
+		move.w	d0,tcBarLast
+		cmp.w	#tcWarpT,tcT
+		blo		.hold
+	ifeq	quickAC
+		cmp.w	d1,d0
+		bhs		.hold
+	endc
+		move.b	#TC_A,tcPhase		; A on the bar: it drifts again
+		clr.w	tcT
+		sf		tcStill
+		bra		.hold
+.n1:	cmp.b	#TC_A,d0
+		bne.s	.n2
+		cmp.w	#tcAT-tcACalm,tcT
+		blo		.hold
+		st		tcStill				; (seq_morph: to its place, to rest)
+		cmp.w	#tcAT,tcT
+		blo		.hold
+		move.b	#TC_BCD,tcPhase
+		clr.w	tcT
+		lea		tcScript(pc),a1
+		move.l	a1,tcScrP
+.n2:	; B, C, D: the moves starting now, then every axis a frame on
+		move.l	tcScrP,a1
+.sc:	move.w	(a1),d0
+		bmi.s	.sc9
+		cmp.w	tcT,d0
+		bne.s	.sc9
+		move.w	2(a1),d1			; its axis
+		lsl.w	#4,d1
+		lea		tcAx,a2
+		add.w	d1,a2
+		bsr		.setPt				; (where the set point is now: from)
+		move.w	d0,ta_from(a2)
+		move.w	4(a1),ta_to(a2)
+		move.w	tcT,ta_t0(a2)
+		move.w	6(a1),ta_n(a2)
+		addq.l	#8,a1
+		bra.s	.sc
+.sc9:	move.l	a1,tcScrP
+		lea		tcAx,a2
+		lea		tcTh,a1
+		moveq	#5-1,d4
+.ax:	bsr		.setPt
+		swap	d0					; the spring: a = (set - angle)/8 - w/2
+		clr.w	d0
+		move.l	d0,d1
+		sub.l	ta_th(a2),d1
+		asr.l	#3,d1
+		move.l	ta_w(a2),d2
+		asr.l	#1,d2
+		sub.l	d2,d1
+		add.l	ta_w(a2),d1
+		move.l	d1,ta_w(a2)
+		add.l	ta_th(a2),d1
+		move.l	d1,ta_th(a2)
+		swap	d1
+		move.w	d1,(a1)+			; the angle (1/16 degrees)
+		lea		ta_len(a2),a2
+		dbf		d4,.ax
+		cmp.w	#tcDAt,tcT			; D: the unfolding goes
+		bhs.s	.out
+.hold:	move.w	#-1,morphT			; (not yet)
+.out:	movem.l	(a7)+,d0-d4/a0-a2
+		rts
+; a2 = an axis -> d0 = its set point now (1/16 degrees)
+.setPt:	move.w	ta_n(a2),d1
+		beq.s	.sp9				; (never moved: 0)
+		move.w	tcT,d0
+		sub.w	ta_t0(a2),d0
+		cmp.w	d1,d0
+		blo.s	.sp0
+		move.w	ta_to(a2),d0		; there
+		rts
+.sp0:	ext.l	d0
+		lsl.l	#6,d0
+		divu	d1,d0				; 0..63
+		add.w	d0,d0
+		lea		tcProf(pc),a0
+		move.w	(a0,d0.w),d0		; 0..4096 of the way
+		move.w	ta_to(a2),d1
+		sub.w	ta_from(a2),d1
+		muls	d1,d0
+		asr.l	#8,d0
+		asr.l	#4,d0
+		add.w	ta_from(a2),d0
+		rts
+.sp9:	moveq	#0,d0
+		rts
+tcAx:		ds.b	5*ta_len	; roll, pitch, heading, tilt, yaw (in the screen)
+tcTh:		ds.w	5			; their angles now (1/16 degrees)
+tcScrP:		dc.l	0
+tcT:		dc.w	0
+tcBarLast:	dc.w	0
+tcPhase:	dc.b	TC_GLIDE
+tcStill::	dc.b	0			; (seq_morph) A's end on: to its place, at rest
+		even
+	endc
 
 ;---------------------------------------------
 ; the play: the next frame of the flight as the sim wrote it
@@ -878,7 +1221,7 @@ ENC_HATN	= 16		; the bay's doors' points (values: x, y each)
 ENC_HATN	= 0
 	endc
 ENC_CHK		= 24		; (simEncStep) checks a step, about
-RECV2COST	= 8388		; bytes the record gives up for recV2's code and tables
+RECV2COST	= -6564		; bytes the record gives up for recV2's code and tables
 				rsreset
 fs_comp:		rs.b	1	; a frame as the sim made it (the encoding's ring)
 fs_glow:		rs.b	1
@@ -1188,6 +1531,21 @@ rpTorps:
 
 ; what happens this frame (d7 the flags)
 morphPlayEv:
+	ifne	musChase
+		move.w	morphPlayN,d0		; (musChase) back in the picture: the
+		subq.w	#1,d0				; voices fade, the drums play on; gone
+		cmp.w	morphPhT+2*SP_ENTRY,d0	; (the wait): the drums fade too
+		bne.s	.mc0
+		st		musFadeGo
+.mc0:	tst.w	morphPhT+2*SP_BREAK	; (from its break on, once it is out
+		beq.s	.mc1				; of the picture)
+		cmp.w	morphPhT+2*SP_BREAK,d0
+		blo.s	.mc1
+		tst.b	morphPShip
+		bne.s	.mc1
+		st		musDrumOut
+.mc1:
+	endc
 		btst	#RB_DROP,d7
 		beq.s	.e0
 		moveq	#SFX_DROP,d0
@@ -1203,7 +1561,7 @@ morphPlayEv:
 		bne.s	.ig					; a big boom on 3 - left and right)
 		tst.w	d7
 		bpl.s	.e2
-	ifne	drumSeq
+	ifne	drumSeq*(1-musChase)
 		move.w	morphPhT+2*SP_BREAK,d1	; (the break's boom - not the pass's:
 		beq.s	.ig					; music.s, the music ends - its voices
 		move.w	morphPlayN,d0		; fade, the drums go on)
@@ -1213,7 +1571,14 @@ morphPlayEv:
 		move.w	#morphBreakLead-1,musHitIn
 		st		musFadeGo
 	endc
-.ig:	move.b	#2,morphFlash		; (the afterburner: its flash, the flame
+.ig:
+	ifne	abLong
+		tst.w	d7
+		bpl.s	.ig0
+		st		morphAbOn		; (the afterburner: its chain, long)
+.ig0:
+	endc
+		move.b	#2,morphFlash		; (the afterburner: its flash, the flame
 		move.w	#128,morphFlBoost	; longer for a while)
 		moveq	#SFX_SHIPIGN,d0
 		jsr		sfxPlay
@@ -1352,6 +1717,21 @@ morphPlayFrame:
 .tp9:	move.l	a0,morphPlayR
 		addq.w	#1,morphPlayN
 		; what happens this frame
+	ifne	musChase
+		move.w	morphPlayN,d0		; (musChase) back in the picture: the
+		subq.w	#1,d0				; voices fade, the drums play on; gone
+		cmp.w	morphPhT+2*SP_ENTRY,d0	; (the wait): the drums fade too
+		bne.s	.mc0
+		st		musFadeGo
+.mc0:	tst.w	morphPhT+2*SP_BREAK	; (from its break on, once it is out
+		beq.s	.mc1				; of the picture)
+		cmp.w	morphPhT+2*SP_BREAK,d0
+		blo.s	.mc1
+		tst.b	morphPShip
+		bne.s	.mc1
+		st		musDrumOut
+.mc1:
+	endc
 		btst	#RB_DROP,d7
 		beq.s	.e0
 		moveq	#SFX_DROP,d0
@@ -1367,7 +1747,7 @@ morphPlayFrame:
 		bne.s	.ig					; a big boom on 3 - left and right)
 		tst.w	d7
 		bpl.s	.e2
-	ifne	drumSeq
+	ifne	drumSeq*(1-musChase)
 		move.w	morphPhT+2*SP_BREAK,d1	; (the break's boom - not the pass's:
 		beq.s	.ig					; music.s, the music ends - its voices
 		move.w	morphPlayN,d0		; fade, the drums go on)
@@ -1377,7 +1757,14 @@ morphPlayFrame:
 		move.w	#morphBreakLead-1,musHitIn
 		st		musFadeGo
 	endc
-.ig:	move.b	#2,morphFlash		; (the afterburner: its flash, the flame
+.ig:
+	ifne	abLong
+		tst.w	d7
+		bpl.s	.ig0
+		st		morphAbOn		; (the afterburner: its chain, long)
+.ig0:
+	endc
+		move.b	#2,morphFlash		; (the afterburner: its flash, the flame
 		move.w	#128,morphFlBoost	; longer for a while)
 		moveq	#SFX_SHIPIGN,d0
 		jsr		sfxPlay
@@ -1549,6 +1936,13 @@ morphDraw:
 		bsr		morphPlayDraw
 		rts
 .live:	; the unfolding and the hold: worked out here, when it has changed
+	ifne	transAC
+		cmp.b	#TC_WARP,tcPhase	; (transAC: the stars' first frames into
+		bne.s	.lv					; depth are dear - the arrow, coming to
+		cmp.w	#tcPinT,tcT			; rest, as it was a pixel or so back, for
+		blo		.emit				; those)
+.lv:
+	endc
 		tst.b	morphDirty
 		bne.s	.build
 		move.l	obj_xc(a0),d0		; the same picture: and the ship on the
@@ -1663,7 +2057,15 @@ morphPlayDraw:
 		bsr		morphEdgeLines
 	ifne	ENC_HATN
 		tst.b	morphPHatOn			; the bay's doors (cine.i)
+	ifne	hatAlways
+		bne.s	.hd
+		btst	#0,morphPMask+1		; (hatAlways: shut - from the ship's
+		beq.s	.nh					; points, its top seen)
+		jsr		morphHatCalc
+.hd:
+	else
 		beq.s	.nh
+	endc
 		jsr		morphHatDraw
 .nh:
 	endc
@@ -2112,6 +2514,16 @@ morphChain:
 		lsr.w	#8,d0
 		add.w	#77,d0
 		add.w	morphFlBoost,d0
+	ifne	abLong
+		tst.b	morphAbOn			; (the afterburner: 1.31 times as far)
+		beq.s	.ab
+		move.w	d0,d1
+		lsr.w	#2,d1
+		add.w	d1,d0
+		lsr.w	#2,d1
+		add.w	d1,d0
+.ab:
+	endc
 		move.w	morphFlRn+2,d1		; (+-15 %: * 77 >> 14 ~ / 213)
 		and.w	#63,d1
 		sub.w	#32,d1
@@ -2212,6 +2624,13 @@ morphChain:
 		add.w	d4,d0
 		add.w	d4,d0
 		move.w	d0,6(a1)
+	ifne	abLong
+		tst.b	morphAbOn			; (no afterburner yet: one flame - the
+		bne.s	.w1					; first, a little fuller; the others
+		move.w	2(a1),(a1)			; die away)
+		clr.w	2(a1)
+		clr.l	4(a1)
+	endc
 .w1:	lea		morphChR16,a1
 		lea		.want(pc),a4
 		lea		.max(pc),a3
@@ -2816,6 +3235,23 @@ morphPose:
 		move.w	d1,morphPitchD
 		move.w	obj_xc(a0),morphCX
 		move.w	obj_yc(a0),morphCY
+	ifne	holdLive
+		bsr		morphBob			; (holdLive: it floats - the dip, px)
+		asr.w	#4,d0
+		add.w	d0,morphCY
+	endc
+	ifne	transAC
+		; (transAC) the turn is the body's (tcTick): its matrix, for
+		; morphPtsG - the same turn morphPtsU makes from roll and pitch, and
+		; heading and tilt as well
+		lea		tcTh,a1
+		move.w	(a1)+,morphR16
+		move.w	(a1)+,morphP16
+		move.w	(a1)+,morphH16
+		move.w	(a1)+,morphT16
+		move.w	(a1)+,morphY16
+		bra		morphPoseW
+	else
 		move.w	morphRollD,d0
 		bsr		morphSinCos
 		move.w	d1,morphCR
@@ -2825,6 +3261,7 @@ morphPose:
 		move.w	d1,morphCP
 		move.w	d0,morphSP
 		rts
+	endc
 .done:	; unfolded, holding: a body in the world, its place from the ship
 		; (obj_xc/yc, at morphZ0), turned as it unfolded
 		move.w	obj_xc(a0),d0
@@ -2838,6 +3275,14 @@ morphPose:
 		divs	#morphF,d0
 		move.w	d0,morphSY
 		move.l	#morphZ0,morphSZ
+	ifne	transBehind
+		lea		tcTh,a1				; (transBehind: it holds as it unfolded -
+		move.w	(a1)+,morphR16		; seen from behind)
+		move.w	(a1)+,morphP16
+		move.w	(a1)+,morphH16
+		move.w	(a1)+,morphT16
+		move.w	(a1)+,morphY16
+	else
 		move.w	morphRollD,d0
 		lsl.w	#4,d0
 		move.w	d0,morphR16
@@ -2847,6 +3292,20 @@ morphPose:
 		clr.w	morphY16
 		clr.w	morphT16
 		clr.w	morphH16
+	endc
+	ifne	holdLive
+		bsr		morphBob			; (holdLive: it floats - d0 the dip, 1/16
+		muls	#57,d0				; px -> 1/16 units at morphZ0 (* 3.56), d1
+		asr.l	#4,d0				; the roll, coming in over the hold's
+		add.w	d0,morphSY			; first 48 frames)
+		move.w	morphPT,d2
+		cmp.w	#48,d2
+		bls.s	.hl0
+		moveq	#48,d2
+.hl0:	muls	d2,d1
+		divs	#48,d1
+		add.w	d1,morphR16
+	endc
 		; (falls through)
 
 ; the turn (morphR16..morphH16) as a matrix and the place (morphSX/SY/SZ),
@@ -3019,7 +3478,31 @@ morphPoints:
 		lea		morphXY,a2
 		add.w	d0,a2
 		tst.b	morphKept
+	ifne	transAC
+		bne		morphKm
+		tst.w	morphT				; (transAC: through the body's matrix -
+		bpl		morphPtsG			; before the unfolding only the arrow's 4)
+		lea		morphPts,a1
+		lea		morphXY,a2
+		moveq	#0,d7
+		bsr		morphPtsG			; the nose
+		moveq	#0,d7
+		bsr		morphPtsG			; the back (1; 2..4 the same)
+		move.l	-4(a2),d0
+		move.l	d0,(a2)+
+		move.l	d0,(a2)+
+		move.l	d0,(a2)+
+		lea		morphPts+5*mp_len,a1
+		moveq	#1,d7
+		bsr		morphPtsG			; the wing tips
+		move.l	morphXY+4,d0
+		moveq	#morphNP-7-1,d7		; (the rest: on the back, unseen yet)
+.ar:	move.l	d0,(a2)+
+		dbf		d7,.ar
+		rts
+	else
 		beq		morphPtsU
+	endc
 		bra.s	morphKm
 ; the same, unfolded always (the sim)
 morphPointsK:
@@ -3169,6 +3652,83 @@ morphPtsU:
 		lea		mp_len(a1),a1
 		dbf		d7,morphPtsU
 		rts
+
+	ifne	transAC
+; (switches.i transAC) the live points: unfolded as far as their part is
+; (as morphPtsU), turned by the body's matrix (morphM: morphPoseW from
+; tcTick's roll, pitch, heading, tilt), onto the screen round the ship as
+; morphPtsU does: * lens*growth / (depth - z)
+morphPtsG:
+		movem.w	(a1),d0-d2			; start
+		movem.w	6(a1),d3-d5			; the way to the end
+		move.w	12(a1),d6			; its part's smoothstep
+		add.w	d6,d6
+		lea		morphU,a3
+		move.w	(a3,d6.w),d6
+		lsl.w	#4,d0				; 1/16 units: x*16 + d*u/16
+		lsl.w	#4,d1
+		lsl.w	#4,d2
+		muls	d6,d3
+		asr.l	#4,d3
+		add.w	d3,d0
+		muls	d6,d4
+		asr.l	#4,d4
+		add.w	d4,d1
+		muls	d6,d5
+		asr.l	#4,d5
+		add.w	d5,d2
+		lea		morphM,a3
+		move.w	(a3)+,d4			; x
+		muls	d0,d4
+		move.w	(a3)+,d5
+		muls	d1,d5
+		add.l	d5,d4
+		move.w	(a3)+,d5
+		muls	d2,d5
+		add.l	d5,d4
+		add.l	d4,d4
+		swap	d4
+		move.w	(a3)+,d3			; y (down)
+		muls	d0,d3
+		move.w	(a3)+,d5
+		muls	d1,d5
+		add.l	d5,d3
+		move.w	(a3)+,d5
+		muls	d2,d5
+		add.l	d5,d3
+		add.l	d3,d3
+		swap	d3
+		move.w	(a3)+,d5			; z (+: towards the eye)
+		muls	d0,d5
+		move.w	(a3)+,d6
+		muls	d1,d6
+		add.l	d6,d5
+		move.w	(a3)+,d6
+		muls	d2,d6
+		add.l	d6,d5
+		add.l	d5,d5
+		swap	d5
+		move.w	#morphZ0,d1
+		sub.w	d5,d1
+		moveq	#0,d0				; (4.12)
+		move.w	morphFG,d0
+		lsl.l	#8,d0
+		lsl.l	#4,d0
+		divu	d1,d0
+		muls	d0,d4
+		asr.l	#8,d4
+		asr.l	#4,d4
+		muls	d0,d3
+		asr.l	#8,d3
+		asr.l	#4,d3
+		add.w	morphCX,d4
+		add.w	morphCY,d3
+		move.w	d4,(a2)+
+		move.w	d3,(a2)+
+		lea		mp_len(a1),a1
+		dbf		d7,morphPtsG
+		rts
+	endc
 
 ; the faces seen, from the projected corners: (b-a) x (c-a) of a face's
 ; corners points out of the hull (morphFaces), and the screen keeps the
@@ -3341,6 +3901,9 @@ simMX:			dc.w	0		; a block's offset (1/16 units): across, down,
 simMY:			dc.w	0		; ahead
 simMZ:			dc.w	0
 simMR:			dc.w	0		; ... its own roll, heading (1/16 degrees)
+	ifne	chaseSim
+simMT:			dc.w	0		; ... (the chase) its nose over its way (simFly)
+	endc
 simBX:			dc.w	0		; (MV_MOVE) the escort's place moved: across,
 simBZ:			dc.w	0		; ahead (1/16 units)
 simMH:			dc.w	0
@@ -3403,7 +3966,11 @@ morphSimInit::
 		clr.w	simPhase
 		move.w	#-1,simPhLast
 		clr.w	simPT
+	ifne	chaseSim
+		move.l	#morphChaseOpen,simList
+	else
 		move.l	#morphOpenList,simList
+	endc
 		clr.w	simBT
 		; where it unfolds (as morphPose has it: seq_mX/seq_mY at morphZ0)
 		move.w	#seq_mX-morphVX,d0
@@ -3428,12 +3995,38 @@ morphSimInit::
 		clr.l	simVY
 		clr.l	simVZ
 		clr.l	simWXo
+	ifne	chaseSim
+		; turned as it unfolded: seen from behind (transBehind's last pose,
+		; (0, 0, 0, -84, -90) live, is this: the nose 6 degrees up)
+		clr.w	simRoll
+		move.w	#-90*16,simPitch
+		move.w	#-90*16,simYaw
+		move.w	#morphChAoA,simTilt
+		clr.w	simHead
+		clr.w	simMT
+	else
 		; turned as it unfolded, seen from above
 		move.w	#morphRoll*16,simRoll
 		move.w	#morphPitch*16,simPitch
 		clr.w	simYaw
 		clr.w	simTilt
 		clr.w	simHead
+	endc
+	ifne	hatAlways
+	ifne	cineFight
+		st		cfHatShow			; (the bay's doors: part of the ship)
+		clr.w	cfHat
+		clr.w	cfHatV
+		clr.w	cfHatT
+	endc
+	endc
+	ifne	abLong
+	ifne	chaseSim
+		sf		morphAbOn			; (one flame till the afterburner)
+	else
+		st		morphAbOn
+	endc
+	endc
 		clr.w	simBank
 		move.w	#256,simVz
 		move.w	#11,simVc
@@ -3754,6 +4347,9 @@ morphSimTick:
 		clr.w	simMZ
 		clr.w	simMR
 		clr.w	simMH
+	ifne	chaseSim
+		clr.w	simMT
+	endc
 		move.w	simPhase,d0
 		add.w	d0,d0
 		lea		.tab(pc),a1
@@ -3808,7 +4404,11 @@ morphSimTick:
 		beq.s	.g
 		st		simHidden
 .g:		rts
+	ifne	chaseSim
+.tab:	dc.w	simOpen-.tab,simChase-.tab,simLoop-.tab,simEntry-.tab
+	else
 .tab:	dc.w	simOpen-.tab,simPass-.tab,simLoop-.tab,simEntry-.tab
+	endc
 		dc.w	simEscort-.tab,simBreak-.tab,simWait-.tab,simEndP-.tab
 
 ; --- the start: Zeronine wakes up (morphOpenList)
@@ -3946,6 +4546,235 @@ simPass:
 		move.w	#SP_LOOP,simPhase
 		move.w	#-1,simPT
 .out:	rts
+
+	ifne	chaseSim
+; --- (switches.i chaseSim) the pass as a chase, seen from behind: the
+;     engine on, it pulls away from us; we go after it, the stars faster and
+;     faster, and gain on it, slowly. it feels something behind it - its
+;     wings over, a look over its shoulder; nothing - it tries to shake it
+;     off: three moves, each rolled into first, then the pull (its way
+;     bends: simFly turns its nose along, banks it by how hard), rolled out;
+;     every turn costs it speed: we come nearer each time. at last close,
+;     low on the right - and on the beat its afterburner: the evade, as it
+;     was. where it is to be is in the tracks below (keys: frame, value), the
+;     heavy springs take it there
+simChase:
+		tst.w	simPT
+		bne.s	.p
+		st		simFlyNew			; (the nose along its way from here)
+		move.w	#morphSpK2,simSpK	; (heavy)
+		move.w	#morphSpD2,simSpD
+.p:		move.w	simPT,d0			; the stars: we go after it, faster and
+		move.w	#morphChStarT,d1	; faster, up to top speed (eased)
+		bsr		morphUnit			; d1 0..256
+		mulu	#morphVzPass-1,d1
+		add.w	#256,d1
+		move.w	d1,simVz
+		bsr		simOurSpeed
+		tst.w	simDodgeT			; (its evade: its own way)
+		beq.s	.k
+		bsr		simEvade
+		bra		.c9
+.k:		move.w	simPT,d7
+		move.w	#128,simThrT
+		lea		morphChZ(pc),a0		; ahead
+		bsr		simKey
+		lea		simZ,a1
+		bsr.s	.spr
+		bsr		simJitter			; across, up and down: the pilot's hand
+		lea		morphChX(pc),a0		; on it too
+		bsr		simKey
+		add.w	simJX,d2
+		lea		simX,a1
+		bsr.s	.spr
+		lea		morphChY(pc),a0
+		bsr		simKey
+		add.w	simJY,d2
+		lea		simY,a1
+		bsr.s	.spr
+		lea		morphChR(pc),a0		; rolled into a move before it
+		bsr		simKey
+		move.w	d2,simMR
+		lea		morphChH(pc),a0		; (the look: its nose a little round)
+		bsr		simKey
+		move.w	d2,simMH
+		lea		morphChA(pc),a0		; its nose a little over its way
+		bsr		simKey
+		move.w	d2,simMT
+		st		simFlyOn
+		cmp.w	#morphChT-1,d7		; its last frame (the next on a beat):
+		bne.s	.c9					; the afterburner from the next on - its
+		move.l	simVZ,d0			; speed from us (1/16 units a frame,
+		asr.l	#8,d0				; < 0: we come nearer)
+		move.w	d0,simEvV
+		move.w	#1,simDodgeT
+.c9:	tst.b	simGone
+		bne.s	.gone
+		rts
+.gone:	cmp.l	#-morphPassBehind<<8,simZ	; past us: on behind us (heard),
+		bgt.s	.out				; then its loop
+		move.w	#SP_LOOP,simPhase
+		move.w	#-1,simPT
+.out:	rts
+.spr:	ext.l	d2					; d2 = where (1/16 units): the spring
+		asl.l	#8,d2
+		move.l	d2,d0
+		bra		simSpringP
+
+; a0 = a track: eased (0: no, straight from key to key), then the keys -
+; frame, value (1/16 units or degrees) - the last frame $7fff; d7 = the
+; frame -> d2 = the value there. uses d0-d3/a0
+simKey:
+		move.w	(a0)+,-(a7)
+.f:		cmp.w	4(a0),d7			; past the next key?
+		blo.s	.in
+		addq.l	#4,a0
+		bra.s	.f
+.in:	move.w	d7,d0
+		sub.w	(a0),d0
+		move.w	4(a0),d1
+		sub.w	(a0),d1
+		ext.l	d0
+		lsl.l	#8,d0
+		lsl.l	#4,d0
+		divu	d1,d0				; 0..4096
+		tst.w	(a7)+
+		beq.s	.l
+		bsr		simSS
+.l:		move.w	2(a0),d2
+		move.w	6(a0),d3
+		bra		simLerpF
+
+CK		macro
+		dc.w	\1,(\2)*16
+		endm
+morphChX0	= (seq_mX-morphVX)*morphZ0/morphF	; (1/16 units: where it unfolded)
+morphChY0	= (seq_mY-morphVY)*morphZ0/morphF
+; across (units, - left; the vanishing point 0)
+morphChX:	dc.w	1,0,morphChX0
+		CK		96,-62				; it pulls away
+		CK		192,-46
+		CK		372,-40				; (the look over its shoulder: 240..360)
+		CK		392,-44				; 1: rolled left ... (372)
+		CK		468,-180			; ... a break to the left, climbing
+		CK		540,-176			; (rolled out: 456..516)
+		CK		636,56				; 2: rolled right (528), a long pull
+		CK		690,52				; across, down (rolled out: 624..672)
+	ifne	chaseShow
+		CK		768,-10				; it dives to the bottom (we see its
+		CK		804,-24				; top, the bay) ...
+		CK		888,30				; ... pulls up to the top (its belly)
+		CK		904,36
+		CK		960,96				; a heavy barrel roll, round to the
+		CK		1008,70				; right and down ...
+		CK		1080,30				; ... low on the right: the afterburner
+		CK		$7fff,30
+	else
+		CK		730,10				; 3: a jink left (678) ...
+		CK		762,32				; ... snapped back
+		CK		816,30				; low on the right: the afterburner
+		CK		$7fff,30
+	endc
+; down (units, - up)
+morphChY:	dc.w	1,0,morphChY0
+		CK		96,24
+		CK		192,18
+		CK		372,14
+		CK		392,12
+		CK		468,-16
+		CK		540,-12
+		CK		636,42
+		CK		690,40
+	ifne	chaseShow
+		CK		768,138
+		CK		804,142
+		CK		888,-70				; (high: up over the logo's bottom - not
+		CK		904,-66				; for long: over at once, into the roll)
+		CK		960,-26
+		CK		1008,0
+		CK		1080,20
+		CK		$7fff,20
+	else
+		CK		730,32
+		CK		762,24
+		CK		816,20
+		CK		$7fff,20
+	endc
+; ahead (units): straight from key to key - it pulls away, we gain; in its
+; moves faster (each costs it speed)
+morphChZ:	dc.w	0
+		CK		0,1024
+		CK		96,1150
+		CK		192,1060
+		CK		264,990
+		CK		372,880
+		CK		504,660
+		CK		660,460
+	ifne	chaseShow
+		CK		780,400				; (diving it gains speed: we hardly)
+		CK		888,330				; (climbing it loses it)
+		CK		1008,280
+		CK		1080,200
+	else
+		CK		774,310
+		CK		816,200
+	endc
+		CK		$7fff,200
+; its roll before a move (degrees, + its left wing down; the bank from the
+; turn is added: simFly)
+morphChR:	dc.w	1
+		CK		0,0
+		CK		240,0
+		CK		276,24				; the look over its (left) shoulder
+		CK		300,24
+		CK		336,-4
+		CK		360,0
+		CK		372,0
+		CK		396,16				; 1
+		CK		456,12
+		CK		492,-4
+		CK		516,0
+		CK		528,0
+		CK		556,-22				; 2
+		CK		624,-14
+		CK		660,6
+		CK		672,0
+	ifne	chaseShow
+		CK		700,10				; (into the dive)
+		CK		760,4
+		CK		784,0
+		CK		904,0
+		CK		1008,-360			; the barrel roll (right)
+		CK		$7fff,-360
+	else
+		CK		678,0
+		CK		696,12				; 3
+		CK		730,8
+		CK		752,-8
+		CK		776,0
+		CK		$7fff,0
+	endc
+; its nose round (degrees, - left: the look)
+morphChH:	dc.w	1
+		CK		0,0
+		CK		240,0
+		CK		276,-5
+		CK		304,-5
+		CK		340,0
+		CK		$7fff,0
+; its nose over its way (degrees: as it unfolded, none at the evade)
+morphChA:	dc.w	1
+		CK		0,morphChAoA/16
+	ifne	chaseShow
+		CK		856,morphChAoA/16
+		CK		880,-14				; (at the top of its climb it pushes over:
+		CK		912,-14				; the nose down - its belly to us)
+		CK		960,morphChAoA/16
+	endc
+		CK		morphChT-72,morphChAoA/16
+		CK		morphChT-12,0
+		CK		$7fff,0
+	endc
 
 ; --- the evade (the pass, simDodgeT from 1 on): it has seen us, and we
 ;     cannot turn - we rush on straight ahead. a fighter's loop, in the
@@ -4649,6 +5478,9 @@ simFly:
 		neg.l	d0					; (up: the nose up)
 		move.l	(a7)+,d1
 		bsr		morphAtan2L
+	ifne	chaseSim
+		add.w	simMT,d0			; (the chase: its nose a little over its way)
+	endc
 		move.w	d0,simTilt
 		; the bank: how fast its way across changes (right: right wing down)
 		move.l	simWX,d0
@@ -4725,6 +5557,9 @@ simBlock:
 	ifne	launchSeq
 		dc.w	mvArc-.tab,mvAim-.tab
 	endc
+	ifne	chaseSim
+		dc.w	mvNod-.tab
+	endc
 
 ; d0 = frames in, d1 = frames -> d5 = the smoothstep of (d0+1)/d1 (0..4096,
 ; fine: no steps from a table). keeps d0/d1
@@ -4774,6 +5609,23 @@ mvWiggle:
 		add.w	simA0,d0
 		move.w	d0,simRoll
 		rts
+
+	ifne	chaseSim
+; --- (chaseSim) the nose dips and comes up again (from behind: a glimpse of
+;     its top, of its belly): p1 degrees, p2 times
+mvNod:
+		tst.w	d0
+		bne.s	.n
+		move.w	simTilt,simA0
+.n:		move.w	6(a2),d2
+		bsr		simWave
+		move.w	4(a2),d1
+		bsr		simDeg
+		neg.w	d0					; (down first)
+		add.w	simA0,d0
+		move.w	d0,simTilt
+		rts
+	endc
 
 ; --- it sags and catches itself; it rolls onto its side (90), the nose
 ;     level and a little away from us: then seen from behind, the same turn
@@ -5277,7 +6129,11 @@ morphTorpFire:
 		move.w	d0,tp_ky(a1)
 		move.l	(a2,d2.w),tp_ax(a1)	; (its aim on the screen too)
 	ifne	launchSeq
+	ifne	torpWide
+		move.w	#-morphLsPopV*3/2,tp_fv(a1)	; (it jumps up: torpWide, half
+	else								; again as far)
 		move.w	#-morphLsPopV,tp_fv(a1)	; (it jumps up)
+	endc
 	else
 	ifeq	escortMux
 		move.w	#morphTorpDropV,tp_fv(a1)
@@ -5310,6 +6166,14 @@ morphTorpMove:
 		tst.w	tp_burn(a1)
 		bne.s	.burn
 	ifne	launchSeq
+	ifne	torpArc
+		tst.w	tp_fv(a1)			; (torpArc) rising: gravity slows it ...
+		bpl.s	.sk
+		add.w	#CT_G,tp_fv(a1)
+		bra.s	.sk9
+.sk:	add.w	#CT_GS,tp_fv(a1)	; ... at a stop: it sinks, slowly
+.sk9:	cmp.w	#CT_LIFT+CT_GLIDE2,d0	; (cine.i: off the lift, risen, sunk)
+	else
 		move.w	tp_fv(a1),d2		; its jump dies away (3/16 a frame): it
 		asr.w	#3,d2				; glides on, cold
 		move.w	d2,d3
@@ -5320,6 +6184,7 @@ morphTorpMove:
 		cmp.w	#CT_LIFT+CT_GLIDE,d0	; (cine.i: off the lift, glided)
 	else
 		cmp.w	#morphLsIgnT,d0		; clear of the ship: its engine fires
+	endc
 	endc
 		blo		.n
 		bra.s	.fire
@@ -5772,6 +6637,10 @@ simTorps2:
 		moveq	#0,d6				; which
 .t:		tst.w	tp_age(a4)
 		ble.s	.n
+	ifne	torpHide*cineFight
+		tst.w	tp_in(a4)			; (in the bay still: unseen)
+		bne.s	.n
+	endc
 		move.l	tp_z(a4),d5
 		move.l	tp_x(a4),d3
 		move.l	tp_y(a4),d4

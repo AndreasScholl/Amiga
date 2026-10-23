@@ -12,7 +12,7 @@ for ($i = 0; $i -lt 3; $i++) {
     $d = $tot - $target
     if ($d -eq 0) { $m; return }
     $t = [IO.File]::ReadAllText($f)
-    $mm = [regex]::Match($t, 'RECV2COST\t= (\d+)')
+    $mm = [regex]::Match($t, 'RECV2COST\t= (-?\d+)')
     $c = [int]$mm.Groups[1].Value + $d
     if ($c % 2) { $c++ }
     $t = $t.Substring(0, $mm.Groups[1].Index) + $c + $t.Substring($mm.Groups[1].Index + $mm.Groups[1].Length)

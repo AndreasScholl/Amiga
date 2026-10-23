@@ -16,6 +16,11 @@ musDrums        = drumSeq               ; (the drums at the end are CopperCabana
         ELSE                            ; drumseq.i)
 musDrums        = 0
         ENDC
+        IFNE    musChase
+        IFEQ    musDrums
+        FAIL    "musChase needs drumSeq and CopperCabana"
+        ENDC
+        ENDC
 
         section "code",data,chip
 
@@ -68,6 +73,8 @@ MS_PLAY         = 0                     ; musState: the music as it is
 MS_FADE         = 1                     ; ... its voices 0-2 fade
 MS_BAR          = 2                     ; ... gone: the next bar
 MS_DRUMS        = 3                     ; ... LSP stopped, the drums alone
+MS_QUIET        = 4                     ; ... (musChase) the drums faded too: silence
+musDrumT        = 150                   ; (musChase) ticks the drums fade (3 s)
 
         section "musdrums",data         ; (no chip memory: the CPU's alone. data,
                                         ; not code: vlink puts code hunks first,
@@ -75,6 +82,18 @@ MS_DRUMS        = 3                     ; ... LSP stopped, the drums alone
                                         ; starts - main.s init)
 ; the CIA irq's tick (LightSpeedPlayer_cia.asm), all registers free
 musicTick:
+        IFNE    musChase
+        cmp.b   #MS_QUIET,musState      ; (musChase) all gone: silence
+        bne.s   .nq
+        move.l  LSP_State+m_dmaconPatch,a0
+        clr.b   (a0)
+        jsr     musicPalTick
+        jmp     sfxTick
+.nq:    tst.b   musDrumOut              ; the fighter gone: the drums fade
+        beq.s   .nd
+        bsr     musDrumFade
+.nd:
+        ENDC
         cmp.b   #MS_BAR,musState        ; faded out: LSP stops at the next bar
         bne.s   .lsp                    ; (before it plays it)
         move.w  musTick,d0
@@ -137,7 +156,14 @@ musVolOut:
         beq.s   .w
         mulu    d3,d0
         lsr.w   #8,d0
+        IFNE    musChase
+        bra.s   .w0
+.w:     mulu    musDrumV,d0             ; (musChase: the drums' own fade)
+        lsr.w   #8,d0
+.w0:    move.w  d0,8(a0)
+        ELSE
 .w:     move.w  d0,8(a0)
+        ENDC
 .n:     addq.l  #1,a1
         lea     16(a0),a0
         addq.w  #1,d7
@@ -237,11 +263,72 @@ dsTick:
         move.l  d4,(a0)
         move.w  (a1)+,4(a0)
         move.w  (a1)+,6(a0)
+        IFNE    musChase
+        move.w  (a1)+,d5                ; (musChase: its volume as the fade
+        cmp.w   #1,d3                   ; has it - and kept for the fade)
+        bne.s   .v2
+        move.w  d5,dsVol0
+        bra.s   .v3
+.v2:    move.w  d5,dsVol2
+.v3:    mulu    musDrumV,d5
+        lsr.w   #8,d5
+        move.w  d5,8(a0)
+        ELSE
         move.w  (a1)+,8(a0)
+        ENDC
         or.b    d3,(a2)
         or.b    d3,dsStarted
 .out:   rts
 
+        IFNE    musChase
+; (musChase) a tick of the drums' fade: their volume down (musDrumV), the
+; notes sounding with it; through: they stop - silence (MS_QUIET)
+musDrumFade:
+        subq.w  #1,musDrumN
+        bhi.s   .f1
+        clr.w   musDrumN
+        clr.w   musDrumV
+        move.b  #MS_QUIET,musState      ; the music's channels quiet, off
+        lea     $dff0a0,a0
+        move.b  sfxKeep,d2
+        moveq   #0,d7
+.c:     btst    d7,d2
+        beq.s   .n
+        clr.w   8(a0)
+        moveq   #0,d1
+        bset    d7,d1
+        move.w  d1,$dff096
+.n:     lea     16(a0),a0
+        addq.w  #1,d7
+        cmp.w   #4,d7
+        blo.s   .c
+        rts
+.f1:    moveq   #0,d0
+        move.w  musDrumN,d0
+        lsl.l   #8,d0
+        divu    #musDrumT,d0
+        move.w  d0,musDrumV
+        cmp.b   #MS_DRUMS,musState      ; the drums' notes sounding (0, 2)
+        bne.s   .out
+        move.b  sfxKeep,d2
+        btst    #0,d2
+        beq.s   .f2
+        move.w  dsVol0,d1
+        mulu    d0,d1
+        lsr.w   #8,d1
+        move.w  d1,$dff0a8
+.f2:    btst    #2,d2
+        beq.s   .out
+        move.w  dsVol2,d1
+        mulu    d0,d1
+        lsr.w   #8,d1
+        move.w  d1,$dff0c8
+.out:   rts
+musDrumN:       dc.w    musDrumT        ; ticks of the fade left
+musDrumV:       dc.w    256             ; the drums' volume (* 256)
+dsVol0:         dc.w    0               ; the last notes' volumes (0, 2)
+dsVol2:         dc.w    0
+        ENDC
 musTick:        dc.w    0               ; the song's tick (0 .. musSongT-1)
 musFadeN:       dc.w    0               ; the fade: ticks left
 musFade:        dc.w    256             ; ... the voices' volume (* 256)
@@ -256,6 +343,7 @@ dsPause:        dc.b    0               ; 1: quiet before the hit, -1: over
         section "musdrums",data
         ENDC
 musFadeGo::     dc.b    0               ; (morph.i) the break: the music ends
+musDrumOut::    dc.b    0               ; (morph.i, musChase) the drums fade too
                 even
 musHitIn::      dc.w    0               ; (morph.i) ticks to the first hit
         section "code",data,chip
@@ -431,10 +519,14 @@ sfxDrones:
         sf      (a1,d7.w)
         bra.s   .next
 .free:
+        IFNE    musChase
+        cmp.b   #MS_QUIET,musState          ; (musChase: silence - no drone
+        beq.s   .nw                         ; either, the engine far off)
+        ENDC
         lea     sfxDroneOn,a2
         tst.b   (a2,d7.w)
         bne.s   .want
-        tst.b   (a1,d7.w)
+.nw:    tst.b   (a1,d7.w)
         beq.s   .next
         sf      (a1,d7.w)                   ; off: back to the music
         clr.w   8(a0)
@@ -475,7 +567,14 @@ sfxDrones:
         lea     sfxDronePer,a2
         move.w  (a2,d0.w),6(a0)
         lea     sfxDroneVol,a2
+        IFNE    musChase
+        move.w  (a2,d0.w),d1                ; (musChase: fading with the drums)
+        mulu    musDrumV,d1
+        lsr.l   #8,d1
+        move.w  d1,8(a0)
+        ELSE
         move.w  (a2,d0.w),8(a0)
+        ENDC
 .next:
         addq.l  #v_size,a3
         addq.w  #1,d7

@@ -1307,6 +1307,10 @@ s3Flip::
 		tst.b	s3Back				; the first frame of clistElite: clist's
 		beq.s	.nb					; logo part jumps back to it now (not
 		sf		s3Back				; before: clist still ran last frame)
+	ifne	logoSafe
+		bsr		s3BackPatch			; (logoSafe: s3Activate has done it)
+		bra.s	.nb
+	endc
 		move.l	d0,-(a7)
 		lea		logoEndWait+4,a0
 		move.l	#eliteMid,d0
@@ -1396,8 +1400,49 @@ s3Activate:
 		bsr		s3Planes
 		move.l	#clistElite,$dff080
 		st		s3Cop
+	ifne	logoSafe
+		; (logoSafe) clist's logo part is clistElite's from the next frame
+		; on: its jump back and the logo's pointers now, once the beam is
+		; past the logo this frame (clist shows it still) - in s3Flip they
+		; came too late when this frame (the field's heaviest) ran long: the
+		; logo torn for a frame
+.w:		move.l	$dff004,d0
+		lsr.l	#8,d0
+		and.w	#$1ff,d0
+		moveq	#0,d1
+		move.b	logoEndWait,d1
+		addq.w	#2,d1
+		cmp.w	d1,d0
+		blo.s	.w
+		bsr		s3BackPatch
+		sf		s3Back
+	endc
 		movem.l	(a7)+,d0-d1/a0
 		rts
+
+	ifne	logoSafe
+; clist's logo part over to clistElite: at its end back to it (eliteMid),
+; (spr8) the logo's planes from byte 4 on, its odd planes' modulo +6
+s3BackPatch:
+		movem.l	d0-d7/a0-a6,-(a7)
+		lea		logoEndWait+4,a0
+		move.l	#eliteMid,d0
+		move.w	#$0084,(a0)+
+		swap	d0
+		move.w	d0,(a0)+
+		move.w	#$0086,(a0)+
+		swap	d0
+		move.w	d0,(a0)+
+		move.w	#$008a,(a0)+
+		clr.w	(a0)+
+	ifne	spr8
+		moveq	#ELOFS,d1
+		jsr		updateLogoPointers
+		addq.w	#S3LI-40,logoPlaneMod
+	endc
+		movem.l	(a7)+,d0-d7/a0-a6
+		rts
+	endc
 
 	ifne	sprTest
 ; the sprite test (switches.i sprTest): all eight sprites as tall bars over

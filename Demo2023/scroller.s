@@ -231,6 +231,15 @@ initScroller::
 		bsr		setupScroller
 		bsr		initPoints
 		bsr		buildDebrisRnd
+	ifne	fwHeavy
+		bsr		fhInit				; the laser's explosions, worked out once
+	endc
+	ifne	fwShow
+		bsr		fsInit				; the fireworks' speeds
+	endc
+	ifne	fwBoss
+		bsr		latRingInit			; the laser's pressure ring
+	endc
 		jsr		initGameObjects		; asteroids share this part's bitplane
 		bsr		glitchScan			; the bar's BPLCON1 moves, for the tears
 		bsr		tvScan				; ... and tvList's colour moves
@@ -282,6 +291,8 @@ introBarSpeed    = 4        ; frames per step, 15 steps -> 60 frames
 scrollFullTime   = 400      ; frames from introScrollStart until the text runs
                             ; across the whole bar - the logo destruction
                             ; waits for that (scrollReady)
+; (switches.i startCouple: cpBarWait, cpTextWait, cpCrumbleWait - the start
+; follows the names instead)
 
 stateStarted = 0
 stateEnd     = 1
@@ -427,8 +438,13 @@ updateScroller::
 		; --- scroll text. until its time comes none of this runs, so the
 		;     source buffer stays empty and the text walks in from the right
 		;     on its own the moment it starts.
+	ifne	startCouple
+		tst.b	cpScrollOn			; (EXCITER has gone: cpUpdate)
+		beq		.noScroller
+	else
 		cmp.w	#introScrollStart,introTime
 		blo.s	.noScroller
+	endc
 		tst.b	scrollerOff			; switched off for the TV effect: only
 		bne.s	.scrollOff			; the dots and blasts still in the air
 		RASTER	$0ff0
@@ -2335,17 +2351,32 @@ lat_size:		rs.b	0			; 10
 
 ; a burst at debrisCx/debrisCy. keeps every register
 latticeAdd:
+	ifne	fwShow
+		bra		fsHit					; (switches.i fwShow: the fireworks)
+	else
 		movem.l	d0-d1/a2,-(a7)
 		move.w	latCount,d1
+	ifne	fwBoss
+		tst.w	latBigReq				; (fwBoss: the laser's may be more)
+		beq.s	.nB
+		cmp.w	#latMaxB,d1
+		bhs.s	.out
+		bra.s	.ok
+.nB:
+	endc
 		cmp.w	#latMax,d1
 		bhs.s	.out
-		addq.w	#1,latCount
+.ok:	addq.w	#1,latCount
 		mulu	#lat_size,d1
 		lea		lattices,a2
 		add.w	d1,a2
 		move.w	debrisCx,lat_x(a2)
 		move.w	debrisCy,lat_line(a2)
+	ifne	fwBoss
+		move.w	latDelay,lat_age(a2)	; (fwBoss: a chain's bursts wait first)
+	else
 		clr.w	lat_age(a2)
+	endc
 		bsr		debrisRandom
 		moveq	#0,d1
 		move.b	d0,d1
@@ -2356,6 +2387,23 @@ latticeAdd:
 		and.w	#15,d0
 		add.w	#latLife0,d0			; 40..55 frames (fwAges 56)
 		move.b	d0,lat_life(a2)
+	ifne	fwBoss
+		move.w	latBigReq,lat_kick(a2)	; the laser's: a second variant (high
+		beq.s	.out					; byte, never the first one) - and the
+		bsr		debrisRandom			; chain
+		and.w	#$ff,d0
+		mulu	#fwVariants-1,d0
+		lsr.w	#8,d0
+		addq.w	#1,d0
+		add.b	lat_n(a2),d0
+		cmp.w	#fwVariants,d0
+		blo.s	.v2
+		sub.w	#fwVariants,d0
+.v2:	move.b	d0,lat_kick(a2)
+		tst.b	latInChain
+		bne.s	.out
+		bsr		latChain
+	else
 	ifne	fwBig
 		move.w	latBigReq,lat_kick(a2)	; (fwBig: the laser's bursts half again as
 	else								; far - lat_kick is free: no pop now)
@@ -2364,14 +2412,1176 @@ latticeAdd:
 		add.w	#latKick0,d0			; (none: the table falls)
 		move.w	d0,lat_kick(a2)
 	endc
+	endc
 .out:
 		movem.l	(a7)+,d0-d1/a2
 		rts
+
+	ifne	fwBoss
+;---------------------------------------------
+; (switches.i fwBoss) the laser's chain: 2 or 3 more bursts above the hit -
+; up to the left, straight up, up to the right (from a random one on),
+; each its own distance, 3..6 frames after the one before. latticeAdd
+; makes them (latBigReq still set): another variant each, waiting till
+; their time (lat_age below 0). keeps every register
+latMaxB			= 10
+latChain:
+		movem.l	d0-d6/a2,-(a7)
+		st		latInChain
+		move.w	debrisCx,d5			; the hit
+		move.w	debrisCy,d6
+		bsr		debrisRandom
+		btst	#9,d0				; every other hit or so
+		beq		.none
+		moveq	#1,d2				; 2 more (dbf)
+.n:		moveq	#3,d4				; where the first goes
+		and.w	d0,d4
+		cmp.w	#3,d4
+		blo.s	.n1
+		moveq	#1,d4
+.n1:	moveq	#0,d1				; its delay
+.one:	bsr		debrisRandom
+		move.l	d0,d3
+		moveq	#3,d0
+		and.w	d3,d0
+		addq.w	#3,d0
+		add.w	d0,d1				; 3..6 frames after the last
+		move.w	d1,d0
+		neg.w	d0
+		move.w	d0,latDelay
+		move.w	d4,d0
+		lsl.w	#2,d0
+		lea		.dirs(pc),a2
+		add.w	d0,a2
+		lsr.w	#2,d3
+		moveq	#31,d0
+		and.w	d3,d0
+		sub.w	#16,d0				; -16..15 px across
+		add.w	(a2)+,d0
+		add.w	d5,d0
+		cmp.w	#borderX+12,d0		; (on the screen)
+		bge.s	.x1
+		move.w	#borderX+12,d0
+.x1:	cmp.w	#game_width-12,d0
+		ble.s	.x2
+		move.w	#game_width-12,d0
+.x2:	move.w	d0,debrisCx
+		lsr.w	#5,d3
+		moveq	#15,d0
+		and.w	d3,d0
+		sub.w	#12,d0				; -12..3 lines: up rather
+		add.w	(a2),d0
+		add.w	d6,d0
+		cmp.w	#6,d0
+		bge.s	.y1
+		moveq	#6,d0
+.y1:	move.w	d0,debrisCy
+		bsr		latticeAdd
+		addq.w	#1,d4				; the next direction
+		cmp.w	#3,d4
+		blo.s	.n2
+		moveq	#0,d4
+.n2:	dbf		d2,.one
+		move.w	d5,debrisCx
+		move.w	d6,debrisCy
+		clr.w	latDelay
+.none:	sf		latInChain
+		movem.l	(a7)+,d0-d6/a2
+		rts
+.dirs:	dc.w	-40,-26, 0,-44, 40,-26	; up left, up, up right (px, lines)
+latBudL:	dc.w	0			; the frame's points left for the glow
+latBudget	= 190				; (the laser's: points a frame, ~170 cycles each)
+latRingN	= 6					; the pressure ring: ages 1..6, 24 points
+latRingP	= 24
+latRingT	= bufA+$4400		; (bufA's dead tail: the game and the ember plane
+								; end at 17112, nothing comes past it till the
+								; 3D stars, long after the laser)
+; the ring's points: out at 14 px a frame, braked hard (3/4) - once
+latRingInit:
+		movem.l	d0-d7/a0-a1,-(a7)
+		lea		latRingT,a0
+		lea		sctab,a1
+		move.w	#14*16,d5			; speed (1/16 px)
+		move.w	d5,d6				; radius after the first frame
+		moveq	#latRingN-1,d7
+.ra:	moveq	#0,d3
+.rp:	move.w	d3,d1
+		mulu	#15,d1				; 15 degrees apart
+		lsl.w	#2,d1
+		move.w	2(a1,d1.w),d0		; cos
+		muls	d6,d0
+		swap	d0
+		asr.w	#3,d0
+		move.w	d0,(a0)+
+		move.w	(a1,d1.w),d0		; sin
+		muls	d6,d0
+		swap	d0
+		asr.w	#3,d0
+		muls	#li,d0
+		move.w	d0,(a0)+
+		addq.w	#1,d3
+		cmp.w	#latRingP,d3
+		bne.s	.rp
+		move.w	d5,d0
+		asr.w	#2,d0
+		sub.w	d0,d5
+		add.w	d5,d6
+		dbf		d7,.ra
+		movem.l	(a7)+,d0-d7/a0-a1
+		rts
+latDelay:	dc.w	0			; a new burst's start: 0, or -frames (waits)
+latInChain:	dc.b	0
+		even
+	endc
+	endc
+
+	ifne	fwHeavy
+;---------------------------------------------
+; (switches.i fwHeavy) THE LASER'S EXPLOSIONS, worked out once at the start
+; into the dead tails of bufA and bufB (the game and the ember plane end at
+; 17112 there; nothing comes past it till the 3D stars, long after the
+; laser) - real physics, step by step: a spark flies on, the air takes a
+; part of its speed (drag), gravity pulls. per explosion:
+;   the core: a white hot disc (radius 2), ages 1-2 - the flash
+;   the pressure ring: 24 points, out at 26 px a frame, hard braked, 4 ages
+;   24 sparks: 10..18 px a frame around, a little scattered, drag 0.82 -
+;     the bang, then they hang glowing and sink slowly
+;   8 heavy chunks: 5..8 px a frame anywhere, little drag, a strong pull -
+;     they fly the furthest and fall away on arcs
+;   while fast (ages 1-5) every spark and chunk draws its streak: a point
+;     half its last step back (motion blur)
+; a table: an offset per age to its row; a row: the points, how far out
+; (x, up, down lines), then dx, dy*li each
+fhAges		= 56
+fhTabA		= bufA+$4400			; (each ~10.3 KB)
+fhTabB		= bufB+$4400
+fhState		= bufB+$7400			; (the sparks while it is worked out)
+fhHeavyN	= 8
+fhSparkN	= 8+24					; chunks and sparks
+fhRingN		= 24
+fhTrailT	= 5						; ages with streaks
+fhRingT		= 4
+fhCoreT		= 2
+
+fhInit:
+		movem.l	d0-d7/a0-a6,-(a7)
+		lea		fhTabA,a0
+		bsr.s	.tab
+		lea		fhTabB,a0
+		bsr.s	.tab
+		movem.l	(a7)+,d0-d7/a0-a6
+		rts
+.tab:	lea		fhState,a3			; --- throw them
+		moveq	#0,d7
+.l0:	bsr		.launch
+		clr.l	(a3)+				; x, y (8.8)
+		clr.l	(a3)+
+		move.l	d2,(a3)+			; speed
+		move.l	d3,(a3)+
+		clr.l	(a3)+				; the last step
+		clr.l	(a3)+
+		addq.w	#1,d7
+		cmp.w	#fhSparkN,d7
+		bne.s	.l0
+		sub.l	a5,a5				; the ring's radius ...
+		move.l	#26*256,a6			; ... and speed (8.8)
+		lea		sctab,a4
+		lea		fhAges*2(a0),a1		; the rows after the offsets
+		moveq	#0,d6				; age
+.row:	move.l	a1,d0
+		sub.l	a0,d0
+		move.w	d6,d1
+		add.w	d1,d1
+		move.w	d0,(a0,d1.w)		; its offset
+		move.l	a1,a2				; (the head, filled in below)
+		addq.w	#8,a1
+		lea		fhState,a3			; --- sparks and chunks
+		moveq	#fhSparkN-1,d7
+.ps:	move.l	(a3),d0
+		move.l	4(a3),d1
+		bsr		.put
+		lea		24(a3),a3
+		dbf		d7,.ps
+		tst.w	d6
+		beq		.noCo
+		cmp.w	#fhTrailT,d6		; --- their streaks
+		bhi.s	.noTr
+		lea		fhState,a3
+		moveq	#fhSparkN-1,d7
+.pt:	move.w	18(a3),d2			; the last step
+		move.w	22(a3),d3
+		asr.w	#1,d2				; half of it back
+		ext.l	d2
+		asr.w	#1,d3
+		ext.l	d3
+		move.l	(a3),d0
+		sub.l	d2,d0
+		move.l	4(a3),d1
+		sub.l	d3,d1
+		bsr		.put
+		lea		24(a3),a3
+		dbf		d7,.pt
+.noTr:	cmp.w	#fhRingT,d6			; --- the ring
+		bhi.s	.noRg
+		moveq	#0,d7
+.pr:	move.w	d7,d1
+		mulu	#15,d1				; 15 degrees apart
+		lsl.w	#2,d1
+		move.l	a5,d2
+		move.w	2(a4,d1.w),d0		; cos
+		muls	d2,d0
+		asr.l	#8,d0
+		asr.l	#7,d0
+		move.w	(a4,d1.w),d1		; sin
+		muls	d2,d1
+		asr.l	#8,d1
+		asr.l	#7,d1
+		bsr		.put
+		addq.w	#1,d7
+		cmp.w	#fhRingN,d7
+		bne.s	.pr
+.noRg:	cmp.w	#fhCoreT,d6			; --- the core: a disc
+		bhi.s	.noCo
+		moveq	#-2,d4
+.cy:	moveq	#-2,d5
+.cx:	move.w	d5,d0
+		muls	d0,d0
+		move.w	d4,d1
+		muls	d1,d1
+		add.w	d1,d0
+		cmp.w	#4,d0
+		bhi.s	.cn
+		move.w	d5,d0
+		ext.l	d0
+		asl.l	#8,d0
+		move.w	d4,d1
+		ext.l	d1
+		asl.l	#8,d1
+		bsr		.put
+.cn:	addq.w	#1,d5
+		cmp.w	#3,d5
+		bne.s	.cx
+		addq.w	#1,d4
+		cmp.w	#3,d4
+		bne.s	.cy
+.noCo:	; --- the head: how many, how far out
+		move.l	a1,d0
+		sub.l	a2,d0
+		subq.l	#8,d0
+		lsr.w	#2,d0
+		move.w	d0,(a2)
+		moveq	#0,d2				; x
+		moveq	#0,d3				; up
+		moveq	#0,d4				; down
+		lea		8(a2),a3
+		subq.w	#1,d0
+.e:		move.w	(a3)+,d5
+		bpl.s	.ex
+		neg.w	d5
+.ex:	cmp.w	d5,d2
+		bhs.s	.e1
+		move.w	d5,d2
+.e1:	move.w	(a3)+,d5
+		ext.l	d5
+		divs	#li,d5
+		bpl.s	.dn
+		neg.w	d5
+		cmp.w	d5,d3
+		bhs.s	.e2
+		move.w	d5,d3
+		bra.s	.e2
+.dn:	cmp.w	d5,d4
+		bhs.s	.e2
+		move.w	d5,d4
+.e2:	dbf		d0,.e
+		movem.w	d2-d4,2(a2)
+		; --- a frame on
+		lea		fhState,a3
+		moveq	#0,d7
+.st:	movem.l	8(a3),d2-d3			; the speed: the step
+		movem.l	d2-d3,16(a3)
+		add.l	d2,(a3)
+		add.l	d3,4(a3)
+		move.l	d2,d0				; the air: 1/16
+		asr.l	#4,d0
+		sub.l	d0,d2
+		move.l	d3,d0
+		asr.l	#4,d0
+		sub.l	d0,d3
+		cmp.w	#fhHeavyN,d7
+		bhs.s	.sm
+		add.l	#31,d3				; chunks: a strong pull
+		bra.s	.sd
+.sm:	move.l	d2,d0				; sparks: an eighth more, a light pull
+		asr.l	#3,d0
+		sub.l	d0,d2
+		move.l	d3,d0
+		asr.l	#3,d0
+		sub.l	d0,d3
+		add.l	#15,d3
+.sd:	movem.l	d2-d3,8(a3)
+		lea		24(a3),a3
+		addq.w	#1,d7
+		cmp.w	#fhSparkN,d7
+		bne.s	.st
+		add.l	a6,a5				; the ring: out, braked hard (0.69)
+		move.l	a6,d0
+		asr.l	#2,d0
+		move.l	a6,d1
+		asr.l	#4,d1
+		add.l	d1,d0
+		sub.l	d0,a6
+		addq.w	#1,d6
+		cmp.w	#fhAges,d6
+		bne		.row
+		rts
+; d0/d1 = x/y (8.8) -> (a1)+ = dx, dy*li
+.put:	add.l	#128,d0
+		asr.l	#8,d0
+		move.w	d0,(a1)+
+		add.l	#128,d1
+		asr.l	#8,d1
+		muls	#li,d1
+		move.w	d1,(a1)+
+		rts
+; d7 = which -> d2/d3 = its speed (8.8)
+.launch:
+		cmp.w	#fhHeavyN,d7
+		bhs.s	.lm
+		move.w	#360,d1				; a chunk: anywhere, 5..8 px
+		bsr.s	.rnd
+		move.w	d0,d1
+		move.w	#768,d0
+		bsr.s	.rndD
+		add.w	#5*256,d0
+		bra.s	.vel
+.lm:	move.w	#12,d1				; a spark: its 15 degrees -5..+6, 10..18 px
+		bsr.s	.rnd
+		move.w	d7,d1
+		sub.w	#fhHeavyN,d1
+		mulu	#15,d1
+		add.w	d0,d1
+		subq.w	#5,d1
+		bpl.s	.lmA
+		add.w	#360,d1
+.lmA:	move.w	#2048,d0
+		bsr.s	.rndD
+		add.w	#10*256,d0
+.vel:	lsl.w	#2,d1				; d1 = degrees, d0 = speed
+		lea		sctab,a4
+		move.w	2(a4,d1.w),d2		; cos
+		muls	d0,d2
+		asr.l	#8,d2
+		asr.l	#7,d2
+		move.w	(a4,d1.w),d3		; sin
+		muls	d0,d3
+		asr.l	#8,d3
+		asr.l	#7,d3
+		rts
+; d1 -> d0 = 0..d1-1 at random (debrisRandom's: the demo's own sequence,
+; getRandomNumber's, stays as it is)
+.rnd:	move.l	d1,-(a7)
+		bsr		debrisRandom
+		move.l	(a7)+,d1
+		mulu	d1,d0
+		clr.w	d0
+		swap	d0
+		rts
+; d0 -> d0 = 0..d0-1 at random (keeps d1)
+.rndD:	move.w	d1,-(a7)
+		move.w	d0,d1
+		bsr.s	.rnd
+		move.w	(a7)+,d1
+		rts
+	endc
+
+	ifne	fwShow
+;---------------------------------------------
+; (switches.i fwShow) THE FIREWORKS. a hit throws a pop of sparks and a
+; shell; the shell climbs on its trail, slows, and bursts where it is when
+; its fuse is out - low, high, up to the logo: every burst somewhere else.
+; the shells and the pops live as single sparks (fsPool): each flies on,
+; the air takes a part of its speed (v -= v >> drag), gravity pulls (g, in
+; 1/16 px a frame each frame). the bursts are worked out once at the start
+; the same way, spark by spark, frame by frame (fsGen): four kinds, two of
+; each - chrysanthemum (a ball of 32), willow (slow glowing rain), ring
+; (24 of one speed round a glowing core), crossette (6 stars that split in
+; four each) - drawn mirrored or not, the laser's half again as big with a
+; flash and a pressure ring: 32 looks. white hot, then below the bar
+; orange and red (the ember plane), the glow sinks and twinkles out.
+; latCount: sparks and bursts alive (inkFade, tvLate wait for 0)
+FS_SHELL	= 1						; spark flags
+FS_WHITE	= 3
+fsMax		= 64					; single sparks
+				rsreset
+fs_x:			rs.w	1			; 1/16 px
+fs_y:			rs.w	1			; 1/16 line of the scroller's buffer
+fs_vx:			rs.w	1
+fs_vy:			rs.w	1
+fs_life:		rs.b	1
+fs_hot:			rs.b	1			; white hot while life > this (a shell: what
+fs_flags:		rs.b	1			; bursts)
+fs_drag:		rs.b	1
+fs_red:			rs.b	1			; red once life <= this
+fs_g:			rs.b	1
+fs_len:			rs.b	0			; 14
+fsPool		= bufA+$4400			; (bufA's dead tail: the game and the ember
+fsSim		= bufA+$4800			; plane end at 17112, nothing comes past it
+									; till the 3D stars)
+FV_SP		= 32					; a burst: 32 sparks over 56 ages
+FV_AGES		= 56
+FV_ROW		= FV_SP*4				; dx, dy*li
+FV_SIZE		= FV_AGES*FV_ROW
+fsVar		= fwFree				; 8 bursts (kind * 2 + which)
+fsRingT		= fwFree+8*FV_SIZE		; the pressure ring, ages 1..6: 32 points
+fsFlashT	= fsRingT+6*FV_ROW		; the flash: a count, its points
+fsBMax		= 10					; bursts at once
+				rsreset
+fb_x:			rs.w	1
+fb_line:		rs.w	1
+fb_age:			rs.w	1
+fb_life:		rs.b	1
+fb_n:			rs.b	1			; 0..7 which, +8 mirrored, +16 the laser's
+fb_len:			rs.b	0			; 8
+
+; --- the bursts, worked out once
+fsInit:
+		movem.l	d0-d7/a0-a4,-(a7)
+		lea		fsVar,a0
+		moveq	#0,d7
+.v:		bsr		fsGen
+		lea		FV_SIZE(a0),a0
+		addq.w	#1,d7
+		cmp.w	#8,d7
+		bne.s	.v
+		; the pressure ring: out at 16 px a frame, braked hard (3/4)
+		lea		fsRingT,a0
+		lea		sctab,a1
+		move.w	#256,d5				; speed (1/16 px)
+		move.w	d5,d6				; radius after the first frame
+		moveq	#6-1,d7
+.ra:	moveq	#0,d3
+.rp:	move.w	d3,d1
+		mulu	#45,d1
+		lsr.w	#2,d1				; 11.25 degrees apart
+		lsl.w	#2,d1
+		move.w	2(a1,d1.w),d0		; cos
+		muls	d6,d0
+		swap	d0
+		asr.w	#3,d0
+		move.w	d0,(a0)+
+		move.w	(a1,d1.w),d0		; sin
+		muls	d6,d0
+		swap	d0
+		asr.w	#3,d0
+		muls	#li,d0
+		move.w	d0,(a0)+
+		addq.w	#1,d3
+		cmp.w	#FV_SP,d3
+		bne.s	.rp
+		move.w	d5,d0
+		asr.w	#2,d0
+		sub.w	d0,d5
+		add.w	d5,d6
+		dbf		d7,.ra
+		; the flash: a disc of radius 3
+		lea		fsFlashT+2,a0
+		moveq	#0,d2
+		moveq	#-3,d4
+.fy:	moveq	#-3,d5
+.fx:	move.w	d5,d0
+		muls	d0,d0
+		move.w	d4,d1
+		muls	d1,d1
+		add.w	d1,d0
+		cmp.w	#9,d0
+		bhi.s	.fn
+		move.w	d5,(a0)+
+		move.w	d4,d0
+		muls	#li,d0
+		move.w	d0,(a0)+
+		addq.w	#1,d2
+.fn:	addq.w	#1,d5
+		cmp.w	#4,d5
+		bne.s	.fx
+		addq.w	#1,d4
+		cmp.w	#4,d4
+		bne.s	.fy
+		move.w	d2,fsFlashT
+		clr.w	fsN
+		clr.w	fsBN
+		move.l	#fsPool,fsTop
+		clr.w	latCount
+		movem.l	(a7)+,d0-d7/a0-a4
+		rts
+
+; one burst into a0 (FV_SIZE): d7 = 0..7, its kind d7/2. its sparks in
+; fsSim (x, y, vx, vy in 1/16 px; x = $7fff: not there yet, or gone)
+fsGen:
+		movem.l	d0-d7/a0-a2,-(a7)
+		lea		fsSim,a1
+		move.w	d7,d6
+		lsr.w	#1,d6				; the kind
+		moveq	#0,d5				; the spark
+.s:		clr.l	(a1)				; x, y
+		cmp.w	#3,d6
+		beq.s	.sc
+		cmp.w	#2,d6
+		beq.s	.sr
+		cmp.w	#1,d6
+		beq.s	.sw
+		move.w	d5,d1				; chrysanthemum: around, 2..3.5 px
+		mulu	#45,d1
+		lsr.w	#2,d1
+		moveq	#8,d0
+		bsr		.rnd
+		add.w	d0,d1
+		moveq	#32,d0
+		bsr		.rnd
+		add.w	#48,d0
+		bra.s	.go
+.sw:	move.w	#360,d0				; willow: anywhere, 1.5..3 px
+		bsr		.rnd
+		move.w	d0,d1
+		moveq	#32,d0
+		bsr		.rnd
+		add.w	#32,d0
+		bra.s	.go
+.sr:	cmp.w	#24,d5				; ring: 24 at 3 px evenly, 8 slow ones
+		bhs.s	.src
+		move.w	d5,d1
+		mulu	#15,d1
+		moveq	#64,d0
+		bra.s	.go
+.src:	move.w	#360,d0
+		bsr		.rnd
+		move.w	d0,d1
+		moveq	#18,d0
+		bsr		.rnd
+		addq.w	#6,d0
+		bra.s	.go
+.sc:	cmp.w	#6,d5				; crossette: 6 stars, 3.3..3.8 px; the
+		bhs.s	.dead				; rest come when they split
+		move.w	d5,d1
+		mulu	#60,d1
+		moveq	#30,d0
+		bsr		.rnd
+		add.w	d0,d1
+		moveq	#12,d0
+		bsr		.rnd
+		add.w	#72,d0
+.go:	btst	#0,d7				; the big one: thrown half again as fast
+		beq.s	.go1
+		move.w	d0,d2
+		lsr.w	#1,d2
+		add.w	d2,d0
+.go1:	bsr		.vel
+		bra.s	.sn
+.dead:	move.w	#$7fff,(a1)
+.sn:	addq.w	#8,a1
+		addq.w	#1,d5
+		cmp.w	#FV_SP,d5
+		bne		.s
+		; --- age by age: the row, then a frame on
+		moveq	#0,d4				; age
+.a:		lea		fsSim,a1
+		moveq	#FV_SP-1,d5
+.w:		move.w	(a1),d0
+		cmp.w	#$7fff,d0
+		bne.s	.wl
+		move.w	#$4000,(a0)+		; (off every screen)
+		clr.w	(a0)+
+		bra.s	.wn
+.wl:	addq.w	#8,d0
+		asr.w	#4,d0
+		move.w	d0,(a0)+
+		move.w	2(a1),d0
+		addq.w	#8,d0
+		asr.w	#4,d0
+		muls	#li,d0
+		move.w	d0,(a0)+
+.wn:	addq.w	#8,a1
+		dbf		d5,.w
+		; the physics: drag and pull by kind - chrysanthemum and ring 1/16
+		; and 1, willow 1/8 and 3, crossette 1/32 and 1 (its split stars 1/16)
+		moveq	#4,d2
+		moveq	#1,d3
+		cmp.w	#1,d6
+		bne.s	.p1
+		moveq	#3,d2
+		moveq	#3,d3
+.p1:	cmp.w	#3,d6
+		bne.s	.p2
+		cmp.w	#16,d4
+		bhs.s	.p2
+		moveq	#5,d2
+.p2:	lea		fsSim,a1
+		moveq	#FV_SP-1,d5
+.st:	cmp.w	#$7fff,(a1)
+		beq.s	.stn
+		move.w	4(a1),d0
+		move.w	d0,d1
+		asr.w	d2,d1
+		sub.w	d1,d0
+		move.w	d0,4(a1)
+		add.w	d0,(a1)
+		move.w	6(a1),d0
+		move.w	d0,d1
+		asr.w	d2,d1
+		sub.w	d1,d0
+		add.w	d3,d0
+		move.w	d0,6(a1)
+		add.w	d0,2(a1)
+.stn:	addq.w	#8,a1
+		dbf		d5,.st
+		; a crossette's stars split after 15 frames: four each, from where
+		; it is, its own speed halved and a kick of 1..2 px anywhere
+		cmp.w	#3,d6
+		bne.s	.nx
+		cmp.w	#15,d4
+		bne.s	.nx
+		lea		fsSim,a2			; the stars
+		lea		6*8(a2),a1			; their four each
+		moveq	#6-1,d5
+.cp:	moveq	#4-1,d3
+.cc:	move.w	#360,d0
+		bsr		.rnd
+		move.w	d0,d1
+		moveq	#24,d0
+		bsr		.rnd
+		add.w	#24,d0
+		bsr		.vel				; the kick: 4(a1), 6(a1)
+		move.l	(a2),(a1)			; where
+		move.w	4(a2),d0
+		asr.w	#1,d0
+		add.w	d0,4(a1)
+		move.w	6(a2),d0
+		asr.w	#1,d0
+		add.w	d0,6(a1)
+		addq.w	#8,a1
+		dbf		d3,.cc
+		move.w	#$7fff,(a2)			; the star is gone
+		addq.w	#8,a2
+		dbf		d5,.cp
+.nx:	addq.w	#1,d4
+		cmp.w	#FV_AGES,d4
+		bne		.a
+		movem.l	(a7)+,d0-d7/a0-a2
+		rts
+; d1 = degrees (0..719), d0 = speed (1/16 px) -> 4(a1)/6(a1) = vx, vy.
+; keeps all but d1
+.vel:	movem.l	d0/d2/a2,-(a7)
+		cmp.w	#360,d1
+		blo.s	.v1
+		sub.w	#360,d1
+.v1:	lsl.w	#2,d1
+		lea		sctab,a2
+		move.w	2(a2,d1.w),d2
+		muls	d0,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,4(a1)
+		move.w	(a2,d1.w),d2
+		muls	d0,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,6(a1)
+		movem.l	(a7)+,d0/d2/a2
+		rts
+; d0 -> d0 = 0..d0-1 at random (debrisRandom's: the demo's own sequence,
+; getRandomNumber's, stays as it is). keeps the rest
+.rnd:	move.l	d1,-(a7)
+		move.w	d0,d1
+		bsr		debrisRandom
+		mulu	d1,d0
+		clr.w	d0
+		swap	d0
+		move.l	(a7)+,d1
+		rts
+
+; a hit at debrisCx/debrisCy (latBigReq: the laser's): a pop of sparks
+; there, and a shell that climbs and bursts later. keeps every register
+fsHit:
+		movem.l	d0-d7,-(a7)
+		move.w	debrisCy,d1
+		lsl.w	#4,d1
+		moveq	#6-1,d7				; the pop: 6 sparks, a little up
+.pop:	bsr		debrisRandom
+		move.l	d0,d6
+		move.w	debrisCx,d0
+		lsl.w	#4,d0
+		move.b	d6,d2
+		ext.w	d2
+		asr.w	#3,d2				; vx -16..15
+		move.w	d6,d3
+		asr.w	#8,d3
+		asr.w	#3,d3
+		subq.w	#8,d3				; vy -24..7
+		swap	d6
+		moveq	#7,d4
+		and.w	d6,d4
+		add.w	#10,d4				; life 10..17
+		move.w	d4,d5
+		lsr.w	#2,d5
+		neg.w	d5
+		add.w	d4,d5
+		lsl.w	#8,d5
+		or.w	d5,d4				; white hot the first quarter
+		move.w	#3,d5				; no flags, drag 1/8
+		move.w	#(4<<8)!2,d6		; red at 4, a pull of 2
+		bsr		fsAdd
+		dbf		d7,.pop
+		bsr		debrisRandom		; the shell: up at 3.5..7.4 px a frame,
+		move.l	d0,d6				; a little sideways, its fuse 8..39 frames
+		moveq	#$7f,d2
+		and.w	d6,d2
+		sub.w	#64,d2
+		asr.w	#1,d2				; vx -2..2 px
+		move.l	d6,d3
+		lsr.l	#8,d3
+		and.w	#$3f,d3
+		add.w	#56,d3
+		neg.w	d3					; vy
+		move.l	d6,d4
+		swap	d4
+		and.w	#31,d4
+		addq.w	#8,d4				; the fuse
+		move.l	d6,d5				; what bursts: kind*2 (+1 big), +8 mirrored
+		rol.l	#4,d5
+		and.w	#$e,d5
+		tst.w	latBigReq
+		beq.s	.small
+		sub.w	#16,d3				; the laser's: faster, bigger
+		or.w	#$11,d5
+.small:	lsl.w	#8,d5				; (fs_hot: the burst)
+		or.w	d5,d4
+		move.w	#((1<<FS_SHELL)!(1<<FS_WHITE))<<8!7,d5
+		moveq	#3,d6				; its fall: 0.19 px a frame
+		move.w	debrisCx,d0
+		lsl.w	#4,d0
+		bsr		fsAdd
+		movem.l	(a7)+,d0-d7
+		rts
+
+; d0/d1 x/y, d2/d3 vx/vy, d4 life (low byte) + hot (high), d5 flags (high)
+; + drag (low), d6 red (high) + g (low) -> a new spark (none if the pool is
+; full). keeps all
+fsAdd:
+		cmp.w	#fsMax,fsN
+		bhs.s	.out
+		move.l	a3,-(a7)
+		move.l	fsTop,a3
+		move.w	d0,(a3)+
+		move.w	d1,(a3)+
+		move.w	d2,(a3)+
+		move.w	d3,(a3)+
+		move.w	d4,-(a7)			; life, hot (bytes: life first)
+		move.b	1(a7),(a3)+
+		move.b	(a7),(a3)+
+		addq.w	#2,a7
+		move.w	d5,(a3)+			; flags, drag
+		move.w	d6,(a3)+			; red, g
+		move.l	a3,fsTop
+		addq.w	#1,fsN
+		move.l	(a7)+,a3
+.out:	rts
+
+; every spark and burst a frame on and drawn (from drawBlastFx: a0 =
+; buffer, a1 = yTable)
+FSPLOT	macro					; d0/d1 = x/y (1/16 px) -> d4 bit, d5 offset,
+		move.w	d0,d4			; or off the screen: to \1
+		asr.w	#4,d4
+		sub.w	#borderX,d4
+		cmp.w	#game_width-borderX,d4
+		bhs.s	\1
+		move.w	d1,d5
+		asr.w	#4,d5
+		cmp.w	#screenHeight,d5
+		bhs.s	\1
+		add.w	d5,d5
+		move.w	(a1,d5.w),d5
+		move.w	d4,d6
+		lsr.w	#3,d6
+		add.w	d6,d5
+		not.w	d4
+		endm
+fsDraw:
+		addq.w	#1,fsFrame
+		clr.w	fsQN
+		lea		emberOffset(a0),a5
+		move.w	fsN,d7
+		beq		.bursts
+		subq.w	#1,d7
+		lea		fsPool,a2			; read
+		move.l	a2,a3				; write
+.p:		movem.w	(a2)+,d0-d3			; x, y, vx, vy
+		move.b	3(a2),d6			; the air
+		move.w	d2,d4
+		asr.w	d6,d4
+		sub.w	d4,d2
+		move.w	d3,d4
+		asr.w	d6,d4
+		sub.w	d4,d3
+		move.b	5(a2),d4			; gravity
+		ext.w	d4
+		add.w	d4,d3
+		add.w	d2,d0
+		add.w	d3,d1
+		btst	#FS_SHELL,2(a2)		; a shell bursts at the latest at the top
+		beq.s	.nsh
+		cmp.w	#3*16,d1
+		bgt.s	.nsh
+		move.b	#1,(a2)
+.nsh:	subq.b	#1,(a2)				; life
+		beq		.dies
+		movem.w	d0-d3,(a3)
+		move.l	(a2)+,8(a3)
+		move.w	(a2)+,12(a3)
+		lea		fs_len(a3),a3
+		FSPLOT	.next
+		move.b	-6(a2),d6			; life
+		btst	#FS_WHITE,-4(a2)
+		bne.s	.w
+		cmp.b	-5(a2),d6
+		bhi.s	.w					; white hot
+		cmp.w	#emberFwTop*li,d5
+		blo.s	.w					; (above the bar: white)
+		bset	d4,borderX/8(a5,d5.w)
+		cmp.b	-2(a2),d6
+		bls.s	.next				; red: the ember plane only
+.w:		bset	d4,borderX/8(a0,d5.w)
+		btst	#FS_SHELL,-4(a2)	; a shell: its trail, half a step back
+		beq.s	.next
+		asr.w	#1,d2
+		sub.w	d2,d0
+		asr.w	#1,d3
+		sub.w	d3,d1
+		FSPLOT	.next
+		bset	d4,borderX/8(a0,d5.w)
+.next:	dbf		d7,.p
+		move.l	a3,fsTop
+		bra.s	.bursts
+.dies:	btst	#FS_SHELL,2(a2)		; a shell's fuse is out: it bursts
+		beq.s	.gone
+		cmp.w	#fsBMax,fsQN
+		bhs.s	.gone
+		move.w	fsQN,d4
+		lsl.w	#2,d4
+		lea		fsQ,a4
+		add.w	d4,a4
+		asr.w	#4,d0
+		move.w	d0,(a4)+			; x
+		asr.w	#4,d1
+		move.b	d1,(a4)+			; line (clamped below)
+		move.b	1(a2),(a4)			; what
+		addq.w	#1,fsQN
+.gone:	addq.w	#6,a2
+		subq.w	#1,fsN
+		bra.s	.next
+
+		; --- the bursts this frame's shells set off
+.bursts:
+		move.w	fsQN,d7
+		beq.s	.draw
+		subq.w	#1,d7
+		lea		fsQ,a2
+.q:		move.w	fsBN,d0
+		cmp.w	#fsBMax,d0
+		bhs.s	.draw
+		lsl.w	#3,d0				; fb_len
+		lea		fsB,a3
+		add.w	d0,a3
+		move.w	(a2)+,fb_x(a3)
+		moveq	#0,d0
+		move.b	(a2)+,d0
+		cmp.w	#2,d0				; (the line: on the buffer)
+		bge.s	.q1
+		moveq	#2,d0
+.q1:	cmp.w	#screenHeight-2,d0
+		ble.s	.q2
+		move.w	#screenHeight-2,d0
+.q2:	move.w	d0,fb_line(a3)
+		clr.w	fb_age(a3)
+		moveq	#0,d1
+		move.b	(a2)+,d1
+		move.b	d1,fb_n(a3)
+		and.w	#7,d1				; its life: by kind, + 0..7
+		lsr.w	#1,d1
+		move.b	.life(pc,d1.w),d1
+		bsr		debrisRandom
+		and.w	#7,d0
+		add.w	d0,d1
+		move.b	d1,fb_life(a3)
+		addq.w	#1,fsBN
+		dbf		d7,.q
+		bra.s	.draw
+.life:	dc.b	48,48,42,48			; chrysanthemum, willow, ring, crossette
+
+		; --- the bursts drawn
+.draw:	move.w	fsBN,d0
+		beq		.out
+		subq.w	#1,d0
+		move.w	d0,fsLeft
+		; --- the frame's budget (points): the white hot ones always, with
+		;     their streaks, rings and flashes - the glowing ones get what is
+		;     left, the rest of them skip a frame (they flicker out)
+		move.w	#fsBudget,d2
+		lea		fsB,a2
+		move.w	d0,d1
+.bc:	move.w	fb_age(a2),d3
+		addq.w	#1,d3
+		moveq	#0,d4
+		move.b	fb_life(a2),d4
+		add.w	d3,d3
+		add.w	d3,d3
+		cmp.w	d4,d3
+		bhs.s	.bcn
+		sub.w	#64,d2
+		btst	#4,fb_n(a2)
+		beq.s	.bcn
+		sub.w	#64,d2
+.bcn:	addq.w	#fb_len,a2
+		dbf		d1,.bc
+		move.w	d2,fsBudL
+		lea		fsB,a2				; read
+		move.l	a2,a3				; write
+.b:		addq.w	#1,fb_age(a2)
+		moveq	#0,d0
+		move.b	fb_life(a2),d0
+		cmp.w	fb_age(a2),d0
+		bls		.drop
+		move.l	(a2)+,(a3)+			; kept (packed)
+		move.l	(a2)+,(a3)+
+		lea		-fb_len(a3),a4
+		; white the first quarter, orange to 3/5, then red - flickering
+		; every other frame; the last half twinkling at random
+		moveq	#0,d3
+		move.w	fb_age(a4),d5
+		move.w	d5,d4
+		add.w	d4,d4
+		cmp.w	d0,d4
+		blo.s	.nTw
+		bsr		debrisRandom
+		move.l	d0,d3
+		moveq	#0,d0
+		move.b	fb_life(a4),d0
+.nTw:	move.w	d5,d4
+		add.w	d4,d4
+		add.w	d4,d4				; age*4
+		moveq	#0,d6
+		cmp.w	d0,d4
+		blo.s	.col
+		moveq	#1,d6
+		add.w	d5,d4				; age*5
+		move.w	d0,d2
+		add.w	d2,d2
+		add.w	d0,d2				; life*3
+		cmp.w	d2,d4
+		blo.s	.col
+		moveq	#2,d6
+		move.w	d5,d0
+		add.w	fb_x(a4),d0
+		btst	#0,d0
+		bne		.bn
+.col:	tst.w	d6
+		beq.s	.cw
+		sub.w	#FV_SP,fsBudL		; a glowing one: as far as the budget goes
+		bmi		.bn
+.cw:	move.w	fb_x(a4),d4
+		sub.w	#borderX,d4
+		move.w	fb_line(a4),d5
+		add.w	d5,d5
+		move.w	(a1,d5.w),d5		; line * li
+		moveq	#7,d0
+		and.b	fb_n(a4),d0
+		mulu	#FV_SIZE,d0
+		move.l	#fsVar,a6
+		add.l	d0,a6
+		move.w	fb_age(a4),d0
+		lsl.w	#7,d0				; * FV_ROW
+		add.w	d0,a6
+		moveq	#FV_SP-1,d7
+		moveq	#0,d1				; the loop: white with its streak (the
+		tst.w	d6					; first 8 frames) 0, white 2, coloured
+		beq.s	.lw					; 4, mirrored +6
+		moveq	#4,d1
+		bra.s	.lm
+.lw:	cmp.w	#8,fb_age(a4)
+		bls.s	.lm
+		moveq	#2,d1
+.lm:	btst	#3,fb_n(a4)
+		beq.s	.lc
+		addq.w	#6,d1
+.lc:	move.w	.loops(pc,d1.w),d1
+		jmp		.loops(pc,d1.w)
+.loops:	dc.w	.l0-.loops,.l1-.loops,.l2-.loops,.l3-.loops,.l4-.loops,.l5-.loops
+; one burst's sparks: \1 1 = mirrored, \2 0 = white hot with its streak
+; (a second point half way back to where it was a frame ago: the row
+; before), 1 = white hot, 2 = orange or red
+FSPT	macro					; d0 = dx, d2 = dy*li round d4/d5 -> plotted
+	ifne	\1					; (\1: mirrored)
+		neg.w	d0
+	endc
+		add.w	d4,d0
+		add.w	d5,d2
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.s\@
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.s\@
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+		bset	d0,borderX/8(a0,d2.w)
+.s\@:
+		endm
+FSB		macro
+	ifeq	\2
+.l\@:	move.w	(a6)+,d0			; now
+		move.w	(a6)+,d2
+		move.w	-FV_ROW-4(a6),d3	; a frame ago
+		move.w	-FV_ROW-2(a6),d6
+		add.w	d0,d3
+		asr.w	#1,d3				; half way
+		add.w	d2,d6
+		asr.w	#1,d6
+		btst	#0,d6
+		beq.s	.h\@
+		sub.w	#li/2,d6
+.h\@:	FSPT	\1
+		move.w	d3,d0
+		move.w	d6,d2
+		FSPT	\1
+		dbf		d7,.l\@
+		bra		.bx
+	endc
+	ifeq	\2-1
+.l\@:	move.w	(a6)+,d0
+		move.w	(a6)+,d2
+		FSPT	\1
+		dbf		d7,.l\@
+		bra		.bx
+	endc
+	ifeq	\2-2
+.l\@:	move.w	(a6)+,d0
+		move.w	(a6)+,d2
+	ifne	\1
+		neg.w	d0
+	endc
+		add.w	d4,d0
+		add.w	d5,d2
+		lsr.l	#1,d3				; twinkling: this one off now?
+		bcs.s	.s\@
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.s\@
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.s\@
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+		cmp.w	#emberFwTop*li,d2
+		blo.s	.w\@
+		bset	d0,borderX/8(a5,d2.w)	; the ember plane ...
+		cmp.w	#1,d6
+		bne.s	.s\@				; (red: that only)
+.w\@:	bset	d0,borderX/8(a0,d2.w)
+.s\@:	dbf		d7,.l\@
+		bra		.bx
+	endc
+		endm
+.l0:	FSB		0,0
+.l1:	FSB		0,1
+.l2:	FSB		0,2
+.l3:	FSB		1,0
+.l4:	FSB		1,1
+.l5:	FSB		1,2
+		; --- the laser's: the pressure ring (ages 1..6), the flash (1..2)
+.bx:	btst	#4,fb_n(a4)
+		beq.s	.bn
+		move.w	fb_age(a4),d0
+		cmp.w	#1,d0				; it goes off: the sky lights up
+		bne.s	.bxf
+		move.w	#4,fsFlash
+.bxf:
+		cmp.w	#6,d0
+		bhi.s	.bn
+		lea		fsRingT-FV_ROW,a6
+		lsl.w	#7,d0
+		add.w	d0,a6
+		moveq	#FV_SP-1,d7
+		bsr.s	.white
+		cmp.w	#2,fb_age(a4)
+		bhi.s	.bn
+		lea		fsFlashT,a6
+		move.w	(a6)+,d7
+		subq.w	#1,d7
+		bsr.s	.white
+.bn:	subq.w	#1,fsLeft
+		bpl		.b
+		bra.s	.out
+.drop:	addq.w	#fb_len,a2			; gone: not written back
+		subq.w	#1,fsBN
+		bra.s	.bn
+; d7+1 points at a6 (dx, dy*li) round d4/d5: white
+.white:	move.w	d4,d0
+		add.w	(a6)+,d0
+		move.w	(a6)+,d2
+		add.w	d5,d2
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.wS
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.wS
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+		bset	d0,borderX/8(a0,d2.w)
+.wS:	dbf		d7,.white
+		rts
+.out:	move.w	fsN,d0
+		add.w	fsBN,d0
+		move.w	d0,latCount
+		move.w	fsFlash,d0			; the flash, dying away in 4 frames
+		add.w	d0,d0
+		move.w	.flash(pc,d0.w),fsFlashCol
+		subq.w	#1,fsFlash
+		bpl.s	.o1
+		clr.w	fsFlash
+.o1:	rts
+.flash:	dc.w	$0000,$0110,$0221,$0432,$0653
+
+fsTop:		dc.l	fsPool		; the first free place in fsPool
+fsN:		dc.w	0			; single sparks
+fsBN:		dc.w	0			; bursts
+fsLeft:		dc.w	0
+fsFrame:	dc.w	0
+fsFlash:	dc.w	0			; the sky's flash, 4..0
+fsBudL:		dc.w	0			; the frame's points left
+fsBudget	= 480				; points a frame (~90 cycles each)
+fsQN:		dc.w	0
+fsQ:		ds.l	fsBMax		; x (word), line, what (bytes)
+fsB:		ds.b	fb_len*fsBMax
+
+; fw.i's 64 KB are not needed any more: kept as a free block (any memory),
+; so the total stays as agreed - for what comes later (data of the next
+; steps), the record stays as it was
+fwFreeSize	= 63452
+		section "fwfree",bss
+fwFree::	ds.b	fwFreeSize
+		section "code",data,chip
+	endc
 
 ; every burst a frame on and drawn (from drawBlastFx: a0 = buffer, a1 =
 ; yTable). spark by spark: the table's offset + the centre (+ the fall),
 ; on the screen? a bset
 drawLattice:
+	ifne	fwShow
+		bra		fsDraw					; (switches.i fwShow: the fireworks)
+	else
+	ifne	fwBoss
+		move.w	#latBudget,latBudL		; (fwBoss: the laser's glow, as far as
+	endc								; the frame's budget goes)
 		move.w	latCount,d0
 		beq		.out
 		subq.w	#1,d0
@@ -2381,6 +3591,15 @@ drawLattice:
 		lea		emberOffset(a0),a5		; the ember plane, same offsets
 .lat:
 		addq.w	#1,lat_age(a2)
+	ifne	fwBoss
+		tst.w	lat_age(a2)				; (a chain's burst, not yet: kept)
+		bgt.s	.born
+		move.l	(a2)+,(a3)+
+		move.l	(a2)+,(a3)+
+		move.w	(a2)+,(a3)+
+		bra		.next
+.born:
+	endc
 		moveq	#0,d0
 		move.b	lat_life(a2),d0
 		cmp.w	lat_age(a2),d0
@@ -2432,6 +3651,10 @@ drawLattice:
 		move.w	lat_line(a4),d5
 		add.w	d5,d5
 		move.w	(a1,d5.w),d5			; line * li
+	ifne	fwHeavy
+		tst.w	lat_kick(a4)			; (fwHeavy: a laser burst - the physics)
+		bne		.heavy
+	endc
 		; --- the table row: (variant * fwAges + age) * fwSparks * 4
 		moveq	#0,d0
 		move.b	lat_n(a4),d0
@@ -2441,7 +3664,7 @@ drawLattice:
 		lea		fwTab,a6
 		add.l	d0,a6
 		moveq	#fwSparks-1,d7
-	ifne	fwBig
+	ifne	fwBig*(1-fwHeavy)		; (fwHeavy: those go .heavy's way)
 		tst.w	lat_kick(a4)			; (fwBig: a laser burst - its own loops)
 		bne		.big
 	endc
@@ -2492,7 +3715,7 @@ drawLattice:
 .cSkip:
 		dbf		d7,.cDot
 		bra.s	.next
-	ifne	fwBig
+	ifne	fwBig*(1-fwHeavy)*(1-fwBoss)
 	; --- (switches.i fwBig) the laser's bursts: the same sparks, the same
 	;     curves, half again as far out (and down): x * 1.5, y * 1.5 in
 	;     whole lines (the table has dy * li: half of it rounded down to a
@@ -2555,6 +3778,184 @@ drawLattice:
 .cSkB:	dbf		d7,.cDotB
 		bra		.next
 	endc
+	ifne	fwBoss
+	; --- (switches.i fwBoss) the laser's: half again as far out (as fwBig),
+	;     lat_n's sparks and a second variant's (lat_kick's high
+	;     byte) mirrored: 48. the white hot ones always, the glowing ones as
+	;     far as the frame's budget goes (the rest skip a frame: they flicker
+	;     out). then the flash and the pressure ring
+.big:	tst.w	d6
+		beq.s	.bw
+		sub.w	#fwSparks,latBudL	; glowing: one variant, if the budget
+		bmi		.next				; lets it
+		bsr		.lb01
+		bra.s	.b3
+.bw:	sub.w	#2*fwSparks,latBudL	; white hot: both variants - as long as
+		bpl.s	.bw2				; the budget lasts, then the first only
+		add.w	#fwSparks,latBudL
+		bmi		.next				; (none left: this frame not at all)
+		bsr		.lb00
+		bra.s	.b3
+.bw2:	move.l	d3,-(a7)
+		bsr		.lb00
+.b2:	moveq	#0,d0				; the second variant's row
+		move.b	lat_kick(a4),d0
+		mulu	#fwAges,d0
+		add.w	lat_age(a4),d0
+		mulu	#fwSparks*4,d0
+		lea		fwTab,a6
+		add.l	d0,a6
+		moveq	#fwSparks-1,d7
+		move.l	(a7)+,d3
+		bsr		.lb10
+.b3:	move.w	lat_age(a4),d0
+.b4:	cmp.w	#latRingN,d0		; the pressure ring
+		bhi		.next
+		sub.w	#latRingP,latBudL
+		bmi		.next
+		subq.w	#1,d0
+		mulu	#latRingP*4,d0
+		lea		latRingT,a6
+		add.l	d0,a6
+		moveq	#latRingP-1,d7
+.br:	move.w	(a6)+,d0
+		add.w	d4,d0
+		move.w	(a6)+,d2
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.brS
+		add.w	d5,d2
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.brS
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+		bset	d0,borderX/8(a0,d2.w)
+.brS:	dbf		d7,.br
+		bra		.next
+; one variant's sparks, half again as far: \1 1 = mirrored, \2 1 =
+; orange/red
+LB		macro
+.l\@:	move.w	(a6)+,d0			; x 1.5
+		move.w	d0,d1
+		asr.w	#1,d1
+		add.w	d1,d0
+	ifne	\1
+		neg.w	d0
+	endc
+		add.w	d4,d0
+		move.w	(a6)+,d2			; y 1.5, in whole lines
+		move.w	d2,d1
+		asr.w	#1,d1
+		btst	#0,d1
+		beq.s	.h\@
+		sub.w	#li/2,d1
+.h\@:	add.w	d1,d2
+	ifne	\2
+		lsr.l	#1,d3				; twinkling: this one off now?
+		bcs.s	.s\@
+	endc
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.s\@
+		add.w	d5,d2
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.s\@
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+	ifne	\2
+		cmp.w	#emberFwTop*li,d2
+		blo.s	.w\@
+		bset	d0,borderX/8(a5,d2.w)	; the ember plane ...
+		cmp.w	#1,d6
+		bne.s	.s\@				; (red: that only)
+.w\@:
+	endc
+		bset	d0,borderX/8(a0,d2.w)
+.s\@:	dbf		d7,.l\@
+		rts
+		endm
+.lb00:	LB		0,0
+.lb01:	LB		0,1
+.lb10:	LB		1,0
+	endc
+	ifne	fwHeavy
+	; --- (switches.i fwHeavy) a laser burst out of fhTabA/B (fhInit): the
+	;     age's row - the points, how far out they are, then dx and dy*li
+	;     each. wholly on the screen? then no clipping per point. bit 0 of
+	;     lat_n picks the table
+.heavy:	lea		fhTabA,a6
+		btst	#0,lat_n(a4)
+		beq.s	.hA
+		lea		fhTabB,a6
+.hA:	move.w	lat_age(a4),d0
+		add.w	d0,d0
+		add.w	(a6,d0.w),a6			; the age's row
+		move.w	(a6)+,d7				; sparks alive
+		subq.w	#1,d7
+		movem.w	(a6)+,d0-d2				; out: x, up, down
+		moveq	#0,d1					; (the loop: 0 fast, 4 clipped)
+		move.w	d4,d2
+		sub.w	d0,d2
+		bmi.s	.hClip
+		add.w	d4,d0
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.hClip
+		move.w	-4(a6),d0				; up
+		move.w	lat_line(a4),d2
+		sub.w	d0,d2
+		bmi.s	.hClip
+		move.w	lat_line(a4),d2
+		add.w	-2(a6),d2				; down
+		cmp.w	#screenHeight,d2
+		blo.s	.hWhole
+.hClip:	moveq	#4,d1
+.hWhole:
+		tst.w	d6						; orange / red: +8
+		beq.s	.hW
+		addq.w	#8,d1
+.hW:	move.w	.hLoops(pc,d1.w),d1		; (a2 is the bursts' read pointer)
+		jmp		.hLoops(pc,d1.w)
+.hLoops:
+		dc.w	.h0-.hLoops,0,.h1-.hLoops,0,.h4-.hLoops,0,.h5-.hLoops,0
+; one spark loop: \1 add, \2 1 = clip, \3 1 = orange/red
+FHL		macro
+.l\@:	move.w	d4,d0
+		\1.w	(a6)+,d0				; x - borderX
+		move.w	(a6)+,d2
+		add.w	d5,d2					; + line * li
+	ifne	\3
+		lsr.l	#1,d3					; twinkling: this one off now?
+		bcs.s	.s\@
+	endc
+	ifne	\2
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.s\@
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.s\@
+	endc
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+	ifne	\3
+		cmp.w	#emberFwTop*li,d2
+		blo.s	.w\@
+		bset	d0,borderX/8(a5,d2.w)	; the ember plane ...
+		cmp.w	#1,d6
+		bne.s	.s\@					; (red: that only)
+.w\@:
+	endc
+		bset	d0,borderX/8(a0,d2.w)
+.s\@:	dbf		d7,.l\@
+		bra		.next
+		endm
+.h0:	FHL		add,0,0
+.h1:	FHL		add,1,0
+.h4:	FHL		add,0,1
+.h5:	FHL		add,1,1
+	endc
 .drop:
 		lea		lat_size(a2),a2			; gone: not written back
 		subq.w	#1,latCount
@@ -2563,6 +3964,7 @@ drawLattice:
 		bpl		.lat
 .out:
 		rts
+	endc
 	ifne	defWords
 	ifeq	defWordsVec
 ;---------------------------------------------
@@ -5321,7 +6723,11 @@ LA		set		0
 LA		set		LA+1
 		endr
 latCount::		dc.w	0		; Defender explosions going on ...
+	ifne	fwBoss
+lattices:		ds.b	lat_size*latMaxB	; ... drawLattice (fwBoss: the laser's
+	else								; may be more)
 lattices:		ds.b	lat_size*latMax		; ... drawLattice
+	endc
 latLeft:		dc.w	0
 latBigReq:		dc.w	0		; (fwBig) the next burst is the laser's
 latEmber:		dc.l	0
@@ -7143,8 +8549,17 @@ introHideGame:
 
 introShowGame:
 			move.w	#$0000,gamePlaneMod	; (gamebp0h: clearScroller, each frame)
+		ifne	startCouple
+			tst.b	cpScrollOn				; (switches.i startCouple) the shadow
+			bne.s	.dpf					; playfield only with the text: till
+			move.w	#$1200,gamePlanes2		; then the game plane alone
+			move.w	#$1200,gamePlanes3
+			bra.s	.planesSet
+.dpf:
+		endc
 			move.w	#$3600,gamePlanes2		; (+ the ember plane: the fireworks' colours)
 			move.w	#$3600,gamePlanes3		; + ember plane, see emberTop
+.planesSet:
 			move.w	#$4200,topPlanes		; game plane 4 above gameTop
 			move.w	#$4200,midPlanes
 			tst.b	introLogoShown
@@ -7207,8 +8622,16 @@ introUpdate:
 			addq.w	#1,d0
 			move.w	d0,introTime
 .noTick:
+		ifne	startCouple
+			bsr		cpUpdate
+			tst.b	cpScrollOn
+			beq.s	.notFull
+			cmp.w	#scrollFullTime,cpScrT
+			blo.s	.notFull
+		else
 			cmp.w	#introScrollStart+scrollFullTime,introTime
 			blo.s	.notFull
+		endc
 			st		scrollReady			; the text runs across the whole bar now
 .notFull:
 			cmp.w	#introLogoStart,introTime
@@ -7230,8 +8653,13 @@ introUpdate:
 			st		introGameOn
 			bsr		introShowGame
 .gameOn:
+		ifne	startCouple
+			tst.b	cpBarOn				; (4 s after EXOLON: cpUpdate)
+			bne.s	.barTime
+		else
 			cmp.w	#introBarStart,introTime
 			bhs.s	.barTime
+		endc
 			bsr		blankBar			; held black until its cue, every frame,
 			bra.s	.noBar				; so nothing can sneak it back in early
 .barTime:
@@ -7375,12 +8803,75 @@ fadeInBar:
 .done:
 			rts
 
+	ifne	startCouple
+;---------------------------------------------
+; (switches.i startCouple) the start follows the names. asteroids.s
+; cpWordGone starts the waits when EXOLON and EXCITER are gone (their last
+; letter's explosion over), and holds EXCITER back till the bar is up and
+; DANDEE till cpCrumbleOk. F10 (namesLooped that early): all of it at once.
+; here, in the VBL before the beam is down there, so a switch is never torn
+cpUpdate:
+			tst.b	namesLooped
+			beq.s	.n0
+			st		cpBarOn
+			st		cpCrumbleOk
+			tst.b	cpScrollOn
+			bne.s	.n0
+			bsr.s	.textOn
+.n0:		move.w	cpBarT,d0			; EXOLON gone: the wait for the bar
+			beq.s	.n1
+			subq.w	#1,d0
+			move.w	d0,cpBarT
+			bne.s	.n1
+			st		cpBarOn
+.n1:		move.w	cpTextT,d0			; EXCITER gone: the wait for the text
+			beq.s	.n2
+			subq.w	#1,d0
+			move.w	d0,cpTextT
+			bne.s	.n2
+			bsr.s	.textOn
+.n2:		tst.b	cpScrollOn
+			beq.s	.out
+			cmp.w	#$7000,cpScrT		; (frames since the text started)
+			bhs.s	.t
+			addq.w	#1,cpScrT
+.t:			tst.b	cpCrumbleOk
+			bne.s	.out
+			tst.w	cpDotT				; counting from the first dot of the
+			bne.s	.d					; text crumbling at the dissolve edge
+			tst.w	activeCount
+			beq.s	.out
+.d:			addq.w	#1,cpDotT
+			cmp.w	#cpCrumbleWait,cpDotT
+			blo.s	.out
+			st		cpCrumbleOk
+.out:		rts
+; the text, and with it the shadow playfield (and the ember plane) - till
+; now the bar had the game plane alone
+.textOn:	st		cpScrollOn
+			clr.w	cpScrT
+			move.w	#$3600,gamePlanes2
+			move.w	#$3600,gamePlanes3
+			rts
+
+cpBarT::		dc.w	0		; frames still to wait for the bar (0: none)
+cpTextT::		dc.w	0		; ... for the text
+cpScrT:			dc.w	0		; frames since the text started
+cpDotT:			dc.w	0		; frames since its first dot
+cpExoGone::		dc.b	0		; (asteroids.s cpWordGone) EXOLON has gone
+cpExcGone::		dc.b	0		; ... EXCITER
+cpBarOn:		dc.b	0		; the bar fades up / is up
+cpScrollOn::	dc.b	0		; the text runs (and the shadow playfield)
+cpCrumbleOk::	dc.b	0		; it has crumbled long enough: DANDEE may come
+				even
+	endc
+
 introTime:		dc.w	0		; frames since the part started
 introLogoLine:	dc.w	0
 introLogoPass:	dc.w	0
 introBarTick:	dc.w	0
 introLogoDone:	dc.b	0
-introBarDone:	dc.b	0
+introBarDone::	dc.b	0
 introLogoShown:	dc.b	0		; logo bitplanes switched on yet?
 introGameOn:	dc.b	0		; game area bitplane switched on yet?
 introTaken:		dc.b	0		; colour snapshot already taken?
@@ -8032,6 +9523,11 @@ gamePlaneMod:
 		dc.w	$0094,$00d8
 
 		dc.w	$0182,$0eee	; game area before scroller color
+	ifne	fwShow
+		dc.w	$0180			; (switches.i fwShow) the sky over the bar
+fsFlashCol::					; lights up when a laser burst goes off
+		dc.w	$0000
+	endc
 
 		; ember plane (dual playfield plane 3, see emberTop). the pointer
 		; is set up here while plane 3 is still off, so it sits untouched
@@ -8474,7 +9970,9 @@ logoLineTab:	incbin	"logo_lines.bin"	; 37 bob positions x 73 lines x 7 words
 logoPalettes:	incbin	"logo_palettes.bin"	; 12 palettes x 25 blend steps x 92 colours
 logoFade:		incbin	"logo_fade.bin"		; see logoFadeLit / logoFadeLevels
 		even
+	ifeq	fwShow
 		include	"fw.i"				; the fireworks' sparks (fwgen.py), 32k
+	endc
 
 
 ;--------------------------------------------------------------

@@ -104,6 +104,8 @@ ws_len		= 16
 ; once, from initScroller: a5 = the copper's sprite pointers
 warpInit::
 		move.l	a5,warpSpr
+	ifeq	dropWarpMem					; (switches.i: the tables of warp.i's own field -
+										; never read under dropWarpSpr)
 		; the lists: each entry's lines, for good. the picture and x later
 		lea		wlst,a0
 		moveq	#0,d6
@@ -182,6 +184,7 @@ warpInit::
 		addq.w	#1,d1
 		move.b	d1,(a0)+
 		dbf		d7,.d
+	endc
 	ifne	elite3
 		bsr		morphInit			; (morph.i)
 	endc
@@ -199,6 +202,11 @@ warpCtlFlags:
 .f:
 		rts
 
+	ifne	dropWarpSpr
+	ifeq	elite3
+	fail	"dropWarpSpr needs elite3"
+	endc
+	endc
 ;---------------------------------------------
 ;---------------------------------------------
 ; seq_after: off it goes. keeps a0
@@ -237,10 +245,12 @@ warpStep:
 .go:
 		addq.w	#1,warpT
 		move.b	warpState,d0
+	ifeq	dropWarpSpr
 		cmp.b	#3,d0
 		beq		warpField
 		cmp.b	#2,d0
 		beq		warpThin
+	endc
 	ifne	elite3
 		cmp.b	#4,d0			; (the field's second frame of making)
 		bne.s	.g1
@@ -315,6 +325,8 @@ warpFade:
 		st		d5
 .same:
 		rts
+	ifeq	dropWarpSpr			; (switches.i: under elite3 the stars go to stars3d.i
+								; before any of this - left out)
 
 ;--- 2: the thinning --------------------------
 ; the first four frames choose who stays, a layer a frame (warpKeepers);
@@ -952,6 +964,7 @@ warpSpawn:
 		move.w	#-1,ws_line(a3)
 		clr.l	ws_entry(a3)
 		rts
+	endc
 
 ;---------------------------------------------
 warpState::		dc.b	0		; 0 off, 1 colours, 2 thinning, 3 the field, 4 its making (stars3d.i)
@@ -977,6 +990,7 @@ warpCount::		dc.w	warpN
 warpVzNow::		dc.w	warpVz	; the speed ahead now
 warpPark::		dc.w	0		; new stars this much further off (quarter z)
 
+	ifeq	dropWarpMem					; (switches.i: never read under dropWarpSpr)
 		section "warpchip",bss_c
 wlst::			ds.b	4*warpChan
 
@@ -985,3 +999,4 @@ warpStars::		ds.b	warpN*ws_len
 warpRTab::		ds.l	warpZRange+1
 warpLineTab::	ds.l	warpLines
 warpDie:		ds.b	4*stars_count
+	endc

@@ -198,7 +198,24 @@ ai_boxcy		= (ai_boxy0+ai_boxy1)/2
 ; --- entrance
 ai_enterangle	= 90		; obj_angle that points due right
 ai_enterspeed	= 90	; xvelo for the fly-in (128 == 1 pixel/frame)
+	ifne	zeroWave
+	ifne	zwBall
+	ifne	zwEntry
+ai_enterwait	= zwShipWaitE	; (switches.i zwEntry) ZERONINE's letters land first
+	else
+ai_enterwait	= zwShipWaitB	; (switches.i zwBall) ZERONINE's ball wave first
+	endc
+	else
+ai_enterwait	= zwShipWait	; (switches.i zeroWave) ZERONINE's wave first
+	endc
+	else
 ai_enterwait	= 120		; (240) frames after the first word STARTS appearing
+	endc
+	ifne	zeroWave
+zwE				= zwBall*zwEntry	; ZERONINE's letters come in as balls
+	else
+zwE				= 0
+	endc
 						; before the ship flies in. Triggering on the spawn
 						; rather than on the finished word gives it the whole
 						; zoom-in plus the read pause to reach its station,
@@ -631,6 +648,13 @@ initGameObjects::
 		move.l	d0,(a0)+
 		dbf		d7,.rnd
 		bsr		scaleLetters
+	ifne	zeroWave
+	ifne	zwBall
+		bsr		zwbInit
+	else
+		bsr		zwInit
+	endc
+	endc
 		bsr		shots_init
 		bsr		ship_init
 		clr.l	enemy_con
@@ -832,7 +856,12 @@ updateGame:
 		bsr		initGameObjects
 .nrestart:
 		tst.l	enemy_con
+	ifne	startCouple
+		bne		.noLetterInit
+		bsr		cpWordGone			; (EXOLON, EXCITER: the start's cues)
+	else
 		bne.s	.noLetterInit
+	endc
 
 		; --- word is gone. nothing new until the sky is clear, or a shot
 		;     still in the air from the last word takes out a letter of the
@@ -861,6 +890,20 @@ updateGame:
 		st		seq_on
 		bra		.noLetterInit
 .noSeq:
+	ifne	startCouple
+		; --- (switches.i startCouple) EXCITER only once the copper bar is
+		;     up, DANDEE only once the text has crumbled for a while
+		move.l	nameOffset,d0
+		cmp.l	#8,d0
+		bne.s	.cpG1
+		tst.b	introBarDone
+		beq		.noLetterInit
+.cpG1:	cmp.l	#12,d0
+		bne.s	.cpG2
+		tst.b	cpCrumbleOk
+		beq		.noLetterInit
+.cpG2:
+	endc
 		; --- and the autopilot has to have flown back home (ai_wantVelo),
 		;     into the visible part of the screen. not for ever, though
 		tst.b	ai_enabled
@@ -893,6 +936,29 @@ updateGame:
 .noLetterInit:
 
 		rts
+
+	ifne	startCouple
+; (switches.i startCouple) a word has gone - its last letter's explosion is
+; over. EXOLON (the second name: nameOffset 8 by now) starts the wait for the
+; copper bar, EXCITER (12) the wait for the text (scroller.s cpUpdate). once
+; each; every frame without a word comes here
+cpWordGone:
+		move.l	nameOffset,d0
+		cmp.l	#8,d0
+		bne.s	.n1
+		tst.b	cpExoGone
+		bne.s	.out
+		st		cpExoGone
+		move.w	#cpBarWait,cpBarT
+		rts
+.n1:	cmp.l	#12,d0
+		bne.s	.out
+		tst.b	cpExcGone
+		bne.s	.out
+		st		cpExcGone
+		move.w	#cpTextWait,cpTextT
+.out:	rts
+	endc
 **********************************************************************
 *vector object_class                                                 *
 *
@@ -1118,6 +1184,14 @@ obj_move:				;<calculate new object coords>
 		bne.s	.noMorph
 		jmp		morphDraw
 .noMorph:
+	endc
+	ifne	zeroWave
+		move.l	zwProf(pc),d0			; a letter in ZERONINE's wave
+	ifne	zwBall
+		bne		zwbDraw
+	else
+		bne		zwDraw
+	endc
 	endc
 		; insert line obj to draw table
 		move.w	obj_angle(a0),d0
@@ -1377,6 +1451,15 @@ obj_move:				;<calculate new object coords>
 		rts
 ;---------------------------------------------
 updateEnemies:
+	ifne	zeroWave
+		tst.b	zwOn				; ZERONINE's wave: its clock
+		beq.s	.zwIdle
+		addq.w	#1,zwT
+		cmp.w	#7*zwStep+zwLen,zwT	; the E is through
+		blt.s	.zwIdle
+		sf		zwOn
+.zwIdle:
+	endc
 		clr.w	ai_zooming			; (letters spinning in, counted below)
 		sf		ai_forming			; set again below by any letter that is
 									; still waiting or still zooming in
@@ -1396,6 +1479,74 @@ updateEnemies:
 		st		ai_forming			; hasn't even started yet
 		bra		.nenemy
 .noWait:
+	ifne	zeroWave
+		; --- in ZERONINE's wave? letter i (slot i, bit 31-i) is at frame
+		;     zwT - i*zwStep of its own 44; obj_move then draws it zwDraw's way
+		clr.l	zwProf
+		tst.b	zwOn
+		beq.s	.zwNo
+	ifne	zwE
+		; --- (zwEntry) its letters fly in: the clock is obj_appear, set to
+		;     the flight's length when the letter is thrown (zweThrow)
+		move.w	obj_appear(a0),d2
+		beq.s	.zwNo				; landed: an asteroid
+		tst.w	obj_flag(a0)
+		bne.s	.zwNo
+		moveq	#31,d1
+		sub.w	d7,d1
+		lsl.w	#3,d1
+		lea		zweSlots,a1			; its flight and length
+		add.w	d1,a1
+		cmp.w	#zweNew,d2
+		bne.s	.zwGo
+		bsr		zweThrow
+		move.w	obj_appear(a0),d2
+.zwGo:	move.w	4(a1),d1
+		sub.w	d2,d1				; t
+		lsl.w	#2,d1
+		move.l	(a1),a1
+		add.w	d1,a1
+		move.l	a1,zwProf
+	else
+		tst.w	obj_appear(a0)		; (whole and untouched only)
+		bne.s	.zwNo
+		tst.w	obj_flag(a0)
+		bne.s	.zwNo
+		moveq	#31,d1
+		sub.w	d7,d1
+	ifne	zwBall
+		move.w	d1,d3				; i
+		lsl.w	#2,d1
+		move.w	d1,d2
+		add.w	d1,d1
+		add.w	d2,d1				; * zwStep (12)
+	else
+		lsl.w	#3,d1				; * zwStep
+	endc
+		move.w	zwT,d2
+		sub.w	d1,d2
+		cmp.w	#zwLen,d2
+		bhs.s	.zwNo				; not yet, or done
+	ifne	zwBall
+		move.w	d2,zwTnow
+		add.w	d3,d3
+		lea		zwZn,a1				; this letter's nearest point
+		add.w	d3,a1
+		move.l	a1,zwZnP
+		tst.w	d2					; thrown now: how near may it come?
+		bne.s	.zwGo
+		bsr		zwbApex
+.zwGo:	lsl.w	#2,d2
+		lea		zwFrames,a1
+	else
+		lsl.w	#2,d2
+		lea		zwProfile(pc),a1
+	endc
+		add.w	d2,a1
+		move.l	a1,zwProf
+	endc
+.zwNo:
+	endc
 		movem.l	d0/d7/a4,-(a7)
 		bsr		obj_move			; move and setup draw
 		movem.l	(a7)+,d0/d7/a4
@@ -1487,6 +1638,9 @@ updateEnemies:
 		sub.l	#collList,d1
 		lsr.w	#4,d1				; / coll_len
 		move.w	d1,collCount
+	ifne	zeroWave
+		clr.l	zwProf				; (the ship's obj_move comes next)
+	endc
 		rts
 ;---------------------------------------------
 ; a0: obj
@@ -7099,7 +7253,12 @@ seq_mWait		= 200		; frames before it starts (the rest)
 seq_morph:
 		move.w	#90,seq_dface
 		tst.b	morphKept			; the fighter is done: it settles in the
+	ifne	transAC
+		bne.s	.kept				; (transAC: from A's end on as well -
+		tst.b	tcStill				; it comes to rest, B and C turn it there)
+	endc
 		beq.s	.float				; middle and holds still there (the
+.kept:
 		move.w	#seq_mX,d0			; stars do the moving now - and its
 		move.w	#seq_mY,d1			; lines are drawn once, then only shown:
 		move.w	d0,d2				; morph.i morphKeptDraw)
@@ -8393,6 +8552,20 @@ asteroids_init:
 		sf		ai_styleSet
 		clr.w	ai_aimHold
 
+	ifne	zeroWave
+		tst.l	nameOffset			; ZERONINE: its wave once it is up
+		bne.s	.zwNot
+		tst.b	zwDone				; (once only)
+		bne.s	.zwNot
+		st		zwDone
+		st		zwOn
+	ifne	zwE
+		clr.w	zwT
+	else
+		move.w	#-zwStart,zwT
+	endc
+.zwNot:
+	endc
 		lea		names,a3
 		add.l	nameOffset,a3
 		move.l	(a3)+,a4
@@ -8470,6 +8643,14 @@ asteroids_init:
 		move.w	#appear_scale0,obj_scale(a0)
 		move.w	d7,obj_wait(a0)
 
+	ifne	zwE
+		tst.b	zwOn				; ZERONINE: thrown in as balls (zweThrow)
+		beq.s	.zwSt
+		move.w	#zweNew,obj_appear(a0)
+		add.w	#zwStep,d7
+		bra.s	.skip
+.zwSt:
+	endc
 		add.w	#appear_stagger,d7		; next wait
 .skip:		
 		move.b	-1(a4),d6			; the character we just placed
@@ -8641,7 +8822,767 @@ yOffTab:	ds.w	game_height
 
 ; raw p2 (2 words) + rotated p2 (2 words) of the previous line
 lineCache:	ds.w	6		; raw p2, rotated p2, then sin and cos
+	ifne	zeroWave
+zwProf:		dc.l	0		; this letter's zwProfile entry, 0 = not in the wave
+zwT:		dc.w	0		; the wave's clock, the Z starts at 0
+zwOn:		dc.b	0
+zwDone:		dc.b	0
+	ifne	zwBall
+zwZnP:		dc.l	0		; -> this letter's zwZn
+zwTnow:		dc.w	0		; its frame of zwLen
+zwXc4:		dc.w	0		; its centre from the vanishing point, 1/4 px
+zwYc4:		dc.w	0
+	endc
+	endc
 
+	ifne	zeroWave
+;---------------------------------------------
+; ZERONINE's honour wave (switches.i zeroWave, drehbuch_verwandlung.md 0b).
+; a letter in it is a flat object turned by b round its own upright axis
+; and seen from a camera: x' = x*cos b, z = x*sin b, then the perspective
+; p = F/(Zc+z), with the zoom as the letter coming closer (Zc = F/S, F = 96
+; px - at 150 % the near edge is 1.25 times, the far one 0.83 times as big).
+; per letter and frame zwProfile gives 4*Zc, 64*cos b and 64*sin b.
+; no mul or div in here: every product is a quarter square difference,
+; a*b = q(a+b) - q(a-b) with q(n) = n*n/4, and 1/z a table:
+;   zwQ  q(n) for n -255..255 (words), all operands here are well inside
+;   zwR  24576/d for d = 4*(Zc+z) 128..511 (= p in 1/64, 64 at 100 %)
+; both are built by zwInit in bufA's tail, which nothing ever uses (the
+; game draws its 268 lines into the first 12 KB), and the frame's points
+; go there too.
+	ifne	zwE
+zwStep		= 6				; frames from one letter to the next
+zwLen		= 160			; (the clock runs till all have landed)
+	else
+	ifne	zwBall
+zwStep		= 12			; frames from one letter to the next (4+8 below)
+zwLen		= 132			; frames of one letter's ball flight
+	else
+zwStep		= 8				; frames from one letter to the next (lsl #3 below)
+zwLen		= 44			; frames of one letter's move (zwProfile)
+	endc
+	endc
+	ifeq	zwBall
+zwTabs		= bufA+$8000-$800
+zwQ			= zwTabs+255*2	; q(0)
+zwR			= zwTabs+511*2-128*2	; d = 128 is its first entry
+zwPts		= zwTabs+511*2+384*2	; x1,y1,x2,y2 per line, on screen
+
+zwInit:
+		lea		zwTabs,a0
+		move.w	#-255,d0
+.q:		move.w	d0,d1
+		muls	d1,d1
+		asr.l	#2,d1
+		move.w	d1,(a0)+
+		addq.w	#1,d0
+		cmp.w	#256,d0
+		bne.s	.q
+		move.w	#128,d0
+.r:		move.l	#24576,d1
+		divu	d0,d1
+		move.l	d1,d2
+		swap	d2					; remainder
+		add.w	d2,d2
+		cmp.w	d0,d2
+		blo.s	.rd
+		addq.w	#1,d1				; rounded
+.rd:	move.w	d1,(a0)+
+		addq.w	#1,d0
+		cmp.w	#512,d0
+		bne.s	.r
+		rts
+
+; \1 = \1 * \2 (words, |\1|+|\2| <= 255), d2 scratch, a3 = zwQ
+ZWMUL	macro
+		move.w	\1,d2
+		add.w	\2,d2
+		add.w	d2,d2
+		sub.w	\2,\1
+		add.w	\1,\1
+		move.w	(a3,d2.w),d2
+		sub.w	(a3,\1.w),d2
+		move.w	d2,\1
+		endm
+
+; a0 = the letter, a1 = obj_coords, a5 = yOffTab, a6 = the draw table,
+; d0 = its zwProfile entry. the points first, then the lines
+zwDraw:
+		move.l	#-1,obj_cachekey(a0)	; (another shape than the cached one)
+		move.l	d0,a2
+		movem.w	(a2),d4/d6				; 4*Zc, then cos:sin as two bytes
+		lea		zwQ,a3
+		lea		zwR,a4
+		lea		zwPts,a2
+		move.w	(a1)+,d7				; lines
+		move.w	d7,-(a7)
+		subq.w	#1,d7
+	ifeq	zeroWave-1
+		cmp.w	#64<<8,d6				; turned at all (cos 1, sin 0)?
+		bne.s	.turn
+	endc
+		add.w	d4,d4					; no: one p for the whole letter
+		move.w	(a4,d4.w),d4
+.zLine:	move.l	(a1),d0					; p1 = the last line's p2 (a polyline)?
+		cmp.l	-4(a1),d0				; (the 1st line's -4 is obj_scale:count,
+		bne.s	.zP1					; never a point)
+		addq.w	#4,a1
+		move.l	-4(a2),(a2)+
+		bra.s	.zP2
+.zP1:	movem.w	(a1)+,d0-d1
+		bsr.s	.zoom
+.zP2:	movem.w	(a1)+,d0-d1
+		bsr.s	.zoom
+		dbf		d7,.zLine
+		bra		.draw
+.zoom:	ZWMUL	d0,d4
+		add.w	#32,d0
+		asr.w	#6,d0
+		add.w	obj_xc(a0),d0
+		ZWMUL	d1,d4
+		add.w	#32,d1
+		asr.w	#6,d1
+		add.w	obj_yc(a0),d1
+		movem.w	d0-d1,(a2)
+		addq.w	#4,a2
+		rts
+
+	ifeq	zeroWave-1
+.turn:	move.w	d6,d5
+		asr.w	#8,d5					; 64*cos
+		ext.w	d6						; 64*sin
+.tLine:	move.l	(a1),d0
+		cmp.l	-4(a1),d0
+		bne.s	.tP1
+		addq.w	#4,a1
+		move.l	-4(a2),(a2)+
+		bra.s	.tP2
+.tP1:	movem.w	(a1)+,d0-d1
+		bsr.s	.spin
+.tP2:	movem.w	(a1)+,d0-d1
+		bsr.s	.spin
+		dbf		d7,.tLine
+		bra.s	.draw
+.spin:	move.w	d0,d3
+		ZWMUL	d3,d6					; 64 * x*sin b = 64 z
+		addq.w	#8,d3
+		asr.w	#4,d3					; 4 z
+		add.w	d4,d3					; 4 (Zc+z)
+		add.w	d3,d3
+		move.w	(a4,d3.w),d3			; p, 64 = 100 %
+		ZWMUL	d0,d5					; 64 * x*cos b
+		addq.w	#8,d0
+		asr.w	#4,d0					; 4 x'
+		ZWMUL	d0,d3
+		add.w	#128,d0
+		asr.w	#8,d0
+		add.w	obj_xc(a0),d0
+		ZWMUL	d1,d3
+		add.w	#32,d1
+		asr.w	#6,d1
+		add.w	obj_yc(a0),d1
+		movem.w	d0-d1,(a2)
+		addq.w	#4,a2
+		rts
+	endc
+
+.draw:	lea		zwPts,a2
+		move.w	(a7)+,d7
+		subq.w	#1,d7
+.line:	movem.w	(a2)+,d0-d3
+		move.w	d7,-(a7)
+		bsr		set_line
+		move.w	(a7)+,d7
+		dbf		d7,.line
+		rts
+
+; per frame of a letter's 44: 4*Zc (384 = 100 %), 64*cos b, 64*sin b.
+; frames 0-13 it comes closer to 150 %, smoothly; 14-33 one turn, eased;
+; 34-43 back, a spring (0.6 damped) - 95.5 %, then 100 % (S, b in degrees)
+zwProfile:
+		dc.w	384
+		dc.b	64,0		;  0: S 1.000  b 0.0
+		dc.w	381
+		dc.b	64,0		;  1: S 1.007  b 0.0
+		dc.w	374
+		dc.b	64,0		;  2: S 1.028  b 0.0
+		dc.w	363
+		dc.b	64,0		;  3: S 1.059  b 0.0
+		dc.w	349
+		dc.b	64,0		;  4: S 1.099  b 0.0
+		dc.w	335
+		dc.b	64,0		;  5: S 1.146  b 0.0
+		dc.w	321
+		dc.b	64,0		;  6: S 1.197  b 0.0
+		dc.w	307
+		dc.b	64,0		;  7: S 1.250  b 0.0
+		dc.w	295
+		dc.b	64,0		;  8: S 1.303  b 0.0
+		dc.w	284
+		dc.b	64,0		;  9: S 1.354  b 0.0
+		dc.w	274
+		dc.b	64,0		; 10: S 1.401  b 0.0
+		dc.w	266
+		dc.b	64,0		; 11: S 1.441  b 0.0
+		dc.w	261
+		dc.b	64,0		; 12: S 1.472  b 0.0
+		dc.w	257
+		dc.b	64,0		; 13: S 1.493  b 0.0
+		dc.w	256
+		dc.b	64,0		; 14: S 1.500  b 0.0
+		dc.w	256
+		dc.b	63,10		; 15: S 1.500  b 9.2
+		dc.w	256
+		dc.b	60,22		; 16: S 1.500  b 19.9
+		dc.w	256
+		dc.b	53,36		; 17: S 1.500  b 34.2
+		dc.w	256
+		dc.b	40,50		; 18: S 1.500  b 51.5
+		dc.w	256
+		dc.b	20,61		; 19: S 1.500  b 71.4
+		dc.w	256
+		dc.b	-4,64		; 20: S 1.500  b 93.3
+		dc.w	256
+		dc.b	-29,57		; 21: S 1.500  b 116.9
+		dc.w	256
+		dc.b	-50,40		; 22: S 1.500  b 141.7
+		dc.w	256
+		dc.b	-62,14		; 23: S 1.500  b 167.2
+		dc.w	256
+		dc.b	-62,-14		; 24: S 1.500  b 192.8
+		dc.w	256
+		dc.b	-50,-40		; 25: S 1.500  b 218.3
+		dc.w	256
+		dc.b	-29,-57		; 26: S 1.500  b 243.1
+		dc.w	256
+		dc.b	-4,-64		; 27: S 1.500  b 266.7
+		dc.w	256
+		dc.b	20,-61		; 28: S 1.500  b 288.6
+		dc.w	256
+		dc.b	40,-50		; 29: S 1.500  b 308.5
+		dc.w	256
+		dc.b	53,-36		; 30: S 1.500  b 325.8
+		dc.w	256
+		dc.b	60,-22		; 31: S 1.500  b 340.1
+		dc.w	256
+		dc.b	63,-10		; 32: S 1.500  b 350.8
+		dc.w	256
+		dc.b	64,-3		; 33: S 1.500  b 357.6
+		dc.w	273
+		dc.b	64,0		; 34: S 1.406  b 0.0
+		dc.w	311
+		dc.b	64,0		; 35: S 1.233  b 0.0
+		dc.w	355
+		dc.b	64,0		; 36: S 1.083  b 0.0
+		dc.w	387
+		dc.b	64,0		; 37: S 0.992  b 0.0
+		dc.w	402
+		dc.b	64,0		; 38: S 0.956  b 0.0
+		dc.w	402
+		dc.b	64,0		; 39: S 0.955  b 0.0
+		dc.w	396
+		dc.b	64,0		; 40: S 0.970  b 0.0
+		dc.w	390
+		dc.b	64,0		; 41: S 0.986  b 0.0
+		dc.w	385
+		dc.b	64,0		; 42: S 0.997  b 0.0
+		dc.w	384
+		dc.b	64,0		; 43: S 1.000  b 0.0
+	else
+;---------------------------------------------
+; (switches.i zwBall) the wave as a ball with spin. per letter zwLen frames:
+;   0-23   thrown at us, slower and slower (rest -> nearest, z = 1/S)
+;   24-83  falls away, faster and faster, far behind its place (12 %)
+;   84-131 bounces, springs back and comes to rest exactly in its place
+; depth runs on squares of time like a thrown ball: z = A + B*w, w = n*n/T*T
+; (zwFrames). meanwhile two turns round its upright axis, at one steady rate
+; but for a 14 frame run-up and run-out, and ending exactly flat.
+; true perspective for every point, centre included: the camera looks at
+; the name's row (zwCx, zwCy is the vanishing point), F = 160 px, the
+; letter's place lies at depth F. a point (X+x', Y+y, Zc+z) with
+; x' = x*cos b, z = x*sin b goes to F*(X+x')/(Zc+z), F*(Y+y)/(Zc+z).
+; how near a letter may come is worked out when it is thrown (zwbApex): it
+; stays in the picture with 4 px to spare, below the logo, at 200 % at most.
+; no mul or div per point: products are quarter square differences out of
+; zwQ (longs, q(n) = n*n/4 for n -1023..1023) and zwQw (words, -127..127),
+; 1/z is zwR:
+;   4p = 4*40960/d, d = 4*(Zc+z), 4*64 = 100 %; d 256..1279 one by one, then
+;   d 1280..6143 in steps of 16 (far away p changes slowly)
+; all in bufA's dead tail (the game draws into its first 12 KB; nothing
+; touches it from 17 KB on), built once by zwbInit.
+zwF			= 160
+zwZr4		= 4*zwF			; at rest
+zwZf4		= 4*zwF*100/12	; far behind: 12 %
+zwCx		= ast_x_center	; the vanishing point
+zwCy		= ast_y_start	; (the name's row)
+zwHalf		= 16			; a letter's half size, its near edge turned included
+zwEdge		= 160-4			; visible half width (x 32..351) less 4 px
+zwTopY		= 90+4			; the logo's lowest line (measured) + 4
+zwBotY		= game_height-1-4
+zwRise		= 24			; frames thrown at us
+zwFall		= 60			; ... falling away
+zwSpinRun	= 14			; frames of run-up and of run-out
+zwSpinW		= 1785			; 720*4096/1652: 1/4096 degrees per run-up step
+zwQ			= bufA+$4400+1023*4	; q(0)
+zwR			= bufA+$6400-256*2	; p(d) at zwR+2*d (d < 1280), zwR+2*(d/16+1200)
+zwFrames	= bufA+$6e80	; per frame: w (16384 = 1), 64*cos b, 64*sin b
+zwQw		= bufA+$7200+127*2	; q(0), words, n -127..127 (the small products)
+zwZn		= bufA+$70a0	; per letter: 4*Zc at the nearest point
+zwPts		= bufA+$70c0	; x1,y1,x2,y2 per line, on screen
+	ifne	zwE
+; (zwEntry) the letters' flights in, in bufB's dead tail: per class (how
+; near it may come) 4*Zc, 64*cos b, 64*sin b per frame, then their lengths,
+; then per letter its flight (a pointer) and its length
+zweNew		= 999			; obj_appear of a letter not thrown yet
+zweG		= 1620			; g/2 = 0.001545 size per frame^2: *256 per (dt/16)^2
+zweStride	= 160*4
+zweTabs		= bufB+$4400
+zweN		= bufB+$4400+8*zweStride
+zweSlots	= zweN+16
+	endc
+
+zwbInit:
+		lea		bufA+$4400,a0		; quarter squares (*256)
+		move.w	#-1023,d0
+.q:		move.w	d0,d1
+		muls	d1,d1
+		lsl.l	#6,d1
+		move.l	d1,(a0)+
+		addq.w	#1,d0
+		cmp.w	#1024,d0
+		bne.s	.q
+		lea		zwQw-127*2,a0		; ... the small ones in words
+		move.w	#-127,d0
+.qw:	move.w	d0,d1
+		muls	d1,d1
+		asr.l	#4,d1				; (/4 more)
+		move.w	d1,(a0)+
+		addq.w	#1,d0
+		cmp.w	#128,d0
+		bne.s	.qw
+		lea		zwR+256*2,a0		; 1/z, near
+		move.w	#256,d0
+.r:		move.w	d0,d2
+		bsr.s	.rcp
+		addq.w	#1,d0
+		cmp.w	#1280,d0
+		bne.s	.r
+		moveq	#80,d0				; ... far, by sixteens
+.r2:	move.w	d0,d2
+		lsl.w	#4,d2
+		addq.w	#8,d2
+		bsr.s	.rcp
+		addq.w	#1,d0
+		cmp.w	#384,d0
+		bne.s	.r2
+	ifne	zwE
+		; --- (zwEntry) the 8 flights of zweParams, frame by frame:
+		;     4*Zc, 64*cos b, 64*sin b. per frame the size is its arc's
+		;     top less g/2*dt*dt, 4*Zc = 4F/size
+		lea		zweParams(pc),a2
+		lea		zweTabs,a4
+		lea		zweN,a3
+		lea		sctab(pc),a1
+.cls:	move.w	8(a2),d6			; landed (1/16 frames)
+		lsr.w	#4,d6
+		addq.w	#1,d6				; N frames
+		move.w	d6,(a3)+
+		moveq	#0,d0				; the spin: 2 turns over the N frames,
+		moveq	#0,d3				; a steady rate but for run-up and run-out
+.k:		bsr		.run
+		add.l	d1,d3
+		addq.w	#1,d0
+		move.w	d6,d1
+		subq.w	#1,d1
+		cmp.w	d1,d0
+		blo.s	.k
+		move.l	#720*4096,d1
+		divu	d3,d1
+		move.w	d1,d5				; 1/4096 degrees per run-up step
+		move.l	a4,a0
+		moveq	#0,d3				; the angle
+		moveq	#0,d0				; t
+.fr:	move.w	d0,d1
+		lsl.w	#4,d1
+		cmp.w	2(a2),d1			; which arc?
+		bhs.s	.g2
+		move.w	(a2),d2
+		move.w	10(a2),d4
+		bra.s	.gs
+.g2:	cmp.w	6(a2),d1
+		bhs.s	.g3
+		move.w	4(a2),d2
+		move.w	12(a2),d4
+		bra.s	.gs
+.g3:	move.w	8(a2),d2			; (the last one's top is its place)
+		move.w	#4096,d4
+.gs:	sub.w	d2,d1				; dt from the top, 1/16 frames
+		muls	d1,d1
+		lsr.l	#8,d1
+		mulu	#zweG,d1
+		lsr.l	#8,d1
+		sub.w	d1,d4				; the size, 4096 = 100 %
+		move.w	d6,d1
+		subq.w	#1,d1
+		cmp.w	d0,d1
+		bne.s	.gl
+		move.w	#4096,d4			; the last frame exactly in place
+.gl:	move.l	#4*zwF*4096,d1
+		divu	d4,d1
+		move.w	d1,(a0)+			; 4*Zc
+		move.l	d3,d1
+		moveq	#12,d2
+		lsr.l	d2,d1				; degrees
+	ifeq	zeroWave-2
+		moveq	#0,d1				; (variant b: no turn)
+	endc
+		move.w	d6,d2
+		subq.w	#1,d2
+		cmp.w	d0,d2
+		bne.s	.gn
+		moveq	#0,d1				; ... and exactly flat
+.gn:	cmp.w	#360,d1
+		blo.s	.gd
+		sub.w	#360,d1
+.gd:	lsl.w	#2,d1
+		move.w	2(a1,d1.w),d2		; cos
+		bsr		.b64
+		move.b	d2,(a0)+
+		move.w	(a1,d1.w),d2		; sin
+		bsr		.b64
+		move.b	d2,(a0)+
+		bsr.s	.run
+		mulu	d5,d1
+		add.l	d1,d3
+		addq.w	#1,d0
+		cmp.w	d6,d0
+		bne		.fr
+		lea		zweStride(a4),a4
+		lea		14(a2),a2
+		lea		zweParams+8*14(pc),a0
+		cmp.l	a0,a2
+		bne		.cls
+		rts
+; d0 = t, d6 = N -> d1 = min(t+1, N-1-t, run), a long
+.run:	move.w	d0,d1
+		addq.w	#1,d1
+		move.w	d6,d2
+		subq.w	#1,d2
+		sub.w	d0,d2
+		cmp.w	d1,d2
+		bhs.s	.ru
+		move.w	d2,d1
+.ru:	cmp.w	#zwSpinRun,d1
+		bls.s	.rv
+		moveq	#zwSpinRun,d1
+.rv:	ext.l	d1
+		rts
+	else
+		; --- the flight: w and the spin per frame
+		lea		zwFrames,a0
+		lea		sctab(pc),a1
+		moveq	#0,d3				; the angle, 1/4096 degrees
+		moveq	#0,d0				; t
+.f:		cmp.w	#zwRise,d0
+		bhs.s	.f1
+		moveq	#zwRise,d1			; thrown: n = 24-t
+		sub.w	d0,d1
+		move.w	#zwRise*zwRise,d4
+		bra.s	.fw
+.f1:	cmp.w	#zwRise+zwFall,d0
+		bhs.s	.f2
+		move.w	d0,d1				; falling: n = t-24
+		sub.w	#zwRise,d1
+		move.w	#zwFall*zwFall,d4
+		bra.s	.fw
+.f2:	move.w	#zwLen-1,d1			; back: n = 131-t
+		sub.w	d0,d1
+		move.w	#(zwLen-1-zwRise-zwFall)*(zwLen-1-zwRise-zwFall),d4
+.fw:	mulu	d1,d1
+		swap	d1
+		clr.w	d1
+		lsr.l	#2,d1				; n*n*16384
+		divu	d4,d1
+		move.w	d1,(a0)+
+		move.l	d3,d1				; angle -> degrees 0..359
+		moveq	#12,d2
+		lsr.l	d2,d1
+	ifeq	zeroWave-2
+		moveq	#0,d1				; (variant b: no turn)
+	endc
+		cmp.w	#zwLen-1,d0			; the last frame exactly flat
+		bne.s	.nl
+		moveq	#0,d1
+.nl:	cmp.w	#360,d1
+		blo.s	.d
+		sub.w	#360,d1
+.d:		lsl.w	#2,d1
+		move.w	2(a1,d1.w),d2		; cos
+		bsr.s	.b64
+		move.b	d2,(a0)+
+		move.w	(a1,d1.w),d2		; sin
+		bsr.s	.b64
+		move.b	d2,(a0)+
+		move.w	d0,d1				; the spin's rate this step:
+		addq.w	#1,d1				; min(t+1, 131-t, 14) run-up steps
+		move.w	#zwLen-1,d2
+		sub.w	d0,d2
+		cmp.w	d1,d2
+		bhs.s	.k1
+		move.w	d2,d1
+.k1:	cmp.w	#zwSpinRun,d1
+		bls.s	.k2
+		moveq	#zwSpinRun,d1
+.k2:	mulu	#zwSpinW,d1
+		add.l	d1,d3
+		addq.w	#1,d0
+		cmp.w	#zwLen,d0
+		bne		.f
+	endc
+		rts
+.rcp:	move.l	#40960,d1			; d2 = d -> (a0)+ = 4p, p = 40960/d rounded
+										; (4p: it is zwQ's index)
+		divu	d2,d1
+		move.l	d1,d4
+		swap	d4
+		add.w	d4,d4
+		cmp.w	d2,d4
+		blo.s	.rd
+		addq.w	#1,d1
+.rd:	add.w	d1,d1
+		add.w	d1,d1
+		move.w	d1,(a0)+
+		rts
+.b64:	muls	#64,d2				; sctab's +-32767 -> +-64, rounded
+		add.l	#$4000,d2
+		asr.l	#8,d2
+		asr.l	#7,d2
+		rts
+
+; a0 = the letter just thrown, a1 -> its zwZn: how near may it come? its
+; centre goes out from the vanishing point with 1/z, so the further out it
+; is, the less: (|X|+half)*S <= edge, (half-Y)*S above, (half+Y)*S below
+zwbApex:
+		movem.l	d1-d3,-(a7)
+		move.w	obj_xc(a0),d1
+		sub.w	#zwCx,d1
+		bpl.s	.ax
+		neg.w	d1
+.ax:	add.w	#zwHalf,d1
+		mulu	#zwZr4,d1			; 4*Zc = 4F/S = 4F*(|X|+half)/edge
+		divu	#zwEdge,d1
+		move.w	d1,d3
+		move.w	#zwCy+zwHalf,d1		; up: (half-Y)
+		sub.w	obj_yc(a0),d1
+		ble.s	.t
+		mulu	#zwZr4,d1
+		divu	#zwCy-zwTopY,d1
+		cmp.w	d1,d3
+		bhs.s	.t
+		move.w	d1,d3
+.t:		move.w	obj_yc(a0),d1		; down: (half+Y)
+		sub.w	#zwCy-zwHalf,d1
+		ble.s	.b
+		mulu	#zwZr4,d1
+		divu	#zwBotY-zwCy,d1
+		cmp.w	d1,d3
+		bhs.s	.b
+		move.w	d1,d3
+.b:		cmp.w	#zwZr4/2,d3			; 200 % at most
+		bhs.s	.lo
+		move.w	#zwZr4/2,d3
+.lo:	cmp.w	#zwZr4*10/11,d3		; 110 % at least
+		bls.s	.hi
+		move.w	#zwZr4*10/11,d3
+.hi:	move.w	d3,(a1)
+		movem.l	(a7)+,d1-d3
+		rts
+
+	ifne	zwE
+; (zwEntry) a0 = a letter of ZERONINE starting its flight in, a1 -> its
+; zweSlots entry: the highest flight that stays in the picture (zwbApex),
+; its length to obj_appear
+zweThrow:
+		movem.l	d1-d3/a2,-(a7)
+		bsr		zwbApex				; (a1) = 4*Zc as near as it may come
+		move.l	#4*zwF*4096,d1
+		divu	(a1),d1				; -> the size, 4096 = 100 %
+		lea		zweParams+7*14+10(pc),a2	; the highest flight's top
+		moveq	#7,d3
+.c:		cmp.w	(a2),d1
+		bhs.s	.got
+		lea		-14(a2),a2
+		dbf		d3,.c
+		moveq	#0,d3
+.got:	move.w	d3,d2
+		mulu	#zweStride,d2
+		add.l	#zweTabs,d2
+		move.l	d2,(a1)
+		add.w	d3,d3
+		lea		zweN,a2
+		move.w	(a2,d3.w),d2
+		move.w	d2,4(a1)
+		move.w	d2,obj_appear(a0)
+		movem.l	(a7)+,d1-d3/a2
+		rts
+
+; the 8 flights, by how near they come (1.10 .. 2.00): one gravity, one
+; bounce factor. a ball thrown up out of the depth (11 %) to its first top,
+; down to the ground (15 %), up lower, down, and up to its place (100 %),
+; where it stops. times in 1/16 frames: top 1, ground 1, top 2, ground 2,
+; in place; sizes in 1/4096: top 1, top 2
+zweParams:
+		dc.w	405,802,1188,1574,1949,4506,4295	; 1.10 / 1.05
+		dc.w	431,853,1252,1650,2025,5032,4536	; 1.23 / 1.11
+		dc.w	455,902,1312,1721,2096,5559,4763	; 1.36 / 1.16
+		dc.w	477,948,1368,1788,2164,6085,4979	; 1.49 / 1.22
+		dc.w	499,992,1422,1852,2227,6612,5184	; 1.61 / 1.27
+		dc.w	520,1034,1473,1912,2287,7139,5380	; 1.74 / 1.31
+		dc.w	540,1074,1522,1970,2345,7665,5569	; 1.87 / 1.36
+		dc.w	560,1113,1569,2025,2400,8192,5751	; 2.00 / 1.40
+	endc
+
+; one point: d0,d1 = x,y of the letter -> (a2)+ = on screen.
+; d4 = 4*Zc, d5/d6 = 2*64*cos/sin, a6 = 16*X, d7 = 16*Y (the centre from
+; the vanishing point), a3/a5 = zwQ/zwQw, a4 = zwR. every operand is kept
+; as the table's own index (n*4 for zwQ's longs, n*2 for zwQw's words), so a
+; product is two adds, two reads and a subtract. zwQw holds n*n/16 (so
+; x*64*cos comes out as 16 x'), zwQ n*n*64 (so the point comes out in the
+; upper word: one swap instead of shifts)
+ZWPT	macro
+		add.w	d0,d0					; 2x
+		move.w	d0,d2
+		add.w	d6,d2
+		move.w	d0,d3
+		sub.w	d6,d3
+		move.w	(a5,d2.w),d2
+		sub.w	(a5,d3.w),d2			; x*64*sin b / 4 = 16 z
+		addq.w	#2,d2
+		asr.w	#2,d2					; 4 z
+		add.w	d4,d2					; d = 4 (Zc+z)
+		cmp.w	#1280,d2
+		bhs.s	.f\@
+		add.w	d2,d2
+		move.w	(a4,d2.w),d3			; 4 p, 4*64 = 100 %
+		bra.s	.p\@
+.f\@:	lsr.w	#4,d2
+		add.w	#1200,d2
+		add.w	d2,d2
+		move.w	(a4,d2.w),d3
+.p\@:	move.w	d0,d2
+		add.w	d5,d2
+		sub.w	d5,d0
+		move.w	(a5,d2.w),d2
+		sub.w	(a5,d0.w),d2			; 16 x'
+		addq.w	#2,d2
+		and.w	#-4,d2					; (zwQ's index: whole quarter px)
+		add.w	a6,d2					; 4 * 4(X+x')
+		move.w	d2,d0
+		add.w	d3,d0
+		sub.w	d3,d2
+		move.l	(a3,d0.w),d0
+		sub.l	(a3,d2.w),d0			; 4(X+x') * p * 256
+		add.l	#(zwCx<<16)+$8000,d0
+		swap	d0						; on screen, rounded
+		lsl.w	#4,d1
+		add.w	d7,d1					; 4 * 4(Y+y)
+		move.w	d1,d2
+		add.w	d3,d2
+		sub.w	d3,d1
+		move.l	(a3,d2.w),d2
+		sub.l	(a3,d1.w),d2
+		add.l	#(zwCy<<16)+$8000,d2
+		swap	d2
+		move.w	d0,(a2)+
+		move.w	d2,(a2)+
+		endm
+
+; a0 = the letter, a1 = obj_coords, a5 = yOffTab, a6 = the draw table,
+; d0 = its zwFrames entry. the points first, then the lines
+zwbDraw:
+		move.l	#-1,obj_cachekey(a0)	; (another shape than the cached one)
+		move.l	d0,a2
+	ifne	zwE
+		move.w	(a2)+,d4				; 4*Zc now (zweTabs)
+	else
+		move.l	zwZnP(pc),a3
+		move.w	(a3),d1					; 4*Zc nearest
+		move.w	zwTnow(pc),d3
+		cmp.w	#zwRise,d3
+		bhs.s	.nr
+		move.w	d1,d4					; thrown: Zn + (Zr-Zn)*w
+		move.w	#zwZr4,d5
+		sub.w	d1,d5
+		bra.s	.ab
+.nr:	cmp.w	#zwRise+zwFall,d3
+		bhs.s	.bk
+		move.w	d1,d4					; falling: Zn + (Zf-Zn)*w
+		move.w	#zwZf4,d5
+		sub.w	d1,d5
+		bra.s	.ab
+.bk:	move.w	#zwZr4,d4				; back: Zr + (Zf-Zr)*w
+		move.w	#zwZf4-zwZr4,d5
+.ab:	muls	(a2)+,d5				; (one per letter, not per point)
+		asl.l	#2,d5
+		swap	d5
+		add.w	d5,d4					; 4*Zc now
+	endc
+		move.w	(a2),d6					; cos:sin
+		move.w	d6,d5
+		asr.w	#8,d5
+		add.w	d5,d5					; 2*64*cos
+		ext.w	d6
+		add.w	d6,d6					; 2*64*sin
+		move.l	a6,-(a7)				; (the draw table)
+		move.w	obj_xc(a0),d0			; the centre, from the vanishing point
+		sub.w	#zwCx,d0
+		lsl.w	#4,d0
+		move.w	d0,a6
+		move.w	obj_yc(a0),d7
+		sub.w	#zwCy,d7
+		lsl.w	#4,d7
+		lea		zwQ,a3
+		lea		zwR,a4
+		lea		zwQw,a5
+		lea		zwPts,a2
+		move.w	(a1)+,-(a7)				; lines
+		move.w	(a7),-(a7)				; (the count down)
+.line:	move.l	(a1),d0					; p1 = the last line's p2 (a polyline)?
+		cmp.l	-4(a1),d0				; (the 1st line's -4 is obj_scale:count,
+		bne.s	.p1						; never a point)
+		addq.w	#4,a1
+		move.l	-4(a2),(a2)+
+		bra.s	.p2
+.p1:	movem.w	(a1)+,d0-d1
+		ZWPT
+.p2:	cmp.w	#1,(a7)					; the last p2 = the first p1 (a closed
+		bne.s	.p2n					; letter)? then that one again
+		move.l	(a1),d0
+		cmp.l	obj_coords+2(a0),d0
+		bne.s	.p2n
+		addq.w	#4,a1
+		move.l	zwPts,(a2)+
+		bra.s	.p2d
+.p2n:	movem.w	(a1)+,d0-d1
+		ZWPT
+.p2d:	subq.w	#1,(a7)
+		bne		.line
+		addq.w	#2,a7
+
+		lea		zwPts,a2				; then the lines
+		lea		yOffTab(pc),a5
+		move.w	(a7)+,d7
+		move.l	(a7)+,a6
+		subq.w	#1,d7
+.draw:	movem.w	(a2)+,d0-d3
+		move.w	d7,-(a7)
+		bsr		set_line
+		move.w	(a7)+,d7
+		dbf		d7,.draw
+		rts
+	endc
+	endc
+;---------------------------------------------
 buildYOffTab:
 		lea		yOffTab,a0
 		moveq	#0,d0

@@ -163,3 +163,188 @@ recV2			= 1
 ;              torpedoes rise out of it on a lift one by one, are pushed
 ;              off, glide, fire; the doors shut; it peels off past us
 cineFight		= 1
+; --- the demo start (drehbuch_verwandlung.md, part 0a)
+; startCouple 1: the start follows the names, not the clock: the copper bar fades
+;              up 4 s after EXOLON has gone (its last letter's explosion
+;              over), EXCITER comes only once the bar is up, the shadow
+;              playfield and the text 3 s after EXCITER has gone, DANDEE only
+;              once the text has crumbled for 2 s. till the text the bar's
+;              shadow playfield is not there at all (BPLCON0 $1200, no DBLPF)
+;           0: the bar at introBarStart, the text at introScrollStart, the
+;              shadow playfield on with the game, as it was
+startCouple		= 1
+cpBarWait		= 200		; (startCouple) frames from EXOLON gone to the bar
+cpTextWait		= 150		; ... from EXCITER gone to the text and the shadow
+cpCrumbleWait	= 100		; ... the text crumbling before DANDEE may come
+; dropWarpSpr 1: (with elite3) warp.i's own 3D field in sprites (warpThin ..
+;              warpSpawn) is left out of the build - under elite3 the stars go
+;              over to stars3d.i before it could ever run; its bytes go to the
+;              flight's record. 0: built in, as it was
+dropWarpSpr		= 1
+; zeroWave 1: (drehbuch_verwandlung.md, part 0b) ZERONINE's honour wave - once
+;              the name is up, a wave runs through it from the Z to the E: each
+;              letter comes closer (zooms to 150 %), turns once round its own
+;              upright axis in true perspective, and springs back. the name
+;              drifts on all the while; the ship flies in only after it, at
+;              zwShipWait instead of ai_enterwait (variant a, with the turn)
+;           2: the same wave without the turn - zoom only (variant b)
+;           0: no wave, the ship comes in at ai_enterwait, as it was
+zeroWave		= 0
+zwStart			= 150		; (zeroWave) frames from ZERONINE's spawn to the Z's start
+zwShipWait		= 300		; ... and to the ship flying in
+; zwBall 1: (with zeroWave; the user's look, 2026-10-23) each letter flies its
+;              wave as a ball with spin, in true perspective: thrown at us
+;              (as near as it may: in the picture, below the logo, 200 % at
+;              most), it falls away behind its place till it is nearly gone,
+;              bounces and springs back to rest; it turns the whole way, two
+;              turns, smoothly. its centre goes to the vanishing point and
+;              back like everything that recedes. zeroWave 2: the same
+;              without the turns. 0: zeroWave's short wave, as built first
+zwBall			= 1
+zwShipWaitB		= 420		; (zwBall) frames from ZERONINE's spawn to the ship
+; zwEntry 1: (with zwBall; the user's look, 2026-10-23) the ball IS the
+;              letters' way in: ZERONINE's letters do not zoom in, each comes
+;              out of the depth as a spinning ball, 6 frames after the one
+;              to its left, bounces at us far too high (as near as it may),
+;              hits the ground behind twice, lower each time (one gravity,
+;              one bounce factor - on the size the eye sees, drawn in true
+;              perspective) and lands softly in its place: an asteroid from
+;              there on. 0: zwBall's wave after the letters are up
+zwEntry			= 1
+zwShipWaitE		= 250		; (zwEntry) frames from ZERONINE's spawn to the ship
+; fwHeavy   1: (with fwBig; the user, 2026-10-23: as heavy as it goes) the
+;              laser's letter explosions with real physics and twice the
+;              sparks: 48 a burst - 24 sparks thrown out at 14..24 px a frame
+;              that the air brakes hard (the bang, then the glow hangs and
+;              sinks), 8 heavy chunks flying far on falling arcs, a pressure
+;              ring at 30 px a frame gone after 5 frames, a white hot core for
+;              2. worked out once at the start (fhInit) into bufA's and bufB's
+;              dead tails; drawn with a fast way for bursts wholly on the
+;              screen. 0: the fwBig fireworks, as they were
+fwHeavy			= 0
+; fwShow    1: (the user, 2026-10-23: "the fattest you can make, not all the
+;              same - a firework!") latticeAdd's explosions as real fireworks,
+;              every one worked out live with its own random numbers: a pop
+;              at the hit, then a shell climbs with its trail, slows and
+;              bursts somewhere above - each at another height, up to the
+;              logo. four kinds: chrysanthemum (a ball of streaking sparks),
+;              willow (slow glowing rain), ring (with a glowing core),
+;              crossette (stars that split in four). the laser's ones bigger
+;              still, with a flash and a pressure ring. the glow sinks slowly,
+;              some of it flickers. replaces fwBig/fwHeavy's tables (fw.i is
+;              left out). 0: as before
+fwShow			= 0
+; fwBoss    1: (with fwBig; the user, 2026-10-23: the end of the scroller is
+;              a mid boss - it needs KRABUMM) ONLY the laser's letter
+;              explosions, on the fireworks there are: while white hot two
+;              variants at once (one mirrored: 48 sparks), every other hit a
+;              chain - 2 more bursts a few frames later above it (up left,
+;              up, up right, each its own variant and distance) - and a
+;              pressure ring; a budget a frame keeps it at 50 Hz (the oldest
+;              glow flickers out first). the cannon's fireworks (the first scroller
+;              attack and all before the laser) stay exactly as they are.
+;              0: as before
+fwBoss			= 0
+; transAC   1: (with elite3; drehbuch_verwandlung.md, part 1, A-C) after the
+;              glide the stars go into depth first, the Asteroids ship still
+;              floating; on the next bar A: it drifts, corrects as ever, comes
+;              to rest; B: a pause - then it tips its nose into the stars
+;              (impulse, turn, counter impulse, a tiny overshoot) till, in
+;              true perspective, only a line is left; C: a hesitant little jet,
+;              yawing, rolling, correcting - the flat triangle shows. every
+;              axis a pilot's push (impulse, glide, counter) and the body's
+;              inertia (a spring, a little underdamped); then the unfolding
+;              as before, the pose easing over into its own. 0: as before
+transAC			= 1
+; gunVis    1: (the user, 2026-10-23: the guns vanish 'plopp' far too early
+;              when the ship lies flat) the wing guns are seen in every pose -
+;              they stick out past the wing tips, the hull never hides them;
+;              they went with their wing's faces, and edge on both of those
+;              count as unseen. 0: as before
+gunVis			= 1
+; transBehind 1: (with transAC; the user, 2026-10-23) B tips the ship so it
+;              ends seen from behind, its wings level - a line lying flat,
+;              not upright; C's moves from there; it unfolds that way, in its
+;              flight's direction (no turning back across the stars), and
+;              holds so. (till the chase is live, the recorded flight starts
+;              in its old pose.) 0: transAC as first built
+transBehind		= 1
+; torpWide  1: (the user, 2026-10-23) the torpedoes jump out half again as
+;              far (the same push x 1.5, braked as ever); the left and the
+;              right one aim 25 px further out on the logo, the third one
+;              launched at the logo's middle. 0: as before
+torpWide		= 1
+; dropWarpMem 1: (with dropWarpSpr) warp.i's own field's tables (wlst,
+;              warpStars, warpRTab, warpLineTab, warpDie - ~12 KB) and their
+;              making at the start are left out too: nothing reads them under
+;              dropWarpSpr. their bytes go to the flight's record (balance).
+;              0: as before
+dropWarpMem		= 1
+; chaseSim  1: (with transBehind; the user, 2026-10-23) the flight's start
+;              anew: from where it unfolded (seen from behind) Zeronine wakes
+;              up - a slow wing rock, a look left, a look right, a small roll
+;              test - then the engine fires: one flame. a long chase: it pulls
+;              away, we gain slowly; it feels something behind it - a look
+;              over its shoulder - and tries to shake it off: three moves,
+;              each a roll, a pull, a roll out, calm between, each turn
+;              costing it speed (we come closer); at last near, calm - and on
+;              the beat its afterburner (the pass's evade as it was: the slow
+;              curve up to the left). the hold only up to the next bar.
+;              0: the flight as it was
+chaseSim		= 1
+; abLong    1: the afterburner's chain thrown out 30 % further (its glows
+;              further apart); with chaseSim only the first glow (one flame)
+;              till the afterburner first kicks in. 0: as before
+abLong			= 1
+; holdGap   1: the play's first frame drawn on the frame the hold ends (as
+;              it was, that frame had no ship at all: a flicker as the fighter
+;              sets off). 0: as before
+holdGap			= 1
+; hatAlways 1: (cineFight) the bay's doors part of the ship: their seams drawn
+;              whenever its top is seen, from the chase on (as it was: only
+;              in the film's CB_HAT blocks - they popped in). 0: as before
+hatAlways		= 1
+; chaseShow 1: (chaseSim) before the afterburner it shows itself: down to the
+;              bottom of the screen (seen from above: its top, the bay), up
+;              to the top (its belly), a heavy barrel roll down to low on the
+;              right - then the afterburner. 0: as before
+chaseShow		= 1
+; aimUp     1: (cineFight) where it fires the torpedoes 15 px higher (as it
+;              was it hung over the bottom of the screen). 0: as before
+aimUp			= 1
+; torpArc   1: (cineFight) a torpedo off the lift: thrown up, gravity slows it
+;              to a standstill, it sinks a little (the air holds it) - then
+;              its engine. 0: as before (its jump dying away)
+torpArc			= 1
+; musChase  1: (drumSeq) the music's voices fade as the fighter comes back
+;              into the picture (the entry): the drums alone, left and right;
+;              once it has fired, broken away and is out of the picture the drums fade too (3 s) -
+;              silence till the hit. 0: as before (all fade at the break)
+musChase		= 1
+; torpHide  1: (cineFight) a torpedo on the lift is drawn only once it is up
+;              out of the bay, all of it above the fighter's top (as it was
+;              it showed inside the ship, rising through it). 0: as before
+torpHide		= 1
+; logoSafe  1: (elite3) the switch to the 3D stars' copper list: clist's logo
+;              part made the Elite's (its jump back, the logo's pointers) as
+;              soon as the beam is past the logo, in the very frame of the
+;              switch - not in the next frame's s3Flip, which came too late
+;              when the switch's frame (the field's heaviest) ran long: the
+;              logo torn for a frame or two. 0: as before
+logoSafe		= 1
+; simMore   1: the flight's sim works in the frame's time left till raster
+;              line 276 (as it was 230: ~80 lines a frame unused) - done far
+;              earlier; and the play may start as soon as morphSimGo of its
+;              frames are worked out (it works on ahead of the play)
+;              0: as before (230, the whole flight first)
+simMore			= 1
+; quickAC   1: (transAC) from the stars going into depth to the turn (B) at
+;              most 140 frames (2.8 s): the warp 40 frames, no wait for a bar,
+;              it floats on meanwhile (pinned only the 8 dear frames), A 100.
+;              0: as before (120 + a bar, resting; A 240)
+quickAC			= 1
+; holdLive  1: (transAC) the live ship never stands dead still: from the warp
+;              on it floats down and up again once a bar (2.5 px), held after
+;              the unfolding with a slight roll (2 degrees) too - both 0 at
+;              the bar's start, where the flight takes over. 0: as before
+holdLive		= 1
