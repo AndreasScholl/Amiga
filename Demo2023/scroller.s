@@ -2026,7 +2026,13 @@ laserStep:
 		bsr		blastAt
 		sf		blastNoCrumbs
 		sf		fxPending				; not its sparks and rings: the Defender
+	ifne	fwBig
+		move.w	#1,latBigReq			; (fwBig: a fat one)
+	endc
 		bsr		latticeAdd				; lattice instead (debrisCx/Cy: blastAt)
+	ifne	fwBig
+		clr.w	latBigReq
+	endc
 		addq.w	#1,laserHits			; (testing)
 		rts
 .wordGone:
@@ -2350,10 +2356,14 @@ latticeAdd:
 		and.w	#15,d0
 		add.w	#latLife0,d0			; 40..55 frames (fwAges 56)
 		move.b	d0,lat_life(a2)
+	ifne	fwBig
+		move.w	latBigReq,lat_kick(a2)	; (fwBig: the laser's bursts half again as
+	else								; far - lat_kick is free: no pop now)
 		bsr		debrisRandom
 		and.w	#latKickR,d0
 		add.w	#latKick0,d0			; (none: the table falls)
 		move.w	d0,lat_kick(a2)
+	endc
 .out:
 		movem.l	(a7)+,d0-d1/a2
 		rts
@@ -2431,6 +2441,10 @@ drawLattice:
 		lea		fwTab,a6
 		add.l	d0,a6
 		moveq	#fwSparks-1,d7
+	ifne	fwBig
+		tst.w	lat_kick(a4)			; (fwBig: a laser burst - its own loops)
+		bne		.big
+	endc
 		tst.w	d6
 		bne.s	.cDot
 		; --- white hot (the first quarter: no twinkle, no ember plane yet)
@@ -2478,6 +2492,69 @@ drawLattice:
 .cSkip:
 		dbf		d7,.cDot
 		bra.s	.next
+	ifne	fwBig
+	; --- (switches.i fwBig) the laser's bursts: the same sparks, the same
+	;     curves, half again as far out (and down): x * 1.5, y * 1.5 in
+	;     whole lines (the table has dy * li: half of it rounded down to a
+	;     line)
+.big:	tst.w	d6
+		bne.s	.cDotB
+.wDotB:	move.w	(a6)+,d0
+		move.w	d0,d1
+		asr.w	#1,d1
+		add.w	d1,d0
+		add.w	d4,d0
+		move.w	(a6)+,d2
+		move.w	d2,d1
+		asr.w	#1,d1
+		btst	#0,d1
+		beq.s	.wb0
+		sub.w	#li/2,d1
+.wb0:	add.w	d1,d2
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.wSkB
+		add.w	d5,d2
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.wSkB
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+		bset	d0,borderX/8(a0,d2.w)
+.wSkB:	dbf		d7,.wDotB
+		bra		.next
+.cDotB:	move.w	(a6)+,d0
+		move.w	d0,d1
+		asr.w	#1,d1
+		add.w	d1,d0
+		add.w	d4,d0
+		move.w	(a6)+,d2
+		lsr.l	#1,d3
+		bcs.s	.cSkB
+		move.w	d2,d1
+		asr.w	#1,d1
+		btst	#0,d1
+		beq.s	.cb0
+		sub.w	#li/2,d1
+.cb0:	add.w	d1,d2
+		cmp.w	#game_width-borderX,d0
+		bhs.s	.cSkB
+		add.w	d5,d2
+		cmp.w	#screenHeight*li,d2
+		bhs.s	.cSkB
+		move.w	d0,d1
+		lsr.w	#3,d1
+		add.w	d1,d2
+		not.w	d0
+		cmp.w	#emberFwTop*li,d2
+		blo.s	.cWhB
+		bset	d0,borderX/8(a5,d2.w)
+		cmp.w	#1,d6
+		bne.s	.cSkB
+.cWhB:	bset	d0,borderX/8(a0,d2.w)
+.cSkB:	dbf		d7,.cDotB
+		bra		.next
+	endc
 .drop:
 		lea		lat_size(a2),a2			; gone: not written back
 		subq.w	#1,latCount
@@ -4276,6 +4353,16 @@ feedNext:
 		bne.s	.ins
 		tst.b	seq_defReady			; the ship is ready: on to the message
 		bne		.next6
+	ifne	def2Cine
+		tst.b	cmtSeen					; (def2Cine) the bridge has begun to talk:
+		beq.s	.loopOn					; no more of the crews' words - spaces till
+		move.l	cmtReq,d0				; the next comment
+		beq		.space
+		move.l	d0,insPtr
+		clr.l	cmtReq
+		bra		.cmd
+.loopOn:
+	endc
 		move.l	2(a0),a1
 		add.w	feedPos,a1
 		moveq	#0,d0
@@ -4293,6 +4380,7 @@ feedNext:
 		beq.s	.noCmt					; say: at the next gap, in it goes
 		move.l	d0,insPtr
 		clr.l	cmtReq
+		st		cmtSeen
 		bra		.space
 .noCmt:
 	endc
@@ -5235,6 +5323,7 @@ LA		set		LA+1
 latCount::		dc.w	0		; Defender explosions going on ...
 lattices:		ds.b	lat_size*latMax		; ... drawLattice
 latLeft:		dc.w	0
+latBigReq:		dc.w	0		; (fwBig) the next burst is the laser's
 latEmber:		dc.l	0
 latCols:		ds.l	7		; drawLattice: the columns, byte and bit
 				even
@@ -5277,6 +5366,8 @@ whatHellReq::	dc.b	0		; seq_defshoot: it has opened fire - the cry
 whatHellDone:	dc.b	0		; ... is in
 whatDone::		dc.b	0		; (defLine) whatText all put in
 whatStarted::	dc.b	0		; (def2Cine) ... its first char put in
+cmtSeen:		dc.b	0		; (def2Cine) the first comment is in
+				dc.b	0
 whatAbs::		dc.w	0		; ... at screen x + scrollSteps
 glitchLevel::	dc.w	0		; how broken the scroller is, 0..16
 glitchTarget::	dc.w	0

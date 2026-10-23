@@ -87,6 +87,14 @@ dropRun			= 1
 ;              final move comes only once the last sentence is coming in;
 ;              0: the pastime under the row and the early move, as it was
 defSalvo		= 1
+; huntRandom 1: the hunt's spots anywhere round the letter it is after - left
+;              or right, over or under, near or far (never the logo); 0: always
+;              left of it, as it was
+huntRandom		= 1
+; fwBig     1: the laser's letter fireworks half again as big: the same 24
+;              sparks on the same curves, flying 1.5 times as far out and down
+;              (scroller.s drawLattice); 0: as they were
+fwBig			= 1
 ; (def2Cine's def2Hits: with defSalvo none - the hunt lasts as long as the
 ; bridge talks; salvos, not a stream: 20 hits would take half a minute)
 	ifne	defSalvo

@@ -5575,7 +5575,7 @@ seq_a1move:
 seq_a1shoot:
 	ifne	a1Cine
 		jmp		seq_a1cRun			; (staged: not chip)
-	endc
+	else
 		move.w	seq_a1n,d0
 		cmp.w	seq_shots,d0
 		bls		.watch
@@ -5599,6 +5599,7 @@ seq_a1shoot:
 .broken:
 		jsr		startGlitch			; the scroller breaks
 		bra		seq_next
+	endc
 
 ;--- REPOS ------------------------------------
 ; while the scroller is broken and gets mended the ship keeps looking
@@ -5978,6 +5979,9 @@ seq_huntDy0		= 56		; 56..87 over or under the row (64..95 / 40..55
 							; and before that 40..87 / 26..57: too close)
 seq_huntYMax	= 246		; (under the row no lower than this ...
 seq_huntYMin	= 106		; ... over it no higher: the logo)
+seq_hrDx0		= 64		; (huntRandom: 64..159 across, 40..103 up or down)
+seq_hrDy0		= 40
+seq_hrDyS		= 64		; (... steeply: 64..95)
 seq_shotLife	= 84		; frames a shot lives in the sequence (~190 px;
 							; the game's shot_frames 56 would not get there)
 seq_huntX0		= 40		; (on the screen: x 40..330)
@@ -6040,7 +6044,8 @@ seq_lnAimY		= seq_textY-2	; ... at this height: level, a shot only meets what is
 seq_lnGap		= 6			; frames between its shots there (the text comes
 							; a glyph each 8 frames: it keeps up)
 seq_lnEarlyTo	= 250		; (def2Cine) before the question marks: glyphs up to here
-seq_lnLateX		= 280		; the message's first letter this far in: over
+seq_lnLateX		= 310		; (the move + the settling take ~100 frames: the
+							; first word must not be at the twist by then)		; the message's first letter this far in: over
 							; now, whatever is left (never needed so far)
 seq_lnBeat		= 14		; enough: a moment still, the nose right
 seq_lnAcc		= 13		; the burn (and the brake at most 3 times it),
@@ -6275,6 +6280,10 @@ seq_hunt:
 		cmp.w	#seq_aimmax,seq_aimT
 		blo.s	.out
 .fire:
+	ifne	a1Cine
+		jsr		seq_a1Clear			; (never from up in the logo)
+		bmi.s	.out
+	endc
 		bsr		seq_fireAt
 		clr.w	seq_aimT
 		addq.w	#1,seq_shots
@@ -6350,6 +6359,66 @@ seq_qfire:
 seq_huntHop:
 		jsr		getRandomNumber
 		move.l	d0,d4
+	ifne	huntRandom
+		; (switches.i huntRandom) Zeronine's AI: anywhere round the letter it
+		; can get it from - over or under the row at random, and either from
+		; the flank (left of it, near or far) or steeply (right over or under
+		; it, a little to either side); never the same corner twice running;
+		; a short hop (half way from where it is) only now and then, on the
+		; flank. (not from the right: the shot would chase a letter that runs
+		; away - it would be at the twist first)
+		moveq	#0,d1				; its side of the row - 1 in 4 over to the
+		move.b	seq_corner,d1		; other
+		and.w	#2,d1
+		moveq	#0,d5
+		moveq	#3,d2
+		and.w	d4,d2
+		bne.s	.side
+		eor.w	#2,d1
+		moveq	#-1,d5				; (other side: no short hop)
+.side:	btst	#2,d4				; the flank or steeply, at random
+		beq.s	.cNew
+		bset	#0,d1
+.cNew:	move.b	d1,seq_corner
+		lsr.l	#8,d4
+		btst	#0,d1
+		bne.s	.steep
+		addq.w	#1,d5				; the flank, the same side: 1 in 2 a short
+		beq.s	.fl0				; hop
+		moveq	#0,d5
+		btst	#9,d4
+		beq.s	.fl
+		moveq	#1,d5
+		bra.s	.fl
+.fl0:	moveq	#0,d5
+.fl:	moveq	#127,d2
+		and.w	d4,d2
+		cmp.w	#96,d2
+		blo.s	.dx
+		sub.w	#64,d2
+.dx:	add.w	#seq_hrDx0,d2		; left of it: 64..159
+		neg.w	d2					; (.right adds it)
+		bset	#0,d1
+		lsr.l	#8,d4
+		moveq	#63,d3
+		and.w	d4,d3
+		add.w	#seq_hrDy0,d3		; up or down: 40..103
+		bra.s	.hrOut
+.steep:	moveq	#0,d5
+		lsr.l	#8,d4				; steeply: 64..95 over or under ...
+		moveq	#31,d3
+		and.w	d4,d3
+		add.w	#seq_hrDyS,d3
+		lsr.w	#5,d4				; ... over where the letter will be when
+		moveq	#31,d2				; the shot gets there (it runs on ~0.45 px
+		and.w	d4,d2				; for every px the shot flies), -12..19
+		sub.w	#12,d2				; to either side of that
+		move.w	d3,d0
+		mulu	#29,d0
+		lsr.w	#6,d0
+		sub.w	d0,d2
+.hrOut:
+	else
 		moveq	#0,d1
 		move.b	seq_corner,d1
 		moveq	#1,d5				; (the same side: half way from here)
@@ -6369,6 +6438,7 @@ seq_huntHop:
 		moveq	#31,d3
 		and.w	d4,d3
 		add.w	#seq_huntDy0,d3		; up or down: 56..87
+	endc
 		move.w	seq_hTgt,d0
 		bpl.s	.base
 		move.w	seq_hFrom,d0		; (no letter yet: the first it will go for,
@@ -6472,7 +6542,7 @@ seq_deftest:
 .notYet:
 	ifne	defLine
 		jmp		seq_lnRun			; (the way onto the row: not chip)
-	endc
+	else
 		jsr		msgLeftX			; the message's first letter well in: over
 		tst.w	d0					; to the row now (not while the question
 		bmi.s	.noMsg				; marks still go by - just in time for it)
@@ -6505,11 +6575,13 @@ seq_deftest:
 		sf		seq_corr
 		sf		seq_rowAt
 		move.w	#seq_defvmax,seq_vmax	; (not so fast it overshoots the row)
+	endc
 		; --- the Asteroids way, straight to where it shoots from, then the
 		;     nose round to the right and the sway on the row
 .toRow:
 		tst.b	seq_rowAt
 		bne.s	.row
+	ifeq	defLine					; (defLine: seq_lnRun brings it there)
 		move.w	#seq_defX,d0		; near enough: the sway takes it in from
 		sub.w	obj_xc(a0),d0		; here (seq_dmoveA eases it onto the spot)
 		move.w	#seq_rowY,d1
@@ -6528,6 +6600,7 @@ seq_deftest:
 		bmi.s	.out
 		cmp.w	#seq_dlastX,d0
 		bhi.s	.out
+	endc
 .arrived:
 		sf		seq_corr
 		st		seq_rowAt
@@ -9973,7 +10046,13 @@ seq_lnRun:
 		clr.w	seq_aimT
 		addq.w	#1,seq_shots
 	ifne	defSalvo
-		bsr		seq_salvoNext		; short salvos - but a question mark near the
+		bsr		seq_salvoNext		; short salvos - the question marks in: shorter
+		tst.b	whatStarted			; pauses (they are the job now) - and one
+		beq.s	.sv1				; near the twist: the next one at once
+		cmp.w	#seq_svPauseQ,seq_gap
+		bls.s	.sv1
+		move.w	#seq_svPauseQ,seq_gap
+.sv1:
 		cmp.w	#seq_svUrgent,seq_hTgt	; twist: the next one at once
 		bge.s	.lChk
 		move.w	#seq_svGap,seq_gap
@@ -10519,6 +10598,7 @@ seq_svVmax		= 150		; the hunt's flying: calm
 seq_svGap		= 6			; frames between the shots of a salvo
 seq_svPause		= 34		; ... and after one, + 0..31
 seq_svUrgent	= 280		; (on the row: a question mark left of here - at once)
+seq_svPauseQ	= 16		; (on the row, the question marks in: pauses no longer)
 seq_d2LineT		= 100		; the message let in: this long, then over to the row
 seq_lnGoX		= 340		; the final move once the last sentence is in this far
 seq_svHunt:
