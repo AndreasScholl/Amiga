@@ -62,10 +62,17 @@ warpCol3	= $0842		; bright: the old front layer's orange
 ; (elite3) the four layers' colours at the end of the fade: those of the
 ; bitplane field's depth bands they go into (stars3d.i s3Band, scroller.s
 ; ELC1..7) - not a star changes its colour at the switch
+	ifne	starPal2
+warpColF	= $0842		; (switches.i starPal2) every layer keeps its own
+warpColS	= $0371		; colour - the Defender's orange-brown, green,
+warpColT	= $0631		; brown-red, blue: the bands they go into have them
+warpColB	= $0125
+	else
 warpColF	= $0b72		; the front layer: orange
 warpColS	= $0a32		; the second: red
 warpColT	= $0a32		; the third: red (in the same band as the second)
 warpColB	= $0125		; the back: dark blue (as it was)
+	endc
 	else
 warpColF	= warpCol3
 warpColS	= warpCol2

@@ -320,7 +320,7 @@ buildLogoPadded:
 		rts
 ;-------
 ; d1: offset in bytes
-updateLogoPointers:
+updateLogoPointers::
 		move.l	#logoPadded,d0
         add.l   d1,d0
 		move.l	#li*logo_height,d1
@@ -3969,6 +3969,36 @@ findSolid::
 		bgt.s	.none
 		lea		src_adr+3,a0
 		add.w	d0,a0
+	ifne	fixQmarks
+		bra.s	fsScan
+.none:	moveq	#-1,d0
+		movem.l	(a7)+,d1-d5/a0-a1
+		rts
+; the same for the top row, left of the twist (screen x dissolveX ..
+; hitTwistX: there the text is the source as it is, not 24 px on) - what
+; the ship missed in the bottom row it gets here (asteroids.s seq_qfire)
+findSolidTop::
+		movem.l	d1-d5/a0-a1,-(a7)
+		cmp.w	#dissolveX,d0
+		bge.s	.lo
+		move.w	#dissolveX,d0
+.lo:	cmp.w	#hitTwistX-1,d1
+		ble.s	.hi
+		move.w	#hitTwistX-1,d1
+.hi:	tst.w	d1
+		bmi.s	.none
+		lsr.w	#3,d0
+		lsr.w	#3,d1
+		cmp.w	d1,d0
+		bgt.s	.none
+		lea		src_adr,a0
+		add.w	d0,a0
+		bra.s	fsScan
+.none:	moveq	#-1,d0
+		movem.l	(a7)+,d1-d5/a0-a1
+		rts
+fsScan:
+	endc
 		lea		popTab,a1
 .col:
 		moveq	#0,d3
@@ -7257,6 +7287,21 @@ LOGO_LINE	macro
 			move.w	(a3)+,d1
 			move.w	(a4,d1.w),26(a0)		; colour 7
 			endm
+; the same for the line \1 bytes on from a0 (LGL: a line's bytes)
+LGL			= (2*2)+(logo_color_count*2*2)
+LOGO_LN		macro
+			move.w	(a3)+,\1+2(a0)
+			move.w	(a3)+,\1+6(a0)
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),\1+10(a0)
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),\1+14(a0)
+			move.w	(a3)+,\1+18(a0)
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),\1+22(a0)
+			move.w	(a3)+,d1
+			move.w	(a4,d1.w),\1+26(a0)
+			endm
 
 logoColorEngine:
 			movem.l	d0-d7/a0-a6,-(a7)
@@ -7340,21 +7385,27 @@ logoColorEngine:
 											; than add.w #$0100
 
 			LOGO_LINE						; first line has no wait
-			moveq	#logoTopLines-2,d7
-.top:
-			lea		(2*2)+(logo_color_count*2*2)(a0),a0
-			move.w	d3,-4(a0)
+			moveq	#(logoTopLines-1)/2-1,d7	; (two lines a round: a lea and
+.top:										; a dbf less a line)
+			move.w	d3,LGL-4(a0)
 			add.w	d6,d3
-			LOGO_LINE
+			LOGO_LN	LGL
+			move.w	d3,2*LGL-4(a0)
+			add.w	d6,d3
+			LOGO_LN	2*LGL
+			lea		2*LGL(a0),a0
 			dbf		d7,.top
 
 			move.l	a2,a4
-			moveq	#logo_area_height-logoTopLines-1,d7
+			moveq	#(logo_area_height-logoTopLines)/2-1,d7
 .bottom:
-			lea		(2*2)+(logo_color_count*2*2)(a0),a0
-			move.w	d3,-4(a0)
+			move.w	d3,LGL-4(a0)
 			add.w	d6,d3
-			LOGO_LINE
+			LOGO_LN	LGL
+			move.w	d3,2*LGL-4(a0)
+			add.w	d6,d3
+			LOGO_LN	2*LGL
+			lea		2*LGL(a0),a0
 			dbf		d7,.bottom
 			bra		.done
 
@@ -7534,6 +7585,22 @@ gameColor		= $0eee		; ship, shots and letters, same as colour 1 below
 ; the logo is clist's own part: a jump there, and back here once it is
 ; through (stars3d.i s3Activate patches clist right after logoEndWait).
 ; the pointers: s3Flip (each frame), s3MidPatch (below the logo)
+	ifne	starPal2
+; (switches.i starPal2) far to near: dark, the Defender's blue, brown-red,
+; green, orange-brown, light, bright (stars3d.i s3Band)
+	ifne	starFlow
+ELC1			= $0003		; (starFlow) hardly there (the furthest: the new
+						; stars come in in it)
+	else
+ELC1			= $0114		; dark (the furthest)
+	endc
+ELC2			= $0125		; blue (the back layer)
+ELC4			= $0631		; brown-red (the third)
+ELC3			= $0371		; green (the second)
+ELC6			= $0842		; orange-brown (the front)
+ELC5			= $0c84		; light
+ELC7			= $0fdb		; bright (the nearest)
+	else
 ELC1			= $0125		; dark blue (the furthest; warp.i warpColB: the
 						; back layer)
 ELC2			= $0a32		; red (warpColS, warpColT: the middle two)
@@ -7542,6 +7609,7 @@ ELC4			= $0b72		; orange (warpColF: the front)
 ELC5			= $0723		; dark red
 ELC6			= $0537		; violet
 ELC7			= $05c3		; green (the nearest, the brightest)
+	endc
 ELCOLS	macro
 		dc.w	$0182,ELC1,$0184,ELC2,$0186,ELC3,$0188,ELC4
 		dc.w	$018a,ELC5,$018c,ELC6,$018e,ELC7
@@ -7549,10 +7617,20 @@ ELCOLS	macro
 		cnop	0,4
 clistElite::
 		dc.w	BPLCON0,$0200
+	ifne	spr8
+; (switches.i spr8) the fetch $38..$d0: 40 bytes of the li wide lines, from
+; byte 4 on (the pointers: stars3d.i ELOFS) - the modulos ELMOD
+ELMOD			= li-40
+		dc.w	$0102,$0000,$0104,$0024,$0108,ELMOD,$010a,ELMOD	; (the
+							; sprites - the torpedoes' glows - in front)
+		dc.w	DDFSTRT,$0038
+		dc.w	DDFSTOP,$00d0
+	else
 		dc.w	$0102,$0000,$0104,$0024,$0108,$0000,$010a,$0000	; (the
 							; sprites - the torpedoes' glows - in front)
 		dc.w	DDFSTRT,$0028
 		dc.w	DDFSTOP,$00d8
+	endc
 		dc.w	DIWSTRT,(fullTop<<8)+$81
 		dc.w	DIWSTOP,((screenBottom&$ff)<<8)+$c1
 elSpr::	dc.w	$120,0,$122,0,$124,0,$126,0
@@ -7582,7 +7660,11 @@ elJmpL::
 eliteMid::							; ... and back: the star planes again
 		dc.w	$00e0,0,$00e2,0,$00e4,0,$00e6,0,$00e8,0,$00ea,0
 		dc.w	BPLCON0,$4200
+	ifne	spr8
+		dc.w	$0108,ELMOD
+	else
 		dc.w	$0108,$0000
+	endc
 elCol1::
 		ELCOLS
 		dc.w	$ffdf,$fffe
@@ -7723,7 +7805,7 @@ logoPlanes:
 								; single plane above it and the sprites keep
 								; showing through
 		dc.w	$0108
-logoPlaneMod:
+logoPlaneMod::
 		dc.w	$0000				; odd bitplanes modulo, patched to $ffd2
 
 logoColors:

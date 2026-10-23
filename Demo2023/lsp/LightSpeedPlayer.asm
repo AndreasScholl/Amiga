@@ -123,17 +123,33 @@ LSP_MusicPlayTick:
 
 .cmdExec:	add.b	d0,d0
 			bcc.s	.noVd
+		IFEQ	musDrums
 			move.b	(a0)+,$d9-$a0(a6)
+		ELSE
+			move.b	(a0)+,lspVol+3			; (demo: the volumes go out faded, music.s
+		ENDC								; musVolOut)
 .noVd:		add.b	d0,d0
 			bcc.s	.noVc
+		IFEQ	musDrums
 			move.b	(a0)+,$c9-$a0(a6)
+		ELSE
+			move.b	(a0)+,lspVol+2
+		ENDC
 .noVc:		add.b	d0,d0
 			bcc.s	.noVb
+		IFEQ	musDrums
 			move.b	(a0)+,$b9-$a0(a6)
+		ELSE
+			move.b	(a0)+,lspVol+1
+		ENDC
 .noVb:		add.b	d0,d0
 			bcc.s	.noVa
+		IFEQ	musDrums
 			move.b	(a0)+,$a9-$a0(a6)
-.noVa:		
+		ELSE
+			move.b	(a0)+,lspVol
+		ENDC
+.noVa:
 			move.l	a0,(a1)+	; store byte stream ptr
 			move.l	(a1),a0		; word stream
 

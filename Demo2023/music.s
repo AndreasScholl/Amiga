@@ -10,6 +10,13 @@ MUSIC_CCABANA   = 1             ; CopperCabana by Mark II, from our own demo
 MUSIC           = MUSIC_CCABANA
         ENDC
 
+        INCLUDE "switches.i"            ; (the ending's switches: drumSeq)
+        IFEQ    MUSIC-MUSIC_CCABANA
+musDrums        = drumSeq               ; (the drums at the end are CopperCabana's:
+        ELSE                            ; drumseq.i)
+musDrums        = 0
+        ENDC
+
         section "code",data,chip
 
 initMusic::
@@ -41,6 +48,218 @@ initMusic::
 ;     the same spots in the music. called from the CIA irq right after
 ;     LSP_MusicPlayTick, all registers are free.
 musicPalTicks = $300            ; 768 ticks between cues
+
+        IFNE    musDrums
+; --- (switches.i drumSeq) the end of the music. from the fighter's break on
+;     (morph.i sets musFadeGo, and musHitIn: ticks to the first hit) the
+;     music's voices 0-2 fade out over musFadeT ticks while its drums (3)
+;     play on. at the next bar after that LSP stops and the drums go on by
+;     themselves (dsTick: the song's own, bar by bar - drumseq.i, the same
+;     samples, periods and volumes), on channels 0 and 2 now, so 1 and 3
+;     stay free for the effects; quiet for the beat before the first hit,
+;     in again with it. LSP's volumes come here through lspVol (patched in
+;     LightSpeedPlayer.asm) and go out faded (musVolOut). once LSP is
+;     stopped its DMACON byte (m_dmaconPatch: CIA timer B writes it out a
+;     little later) is cleared here every tick, as LSP did, and set for the
+;     drums' new notes
+musFadeT        = 275                   ; ticks (5.5 s)
+musSongT        = 128*96                ; the song's ticks (it starts over: drumseq.i)
+MS_PLAY         = 0                     ; musState: the music as it is
+MS_FADE         = 1                     ; ... its voices 0-2 fade
+MS_BAR          = 2                     ; ... gone: the next bar
+MS_DRUMS        = 3                     ; ... LSP stopped, the drums alone
+
+        section "musdrums",data         ; (no chip memory: the CPU's alone. data,
+                                        ; not code: vlink puts code hunks first,
+                                        ; and the first hunk is where the program
+                                        ; starts - main.s init)
+; the CIA irq's tick (LightSpeedPlayer_cia.asm), all registers free
+musicTick:
+        cmp.b   #MS_BAR,musState        ; faded out: LSP stops at the next bar
+        bne.s   .lsp                    ; (before it plays it)
+        move.w  musTick,d0
+        subq.w  #1,d0
+        ext.l   d0
+        divu    #96,d0
+        swap    d0
+        tst.w   d0
+        bne.s   .lsp
+        bsr     musStop
+.lsp:   cmp.b   #MS_DRUMS,musState
+        beq.s   .ds
+        lea     $dff0a0,a6
+        jsr     LSP_MusicPlayTick
+        bsr     musVolOut
+        bra.s   .t
+.ds:    bsr     dsTick
+.t:     move.w  musTick,d0              ; the song's tick on
+        addq.w  #1,d0
+        cmp.w   #musSongT,d0
+        blo.s   .t0
+        moveq   #0,d0
+.t0:    move.w  d0,musTick
+        tst.w   musHitIn
+        beq.s   .h0
+        subq.w  #1,musHitIn
+.h0:    tst.b   musState                ; the break: the fade begins
+        bne.s   .f0
+        tst.b   musFadeGo
+        beq.s   .fx
+        move.b  #MS_FADE,musState
+        move.w  #musFadeT,musFadeN
+.f0:    cmp.b   #MS_FADE,musState
+        bne.s   .fx
+        subq.w  #1,musFadeN
+        bhi.s   .f1
+        clr.w   musFade
+        move.b  #MS_BAR,musState
+        bra.s   .fx
+.f1:    move.w  musFadeN,d0
+        mulu    #256,d0
+        divu    #musFadeT,d0
+        move.w  d0,musFade
+.fx:    jsr     musicPalTick
+        jmp     sfxTick
+
+; LSP's volumes (lspVol) into the channels the music has (sfxKeep): 0-2
+; faded, the drums (3) as they are
+musVolOut:
+        lea     $dff0a0,a0
+        lea     lspVol,a1
+        move.b  sfxKeep,d2
+        move.w  musFade,d3
+        moveq   #0,d7
+.c:     btst    d7,d2
+        beq.s   .n
+        moveq   #0,d0
+        move.b  (a1),d0
+        cmp.w   #3,d7
+        beq.s   .w
+        mulu    d3,d0
+        lsr.w   #8,d0
+.w:     move.w  d0,8(a0)
+.n:     addq.l  #1,a1
+        lea     16(a0),a0
+        addq.w  #1,d7
+        cmp.w   #4,d7
+        blo.s   .c
+        rts
+
+; LSP stops: its channels (those the effects have not) quiet, its DMACON
+; byte cleared (from now on dsTick's)
+musStop:
+        move.b  #MS_DRUMS,musState
+        lea     $dff0a0,a0
+        move.b  sfxKeep,d2
+        moveq   #0,d7
+.c:     btst    d7,d2
+        beq.s   .n
+        clr.w   8(a0)
+        moveq   #0,d1
+        bset    d7,d1
+        move.w  d1,$dff096
+.n:     lea     16(a0),a0
+        addq.w  #1,d7
+        cmp.w   #4,d7
+        blo.s   .c
+        move.l  LSP_State+m_dmaconPatch,a0
+        clr.b   (a0)
+        rts
+
+; the drums alone, a tick (musTick: the song's tick now)
+dsTick:
+        move.l  LSP_State+m_dmaconPatch,a2
+        clr.b   (a2)
+        lea     $dff0a0,a0
+        move.b  dsStarted,d0            ; last tick's notes: once (their loop
+        beq.s   .l9                     ; silent)
+        clr.b   dsStarted
+        btst    #0,d0
+        beq.s   .l2
+        move.l  #sfxSilence,(a0)
+        move.w  #1,4(a0)
+.l2:    btst    #2,d0
+        beq.s   .l9
+        move.l  #sfxSilence,$20(a0)
+        move.w  #1,$24(a0)
+.l9:    move.w  musTick,d0              ; a step now? (every 6 ticks from the
+        subq.w  #1,d0                   ; bar's tick 1 on)
+        bmi.s   .out
+        ext.l   d0
+        divu    #96,d0                  ; the bar
+        move.l  d0,d1
+        clr.w   d1
+        swap    d1
+        divu    #6,d1
+        swap    d1
+        tst.w   d1
+        bne.s   .out
+        swap    d1                      ; the step (0..15)
+        tst.b   dsPause                 ; the beat before the first hit: quiet
+        bmi.s   .play                   ; (-1: that is over)
+        bne.s   .wait
+        move.w  musHitIn,d2
+        beq.s   .play
+        cmp.w   #24+3,d2
+        bhi.s   .play
+        moveq   #3,d2
+        and.w   d1,d2
+        bne.s   .play
+        move.b  #1,dsPause
+        bra.s   .out
+.wait:  cmp.w   #6,musHitIn             ; in again with the hit's bar
+        bhi.s   .out
+        tst.w   d1
+        bne.s   .out
+        st      dsPause
+.play:  lea     dsBar,a1                ; the bar's pattern, the step's note
+        moveq   #0,d2
+        move.b  (a1,d0.w),d2
+        lsl.w   #4,d2
+        lea     dsPat,a1
+        add.w   d2,a1
+        moveq   #0,d2
+        move.b  (a1,d1.w),d2
+        beq.s   .out
+        subq.w  #1,d2
+        mulu    #10,d2
+        lea     dsIns,a1
+        add.w   d2,a1
+        move.w  8(a1),d3                ; its channel: off, the sample, on with
+        move.w  d3,$dff096              ; timer B (as LSP does)
+        cmp.w   #1,d3
+        beq.s   .c0
+        lea     $20(a0),a0
+.c0:    move.l  #LSPBank,d4
+        moveq   #0,d5
+        move.w  (a1)+,d5
+        add.l   d5,d4
+        move.l  d4,(a0)
+        move.w  (a1)+,4(a0)
+        move.w  (a1)+,6(a0)
+        move.w  (a1)+,8(a0)
+        or.b    d3,(a2)
+        or.b    d3,dsStarted
+.out:   rts
+
+musTick:        dc.w    0               ; the song's tick (0 .. musSongT-1)
+musFadeN:       dc.w    0               ; the fade: ticks left
+musFade:        dc.w    256             ; ... the voices' volume (* 256)
+lspVol:         dc.b    0,0,0,0         ; LSP's volumes, a channel each
+musState::      dc.b    MS_PLAY
+dsStarted:      dc.b    0               ; channels with a new note (DMACON bits)
+dsPause:        dc.b    0               ; 1: quiet before the hit, -1: over
+                even
+        ENDC
+        IFNE    drumSeq
+        IFEQ    musDrums
+        section "musdrums",data
+        ENDC
+musFadeGo::     dc.b    0               ; (morph.i) the break: the music ends
+                even
+musHitIn::      dc.w    0               ; (morph.i) ticks to the first hit
+        section "code",data,chip
+        ENDC
 
 musicPalTick:
         subq.w  #1,musicPalCountdown
@@ -646,6 +865,9 @@ LSPBank:
 ; (the packed effects only get read by the CPU, once - no need for chip memory)
         include "sfx.i"
         even
+        IFNE    musDrums
+        include "drumseq.i"             ; (drumSeq: the song's drums, CPU only)
+        ENDC
 LSPMusic:
         IFEQ    MUSIC-MUSIC_RINK
         incbin	"rink-a-dink.lsmusic"

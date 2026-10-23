@@ -6223,6 +6223,62 @@ seq_hunt:
 .out:
 		rts
 
+	ifne	fixQmarks
+; (switches.i fixQmarks) DEFTEST's shooting: no hops round the text - in
+; the Asteroids way the ship got to its spots too seldom, and on the way
+; it hardly ever fired. it holds a spot under the row, left of the
+; stretch where glyphs are hit, the nose on the next glyph there, and
+; fires as soon as it is on it (or after seq_aimmax frames anyway), every
+; seq_tgap frames: every glyph that comes by is shot out, the last
+; question marks too
+seq_qX			= 104
+seq_qY			= seq_textY+60
+seq_qGap		= 6				; frames between its shots: all it has
+seq_qTopFrom	= 80			; the top row: glyphs from here ...
+seq_qTopTo		= 152			; ... to here (right above the spot)
+seq_qTopDy		= 22			; ... this many lines over the bottom row
+seq_qRowX		= 250			; (over to the row a little later: it is
+								; near it already)
+seq_qfire:
+		tst.w	seq_gap
+		beq.s	.g0
+		subq.w	#1,seq_gap
+.g0:	move.w	#seq_qX,seq_ax
+		move.w	#seq_qY,seq_ay
+		bsr		seq_hover
+		bsr		seq_claimX			; the next glyph in the stretch (not one a
+		cmp.w	seq_hFrom,d0		; shot is on its way to)
+		bge.s	.from
+		move.w	seq_hFrom,d0
+.from:	move.w	seq_hTo,d1
+		jsr		findSolid
+		move.w	#seq_textY,d1
+		tst.w	d0
+		bpl.s	.tgt
+		bsr		seq_claimX			; none: what got past it, in the top row
+		sub.w	#24,d0				; (24 px further left there)
+		cmp.w	#seq_qTopFrom,d0
+		bge.s	.t0
+		move.w	#seq_qTopFrom,d0
+.t0:	move.w	#seq_qTopTo,d1
+		jsr		findSolidTop
+		move.w	#seq_textY-seq_qTopDy,d1
+.tgt:	move.w	d0,seq_hTgt
+		bmi.s	.out
+		move.w	d0,d3
+		moveq	#seq_textv,d2
+		bsr		seq_aim
+		tst.w	seq_gap
+		bne.s	.out
+		tst.w	d0					; (only when it is on it: a question mark is
+		beq.s	.out				; thin)
+.fire:	bsr		seq_fireAt
+		clr.w	seq_aimT
+		addq.w	#1,seq_shots
+		move.w	#seq_qGap,seq_gap
+.out:	rts
+	endc
+
 ; on to a new spot: left of the letter (seq_hTgt, or the middle of the
 ; stretch), over or under the row
 seq_huntHop:
@@ -6335,11 +6391,19 @@ seq_deftest:
 		jsr		msgLeftX			; the message's first letter well in: over
 		tst.w	d0					; to the row now (not while the question
 		bmi.s	.noMsg				; marks still go by - just in time for it)
+	ifne	fixQmarks
+		cmp.w	#seq_qRowX,d0
+	else
 		cmp.w	#seq_goRowX,d0
+	endc
 		bls.s	.goRow
 .noMsg:	cmp.w	#seq_passT+seq_rowT+seq_rowLate,seq_timer
 		bhs.s	.goRow				; (no message after all: anyway)
+	ifne	fixQmarks
+		bsr		seq_qfire			; meanwhile: every glyph shot out
+	else
 		bsr		seq_tshoot			; meanwhile: the text hunted for fun
+	endc
 .out0:
 		rts
 .goRow:

@@ -4,31 +4,32 @@
         {
             "type": "amiga-assembly",
             "request": "launch",
-            "name": "WinUAE Debug",
-            "stopOnEntry": true,
+            "name": "WinUAE A500",
+            "noDebug": true,
             "program": "${workspaceFolder}/uae/dh0/d",
             "remoteProgram": "SYS:d",
             "emulatorType": "winuae",
             "emulatorArgs": [
+                "-config=${workspaceFolder}/uae/a500.uae",
                 "-s",
-                "filesystem=rw,dh0:${workspaceFolder}/uae/dh0"
+                "filesystem2=rw,DH0:dh0:${workspaceFolder}/uae/dh0,0"
             ],
-            "preLaunchTask": "amigaassembly: build debug"
+            "preLaunchTask": "amigaassembly: build"
         },
         {
             "type": "amiga-assembly",
             "request": "launch",
-            "name": "FS-UAE Debug",
+            "name": "WinUAE A500 Debugger",
             "stopOnEntry": false,
-            "program": "${workspaceFolder}/uae/dh0/d",
-            "remoteProgram": "d",
-            "emulatorType": "fs-uae",
+            "program": "${workspaceFolder}/uae/d_debug",
+            "remoteProgram": "SYS:d",
+            "emulatorType": "winuae",
             "emulatorArgs": [
-                "--hard_drive_0=${workspaceFolder}/uae/dh0",
-                "--remote_debugger=200",
-                "--automatic_input_grab=0"
+                "-config=${workspaceFolder}/uae/a500.uae",
+                "-s",
+                "filesystem2=rw,DH0:dh0:${workspaceFolder}/uae/dh0,0"
             ],
-            "preLaunchTask": "amigaassembly: build debug"
+            "preLaunchTask": "F5 build"
         }
     ]
 }

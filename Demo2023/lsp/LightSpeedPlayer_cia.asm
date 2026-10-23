@@ -91,10 +91,14 @@ LSP_MusicDriver_CIA_Start:
 			; move.w	#$444,$dff180
 			movem.l	d0-a6,-(a7)
 		; call player tick
+		IFEQ	musDrums
 			lea		$dff0a0,a6
 			bsr		LSP_MusicPlayTick		; LSP main music driver tick
 			bsr		musicPalTick			; logo palette cues (music.s)
 			bsr		sfxTick					; the sound effects (music.s)
+		ELSE
+			jsr		musicTick				; (music.s: LSP or the drums alone at the
+		ENDC								; end, the cues, the effects)
 
 		; check if BMP changed in the middle of the music
 			move.l	.pMusicBPM(pc),a0

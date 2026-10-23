@@ -71,8 +71,18 @@ morphBar	= 4*morphBeat
 morphCueTicks = $300	; (music.s musicPalTicks: its tick counter's round)
 morphHoldMin = 20		; frames the fighter holds still at least
 morphHoldMax = morphHoldMin+3*morphBar	; ... at most (no music: on anyway)
+	ifeq	escortMux
 morphSimLine = 222		; the sim works on till this raster line (a step is
 						; 6k cycles at most: the frame stays below 117k)
+	else
+	ifne	recV2
+morphSimLine = 230		; (recV2: its frames cost more - the encoding, the
+						; film's flight - and the film is longer: it stops by
+						; the beam, its longest step ends by line ~250)
+	else
+morphSimLine = 218		; (escortMux: its steps a little longer - the
+	endc				; torpedoes' rows; it is through long before the play)
+	endc
 
 ; --- the pass
 morphPassT	= 400		; frames: the stars from slow to top speed (u^3)
@@ -112,8 +122,13 @@ morphEZ0	= 30*16
 morphEX1	= -12*16		; ... to its place ahead of us
 morphEY1	= 10*16
 morphEZ1	= 230*16
+	ifeq	escortMux
 morphBreakLead = 6*morphBeat	; frames from the break to the first hit
 morphBreakAt = morphTorpHitAge-morphBreakLead	; (frames into the escort)
+	else
+morphBreakLead = 16*morphBeat	; frames from the break to the first hit (7.7 s)
+morphBreakAt = morphTorpHitAge-morphEntryT+morphMxDrop0-morphBreakLead
+	endc
 morphBreakT	= 4*morphBeat	; frames of the turn (eased in and out: heavy)
 morphBreakA	= 180		; degrees it turns: round, back at us
 morphBreakV	= 4*16		; its speed in the turn (1/16 units a frame; ours: 7)
@@ -134,10 +149,62 @@ morphTorpDropG = 8		; ... faster and faster (a frame)
 morphTorpDropT1 = 2*morphBeat	; ... at most (else: once this far from the ship -
 morphTorpFireD = 45		; |dx| + |dy| + |dz|, units: it maneuvers)
 morphTorpAcc = 6		; then they speed up (1/256 units a frame, a frame)
+	ifeq	escortMux
 morphTorpHitAge = 31*morphBeat	; frames from the drop to the hit (14.9 s)
+	else
+; (switches.i escortMux) the torpedoes go in the entry already, half a beat
+; apart, while the fighter is still high: they fall a little, cold, and their
+; engines fire once it is safely below them (their glows and the
+; afterburner's share the sprites, one above the other). the hits as they
+; were: the first drop's hit later by what it is earlier, each next one
+; 1.25 beats later than that (they were 1.5 beats apart, the drops are a
+; quarter beat now: all of them out before the fighter is down)
+morphMxDrop0 = morphBeat/2	; frames into the entry: the first drop
+morphMxDropGap = morphBeat/4	; ... the next ones
+morphTorpHitAge = 31*morphBeat+morphEntryT-morphMxDrop0	; (the first's)
+morphMxHitStep = morphTorpGap-morphMxDropGap	; ... each next one's: longer
+morphMxDropV = 20		; their fall (1/256 units a frame) ...
+morphMxDropG = 1		; ... faster and faster (a frame)
+morphMxFireT1 = 4*morphBeat	; their engines fire at the latest (simMxLate)
+morphMxGap	= 2			; lines between a torpedo's glow and the afterburner's
+						; rows at least (besides the one the sprite needs)
+TF_NOSPR	= 4			; (flags) its glow would touch the afterburner's: none
+	endc
+	ifne	launchSeq
+	ifeq	escortMux*spr8
+	fail	"launchSeq needs escortMux and spr8"
+	endc
+; (switches.i launchSeq) at full speed: the fighter shows off (big, heavy
+; arcs, a barrel roll), lines up under the logo (corrections, overshooting
+; and settling), then the torpedoes jump out of its top, one a beat - it
+; kicks back and settles, heavily - and glide on cold till their engines
+; fire. each its own sprite (4..6), the hits as they were
+morphLsEj0	= 10*morphBeat	; frames into the escort: the first one out
+morphLsHit0	= morphTorpHitAge-(morphEntryT-morphMxDrop0+morphLsEj0)	; its
+						; age at the hit (the first drop's hit, as it was)
+morphLsHitStep = morphTorpGap-morphBeat	; ... each next one's: longer
+morphLsTop	= 6*16		; out of its top: this far above its middle (1/16)
+morphLsPopV	= 1024		; ... jumping up (1/256 units a frame), 3/16 of
+						; it lost a frame
+morphLsIgnT	= 14		; frames out: its engine fires (clear of the ship)
+morphLsAcc	= 10		; then it speeds away (1/256 units a frame, a frame)
+morphLsKickY = 2200		; the kick: the fighter down (1/4096 units a frame)
+morphLsKickZ = -3600	; ... and back at us
+morphLsFlT	= 3			; frames its lines flash (the copper: colours 8-15)
+morphLsFlC	= $0ffa		; ... in this
+morphLsCol	= $0eee		; (scroller.s gameColor)
+morphLsBank	= 50		; (MV_ARC) degrees it banks into the arc at most
+morphLsAimK	= 5			; (MV_AIM) the spring while it lines up: stiffer,
+morphLsAimD	= 40		; less damped (it overshoots, swings, settles)
+MSPR1		= 4+15*4+4	; (morphSprFrame) a sprite with one glow
+	endc
 morphTorpR	= 8*16		; their size (radius, 1/16 units)
 morphTorpHissT = 40		; frames their hiss is heard after the whoosh
+	ifeq	escortMux
 MSPR_LEN	= 4+15*4+4	; (morphSprFrame) a sprite: control, 15 rows, the end
+	else
+MSPR_LEN	= 2*(4+15*4)+4	; (morphSprFrame) a sprite: two glows, the end
+	endc
 MSPR_RMAX	= 7			; ... a glow's R at most (the torpedoes, the small flame)
 AB_TM		= 16		; (morphSprFrame) frames from the afterburner's chain
 						; (a power of 2: shifts for it)
@@ -200,6 +267,12 @@ MV_SALUTE	= 11		; the wings rock: p1 degrees, p2 times
 MV_MOVE		= 12		; its place in the escort: p1 units across, p2 ahead
 MV_CLIMB	= 13		; pulls up and turns to heading p1, climbing p2 units
 MV_WEAVE	= 14		; a slow weave: p1 units across, p2 rounds
+	ifne	launchSeq
+MV_ARC		= 15		; a big arc: p1 units across and back, p2 up and
+						; down again, banked into it (the thrust with the climb)
+MV_AIM		= 16		; lines up: across to p1 units (its escort place),
+						; two corrections either side, the nose p2 degrees
+	endc
 mv_len		= 10
 MV		macro
 		dc.w	\1,\2,\3,\4,\5
@@ -217,6 +290,23 @@ morphOpenList:
 ; the escort, from the first drop on (the break comes after morphBreakAt
 ; frames, whatever is left: a list too short holds on the last place)
 morphEscList:
+	ifne	launchSeq					; (the break 15 beats on, as it was)
+		MV		MV_ARC,3*morphBeat,70,30,200		; the show: a big arc
+		MV		MV_BARREL,3*morphBeat,20,-1,256		; ... a heavy barrel roll
+		MV		MV_AIM,3*morphBeat,12,5,192			; lines up under the logo
+		MV		MV_HOLD,morphBeat,0,0,192			; still
+		MV		MV_MOVE,3*morphBeat,-50,160,192		; the torpedoes out (as
+		MV		MV_VROLL,2*morphBeat,0,1,192		; it goes), the roll
+		dc.w	-1
+	else
+	ifne	escortMux					; (the torpedoes gone already, the break
+		MV		MV_WEAVE,3*morphBeat,24,1,96		; 15 beats on: 7.7 s before the
+		MV		MV_BARREL,4*morphBeat,18,1,256		; first hit)
+		MV		MV_KNIFE,3*morphBeat,90,0,128
+		MV		MV_MOVE,3*morphBeat,-50,160,160
+		MV		MV_VROLL,2*morphBeat,0,1,192
+		dc.w	-1
+	else
 		MV		MV_WEAVE,4*morphBeat,24,1,96		; (the drops on its beats)
 		MV		MV_BARREL,4*morphBeat,18,1,256
 		MV		MV_BACK,4*morphBeat,90,40,128
@@ -225,6 +315,8 @@ morphEscList:
 		MV		MV_MOVE,3*morphBeat,-50,160,160		; (up left, away: room for
 		MV		MV_VROLL,2*morphBeat,0,1,192		; the victory roll; the break)
 		dc.w	-1
+	endc
+	endc
 
 ; the parts: start frame, frames to unfold
 morphParts:	dc.w	0,46			; 0 the arrow grows
@@ -369,7 +461,13 @@ morphFlBoost:	dc.w	0		; ... the ignition's overshoot (* 256 of f)
 morphChP:		ds.w	4*4		; ... the chain's glows: x, y, R*16, (b) off
 morphChR16:		ds.w	4		; ... their R * 16, softly
 morphChTip:		ds.w	4		; ... the plate's middle, the way to the tip
+	ifne	starCam
+morphScF:		dc.w	256		; (starCam) the stars' speed by the thrust (* 256)
+	endc
 morphFrame:		dc.b	0		; ... frames (the flicker's round)
+	ifne	launchSeq
+morphLsFl:		dc.b	0		; ... (launchSeq) frames the fighter's lines flash
+	endc
 morphChDbg:		dc.b	0		; ... (AB_DEBUG) the line drawn
 				even
 morphPXY:		ds.w	2*morphNP	; the points
@@ -401,6 +499,9 @@ morphSYs:		dc.w	0
 morphSZs:		dc.w	0
 morphM:			ds.w	9		; (unfolded) the turn as a matrix, Q15
 morphXY:		ds.w	2*morphNP	; the points on the screen
+	ifne	cineFight
+morphXYh:		ds.w	2*8			; ... (cine.i) the bay's doors'
+	endc
 morphFV:		ds.b	morphNF+1	; faces seen
 morphFMask:		dc.w	0		; faces seen, a bit each
 				cnop	0,4
@@ -423,10 +524,27 @@ tp_ay:			rs.w	1
 tp_fv:			rs.w	1		; its fall (1/256 units a frame), dying away once
 						; it burns
 tp_burn:		rs.w	1		; frames its engine has burnt (0: falling still)
+	ifne	escortMux
+tp_hit:			rs.w	1		; its age at the hit
+	endc
+	ifne	cineFight
+tp_lift:		rs.w	1		; (cine.i) frames on the lift still (0: free)
+	endc
 tp_len:			rs.b	0
 morphTorps:		ds.b	morphTorpN*tp_len
 morphTorpNext:	dc.w	0		; the next one to go
 morphTorpLeft::	dc.w	0		; on their way
+	ifne	escortMux
+simMxTop::		dc.w	$7fff	; the afterburner's rows (about: simMxRange) -
+simMxBot::		dc.w	$8000	; none
+simMxHold:		dc.w	0		; ... frames they are kept on
+simMxR:			dcb.l	4,$7fff8000	; ... each glow's (top, bottom): the
+										; sprite a torpedo shares with it
+simMxSkip::		dc.w	0		; (the harness) frames a torpedo's glow was left out
+simMxLate::		dc.w	0		; ... torpedoes fired late (not safely above)
+morphMxSkip::	dc.w	0		; ... glows the play still had to leave out
+morphMxTwo::	dc.w	0		; ... sprites with two glows (frames)
+	endc
 ; where they hit (the logo, screen x/y)
 morphTorpAim:	dc.w	135,44, 177,54, 220,44
 
@@ -584,6 +702,34 @@ morphBarPos:
 		swap	d0
 		rts
 
+	ifne	starCam
+; (switches.i starCam) d0 = the stars' speed -> d0 with the fighter's thrust
+; in the escort. uses d1/d2
+morphScSpeed:
+		move.w	#256,d1				; (switches.i starCam) in the escort the
+		cmp.b	#MP_PLAY,morphPhase	; stars with the fighter's thrust: 256 +
+		bne.s	.c8					; (thrust - 192) / 2, softly (an eighth a
+		move.w	morphPlayN,d2		; frame) - back to as it was outside it
+		cmp.w	morphPhT+2*SP_ESCORT,d2
+		bls.s	.c8
+		cmp.w	morphPhT+2*SP_BREAK,d2
+		bhi.s	.c8
+		moveq	#0,d1
+		move.b	morphPGP+1,d1
+		sub.w	#192,d1
+		asr.w	#1,d1
+		add.w	#256,d1
+		bra.s	.c9
+.c8:	cmp.w	morphScF,d1			; (outside it and back: nothing to do)
+		beq.s	.c0
+.c9:	sub.w	morphScF,d1
+		asr.w	#3,d1
+		add.w	d1,morphScF
+		mulu	morphScF,d0
+		lsr.l	#8,d0
+.c0:	rts
+	endc
+
 ;---------------------------------------------
 ; once a frame from seq_morph (asteroids.s), before the ship moves and is
 ; drawn: the timeline. a0 the ship, kept. d0 = 0: the ship is not still yet
@@ -601,6 +747,9 @@ morphTick::
 		move.w	morphVz,d0
 		mulu	#warpVz,d0
 		lsr.l	#8,d0
+	ifne	starCam
+		bsr		morphScSpeed		; (switches.i starCam)
+	endc
 		move.w	d0,warpVzNow
 		; new stars from further off the faster they come (the same wait for
 		; each: the faster, the fewer of them in sight - a rush of stars
@@ -654,7 +803,17 @@ morphTick::
 		rts
 
 .play:	move.l	a0,-(a7)
-		bsr		morphPlayFrame
+	ifne	showdownLean
+		tst.b	morphLean			; (the ship gone: the torpedoes alone)
+		beq.s	.p0
+		bsr		morphLnFrame
+		bra.s	.p1
+.p0:	jsr		morphPlayFrame
+		bsr		morphLnCheck
+.p1:
+	else
+		jsr		morphPlayFrame
+	endc
 		move.l	(a7)+,a0
 		rts
 
@@ -687,6 +846,406 @@ RB_GLOWP	= 13
 RB_END		= 14		; the last frame
 RB_BOOM		= 15		; the break: the afterburner kicks in (a boom)
 
+	ifne	recV2
+	ifeq	launchSeq
+	fail	"recV2 needs launchSeq"
+	endc
+; (switches.i recV2) a frame: the flags word, then
+;   (mode 3) the composition (a byte, a pad byte)
+;   (RB_MASK) the faces seen
+;   the vector: mode 0 nothing (a segment goes on, or it holds), mode 1 a
+;     segment's change to its last frame as bytes (padded to even), mode 2 as
+;     words, mode 3 every value as it is (words)
+;   (RB_TATTR) each torpedo's size and kind (bytes)
+; a segment is 2^k frames (RB_K): this frame is its first step. the vector:
+; the stars' speed; (RC_S1) the engine's volume, period; (RC_S3) a hiss's;
+; (RC_VIS) the ship's 16 points, its glow's radius and thrust; (RC_HAT) the
+; hatch's points; the torpedoes (x, y each)
+RB_TATTR	= 4
+RB_K		= 5			; bits 5-6: k
+RB_EVENTS	= (1<<RB_DROP)|(1<<RB_IGN)|(1<<RB_SIGN)|(1<<RB_WARP)|(1<<RB_BOOM)
+RC_S1		= 0			; the composition: the engine heard
+RC_S3		= 1			; ... a hiss
+RC_VIS		= 2			; ... the ship drawn
+RC_HAT		= 3			; ... the hatch's points
+RC_N		= 4			; bits 4-5: torpedoes
+ENC_RING	= 9			; frames the encoding looks ahead (8 and the one now)
+ENC_NMAX	= 72		; the vector's values at most
+ENC_TOL		= 1			; a frame between keys off by this much at most
+	ifne	cineFight
+ENC_HATN	= 16		; the bay's doors' points (values: x, y each)
+	else
+ENC_HATN	= 0
+	endc
+ENC_CHK		= 24		; (simEncStep) checks a step, about
+RECV2COST	= 7040		; bytes the record gives up for recV2's code and tables
+				rsreset
+fs_comp:		rs.b	1	; a frame as the sim made it (the encoding's ring)
+fs_glow:		rs.b	1
+fs_end:			rs.b	1
+fs_pad:			rs.b	1
+fs_mask:		rs.w	1
+fs_ev:			rs.w	1
+fs_n:			rs.w	1		; the vector's values
+fs_tat:			rs.b	2*morphTorpN
+fs_vec:			rs.w	ENC_NMAX
+fs_len:			rs.b	0
+	endc
+
+	ifne	recV2
+		section "morphcode",data	; (CPU only: any memory; "data", so vlink does not put it first - DOS starts at the first hunk)
+morphPlayFrame:
+		move.w	morphSimN,d0
+		sub.w	morphPlayN,d0
+		bhi.s	.go
+		addq.w	#1,morphStalls		; not worked out yet: the last one again
+		rts
+.go:	tst.b	morphSimEnd			; (the least lead while the sim works)
+		bne.s	.l0
+		cmp.w	morphLeadLow,d0
+		bhs.s	.l0
+		move.w	d0,morphLeadLow
+.l0:	move.l	morphPlayR,a0
+		move.w	(a0)+,d7
+		moveq	#RF_MODE,d5
+		and.w	d7,d5
+		cmp.w	#3,d5				; a new composition: its values as they are
+		bne.s	.m0
+		move.b	(a0)+,rpComp
+		addq.l	#1,a0
+.m0:	btst	#RB_MASK,d7
+		beq.s	.m1
+		move.w	(a0)+,morphPMask
+.m1:	move.w	rpN,d6				; (the vector's values)
+		subq.w	#1,d5
+		bmi		.step				; (mode 0: on in the segment, or held)
+		cmp.w	#2,d5
+		beq		.abs
+		move.w	d7,d2				; a segment of 2^k frames
+		lsr.w	#RB_K,d2
+		and.w	#3,d2
+		bne.s	.sk
+		clr.w	rpR					; k 0: a frame - its change straight on
+		lea		rpP,a1
+		subq.w	#1,d6
+		tst.w	d5
+		bne.s	.w0
+.b0:	move.b	(a0)+,d1
+		ext.w	d1
+		add.w	d1,(a1)
+		addq.l	#4,a1
+		dbf		d6,.b0
+		bra.s	.even
+.w0:	move.w	(a0)+,d1
+		add.w	d1,(a1)
+		addq.l	#4,a1
+		dbf		d6,.w0
+		bra.s	.tat
+.sk:	moveq	#1,d1				; its step (16.16), the first one now
+		lsl.w	d2,d1
+		subq.w	#1,d1
+		move.w	d1,rpR				; (frames after this one)
+		lea		rpV,a1
+		lea		rpP,a2
+		subq.w	#1,d6
+		tst.w	d5
+		bne.s	.ws
+.bs:	move.b	(a0)+,d1
+		ext.w	d1
+		swap	d1
+		clr.w	d1
+		asr.l	d2,d1
+		move.l	d1,(a1)+
+		add.l	d1,(a2)+
+		dbf		d6,.bs
+.even:	move.l	a0,d1				; (padded to even)
+		addq.l	#1,d1
+		and.w	#$fffe,d1
+		move.l	d1,a0
+		bra.s	.tat
+.ws:	move.w	(a0)+,d1
+		swap	d1
+		clr.w	d1
+		asr.l	d2,d1
+		move.l	d1,(a1)+
+		add.l	d1,(a2)+
+		dbf		d6,.ws
+		bra.s	.tat
+.abs:	bsr		rpCompN				; mode 3: as they are
+		move.w	d6,rpN
+		subq.w	#1,d6
+		lea		rpP,a1
+.ab:	move.w	(a0)+,(a1)+
+		move.w	#$8000,(a1)+
+		dbf		d6,.ab
+		clr.w	rpR
+		bra.s	.tat
+.step:	tst.w	rpR					; a segment on: a step (four values at a
+		beq.s	.tat				; time - the ones past the vector's end
+		subq.w	#1,rpR				; do not matter)
+		lea		rpV,a1
+		lea		rpP,a2
+		move.w	d7,a3				; (eight a time: the flags in a3)
+		addq.w	#7,d6
+		lsr.w	#3,d6
+		subq.w	#1,d6
+		move.w	d6,a4
+.st:	movem.l	(a1)+,d0-d7
+		add.l	d0,(a2)+
+		add.l	d1,(a2)+
+		add.l	d2,(a2)+
+		add.l	d3,(a2)+
+		add.l	d4,(a2)+
+		add.l	d5,(a2)+
+		add.l	d6,(a2)+
+		add.l	d7,(a2)+
+		subq.w	#1,a4
+		move.w	a4,d0
+		bpl.s	.st
+		move.w	a3,d7
+.tat:	btst	#RB_TATTR,d7		; the torpedoes' sizes, kinds
+		beq.s	.unp
+		moveq	#0,d0
+		move.b	rpComp,d0
+		lsr.b	#RC_N,d0
+		add.w	d0,d0
+		subq.w	#1,d0
+		lea		rpTat,a1
+.tt:	move.b	(a0)+,(a1)+
+		dbf		d0,.tt
+.unp:	move.l	a0,morphPlayR
+		; the values (each the high word of its long)
+		lea		rpP,a1
+		move.w	(a1),morphVz
+		addq.l	#4,a1
+		st		morphPark
+		lea		sfxDroneOn,a2
+		sf		1(a2)
+		sf		3(a2)
+		sf		morphPGlow
+		move.b	rpComp,d5
+		btst	#RC_S1,d5
+		beq.s	.u1
+		move.w	(a1),sfxDroneVol+2
+		move.w	4(a1),sfxDronePer+2
+		addq.l	#8,a1
+		st		1(a2)
+.u1:	btst	#RC_S3,d5
+		beq.s	.u2e
+		move.w	(a1),sfxDroneVol+6
+		move.w	4(a1),sfxDronePer+6
+		addq.l	#8,a1
+		st		3(a2)
+		sf		sfxEng3				; (its hiss: music.s)
+		bra.s	.u3
+.u2e:	tst.b	1(a2)				; no hiss, the engine near: on 3 as well,
+		beq.s	.u3					; a little lower - the other side, a
+		moveq	#morphSnd2V,d0		; slow beat between them: big
+		tst.b	sfxEng3				; (on already: till it is a quarter
+		beq.s	.u2v				; quieter)
+		moveq	#morphSnd2V*3/4,d0
+.u2v:	cmp.w	sfxDroneVol+2,d0
+		bls.s	.u2o
+		sf		sfxEng3
+		bra.s	.u3
+.u2o:	move.w	sfxDroneVol+2,sfxDroneVol+6
+		move.w	sfxDronePer+2,d0
+		move.w	d0,d1
+		lsr.w	#6,d1
+		add.w	d1,d0
+		move.w	d0,sfxDronePer+6
+		st		sfxEng3
+		st		3(a2)
+.u3:	btst	#RC_VIS,d5			; the ship
+		sne		morphPShip
+		beq.s	.u5
+		lea		morphPXY,a3
+UPI		set		0
+		rept	2*morphNP
+		move.w	UPI(a1),(a3)+		; (unrolled: no loop a value)
+UPI		set		UPI+4
+		endr
+		lea		2*morphNP*4(a1),a1
+		move.w	(a1),d0				; the glow: radius << 8 | thrust
+		lsl.w	#8,d0
+		move.b	5(a1),d0
+		move.w	d0,morphPGP
+		addq.l	#8,a1
+		btst	#RB_GLOW,d7
+		sne		morphPGlow
+.u5:
+	ifne	ENC_HATN
+		btst	#RC_HAT,d5			; the bay's doors
+		sne		morphPHatOn
+		beq.s	.u6
+		btst	#RB_HOPEN,d7
+		sne		morphPHatOpen
+		lea		morphPHat,a3
+UPI		set		0
+		rept	ENC_HATN
+		move.w	UPI(a1),(a3)+
+UPI		set		UPI+4
+		endr
+		lea		ENC_HATN*4(a1),a1
+	endc
+.u6:	move.w	d7,-(a7)
+		bsr		rpTorps				; the torpedoes
+		move.w	(a7)+,d7
+		addq.w	#1,morphPlayN
+		bra		morphPlayEv
+
+; d5 = the composition (rpComp) -> d6 = its values
+rpCompN:
+		move.b	rpComp,d5
+		moveq	#1,d6				; (the stars' speed)
+		btst	#RC_S1,d5
+		beq.s	.c0
+		addq.w	#2,d6
+.c0:	btst	#RC_S3,d5
+		beq.s	.c1
+		addq.w	#2,d6
+.c1:	btst	#RC_VIS,d5
+		beq.s	.c2
+		add.w	#2*morphNP+2,d6
+.c2:	btst	#RC_HAT,d5
+		beq.s	.c3
+		add.w	#ENC_HATN,d6
+.c3:	move.w	d5,d0
+		lsr.b	#RC_N,d0
+		and.w	#3,d0
+		lsl.w	#2,d0				; (a torpedo: x, y, its flare's way)
+		add.w	d0,d6
+		rts
+
+; the torpedoes into morphPTorps (a1 their places in rpP): the size - its
+; engine's first frame half as big again, a twinkle every other frame - and
+; the flare behind it (2r + 0..3 long, from its aim through the ball, every
+; other frame) worked out here
+rpTorps:
+		moveq	#0,d7
+		move.b	rpComp,d7
+		lsr.b	#RC_N,d7
+		and.w	#3,d7
+		move.w	d7,morphPTorpN
+		subq.w	#1,d7
+		bmi		.out
+		lea		morphPTorps,a3
+		lea		rpTat,a4
+		move.w	morphPlayN,d6		; (the twinkle, the flare: this frame's)
+.t:		move.w	(a1),(a3)+			; x, y
+		move.w	4(a1),(a3)+
+		move.w	8(a1),d3			; its flare's way (* 256, by the bigger
+		move.w	12(a1),d4			; of the two)
+		lea		16(a1),a1
+		moveq	#0,d0
+		move.b	(a4)+,d0			; its size by the distance
+		moveq	#0,d2
+		move.b	(a4)+,d2			; (its kind)
+		and.w	#(1<<TF_BURN)|(1<<TF_FLASH),d2
+		btst	#TF_BURN,d2
+		beq.s	.tw
+		btst	#TF_FLASH,d2
+		beq.s	.tw0
+		move.w	d0,d1
+		lsr.w	#1,d1
+		addq.w	#1,d1
+		add.w	d1,d0
+.tw0:	btst	#0,d6				; the twinkle
+		beq.s	.tw
+		addq.w	#1,d0
+.tw:	cmp.w	#127,d0
+		bls.s	.r0
+		moveq	#127,d0
+.r0:	move.b	d0,(a3)+
+		cmp.w	#2,d0
+		bhs.s	.f0
+		bset	#TF_DOT,d2
+.f0:	btst	#TF_BURN,d2
+		beq.s	.f9
+		btst	#0,d6				; (every other frame: it flickers)
+		bne.s	.f9
+		move.w	d3,d1				; (no way: none)
+		or.w	d4,d1
+		beq.s	.f9
+		moveq	#3,d1				; the flare: 2r + 0..3 long, from its aim
+		and.w	d6,d1				; through the ball
+		add.w	d0,d1
+		add.w	d0,d1
+		muls	d1,d3
+		asr.l	#8,d3
+		muls	d1,d4
+		asr.l	#8,d4
+		bset	#TF_FLARE,d2
+		move.b	d2,(a3)+
+		move.b	d3,(a3)+
+		move.b	d4,(a3)+
+		bra.s	.n
+.f9:	move.b	d2,(a3)+
+		clr.b	(a3)+
+		clr.b	(a3)+
+.n:		dbf		d7,.t
+.out:	rts
+
+; what happens this frame (d7 the flags)
+morphPlayEv:
+		btst	#RB_DROP,d7
+		beq.s	.e0
+		moveq	#SFX_DROP,d0
+		jsr		sfxPlay
+	ifeq	cineFight				; (cine.i: the doors are seen - no flash)
+		move.b	#morphLsFlT,morphLsFl	; (its lines flash: morphSprFrame)
+	endc
+.e0:	btst	#RB_IGN,d7
+		beq.s	.e1
+		moveq	#SFX_IGNITE,d0
+		jsr		sfxPlay
+.e1:	btst	#RB_SIGN,d7			; (and with the break: the whoosh on 1,
+		bne.s	.ig					; a big boom on 3 - left and right)
+		tst.w	d7
+		bpl.s	.e2
+	ifne	drumSeq
+		move.w	morphPhT+2*SP_BREAK,d1	; (the break's boom - not the pass's:
+		beq.s	.ig					; music.s, the music ends - its voices
+		move.w	morphPlayN,d0		; fade, the drums go on)
+		subq.w	#1,d0
+		cmp.w	d1,d0
+		blo.s	.ig
+		move.w	#morphBreakLead-1,musHitIn
+		st		musFadeGo
+	endc
+.ig:	move.b	#2,morphFlash		; (the afterburner: its flash, the flame
+		move.w	#128,morphFlBoost	; longer for a while)
+		moveq	#SFX_SHIPIGN,d0
+		jsr		sfxPlay
+		moveq	#SFX_BIGBOOM,d0
+		jsr		sfxPlay
+.e2:	btst	#RB_WARP,d7
+		beq.s	.e3
+		move.l	d7,-(a7)
+		jsr		warpStart
+		move.l	(a7)+,d7
+.e3:	btst	#RB_END,d7
+		beq.s	.e4
+		move.b	#MP_GONE,morphPhase
+		clr.w	morphPT
+		sf		morphPShip
+		clr.w	morphPTorpN
+.e4:	rts
+
+rpComp:		dc.b	0			; (the play) the composition now
+	ifne	ENC_HATN
+morphPHatOn:	dc.b	0		; ... the bay's doors drawn
+morphPHatOpen:	dc.b	0		; ... and apart
+				even
+morphPHat:		ds.w	ENC_HATN	; ... their points
+	endc
+			even
+rpN:		dc.w	0			; ... its values
+rpR:		dc.w	0			; ... frames of the segment still to go
+rpTat:		ds.b	2*morphTorpN	; ... the torpedoes' sizes, kinds
+			even
+		section "code",data,chip
+	else
 morphPlayFrame:
 		move.w	morphSimN,d0
 		sub.w	morphPlayN,d0
@@ -797,6 +1356,9 @@ morphPlayFrame:
 		beq.s	.e0
 		moveq	#SFX_DROP,d0
 		jsr		sfxPlay
+	ifne	launchSeq
+		move.b	#morphLsFlT,morphLsFl	; (its lines flash: morphSprFrame)
+	endc
 .e0:	btst	#RB_IGN,d7
 		beq.s	.e1
 		moveq	#SFX_IGNITE,d0
@@ -805,6 +1367,16 @@ morphPlayFrame:
 		bne.s	.ig					; a big boom on 3 - left and right)
 		tst.w	d7
 		bpl.s	.e2
+	ifne	drumSeq
+		move.w	morphPhT+2*SP_BREAK,d1	; (the break's boom - not the pass's:
+		beq.s	.ig					; music.s, the music ends - its voices
+		move.w	morphPlayN,d0		; fade, the drums go on)
+		subq.w	#1,d0
+		cmp.w	d1,d0
+		blo.s	.ig
+		move.w	#morphBreakLead-1,musHitIn
+		st		musFadeGo
+	endc
 .ig:	move.b	#2,morphFlash		; (the afterburner: its flash, the flame
 		move.w	#128,morphFlBoost	; longer for a while)
 		moveq	#SFX_SHIPIGN,d0
@@ -823,6 +1395,149 @@ morphPlayFrame:
 		sf		morphPShip
 		clr.w	morphPTorpN
 .e4:	rts
+	endc
+
+	ifne	showdownLean
+	ifeq	escortMux
+	fail	"showdownLean needs escortMux (the torpedoes' glows: morphMxTGeo)"
+	endc
+; --- (switches.i showdownLean) once the fighter has gone (past us, the
+;     wait begun, its afterburner died away: morphLnAfter frames on, not
+;     drawn) the flight's work stops: no record read any more, no flame -
+;     the torpedoes fly on by themselves, each straight from where it is to
+;     its point on the logo (morphTorpAim), there with its hit as before
+;     (the first one morphBreakLead-1 frames after the break, each next one
+;     morphTorpGap later), as blobs: sprites (morphSprFrame), no lines. the
+;     record and the sim's table are free from then on (morphRecFree: the
+;     overlay sdOvl, sdOvlLen bytes)
+morphLnAfter = 24		; frames into the wait at least
+sdOvl		= morphRcp	; (the sim's table and the record, one after the other)
+sdOvlLen	= morphRecEnd-morphRcp
+
+; after a frame of the record: the switch over?
+morphLnCheck:
+		cmp.b	#MP_PLAY,morphPhase
+		bne.s	.no
+		move.w	morphPhT+2*SP_WAIT,d0
+		beq.s	.no
+		add.w	#morphLnAfter,d0
+		cmp.w	morphPlayN,d0
+		bhi.s	.no
+		tst.b	morphPShip
+		bne.s	.no
+		move.w	morphPTorpN,d7
+		beq.s	.no
+		move.w	d7,morphLnN
+		moveq	#morphTorpN,d6		; (those gone already: the first ones)
+		sub.w	d7,d6
+		move.w	morphPhT+2*SP_BREAK,d5	; this one's hit (frame)
+		add.w	#morphBreakLead-1,d5
+		move.w	d6,d0
+		mulu	#morphTorpGap,d0
+		add.w	d0,d5
+		lsl.w	#2,d6
+		lea		morphTorpAim,a2
+		add.w	d6,a2
+		lea		morphPTorps,a0
+		lea		morphLnT,a1
+		subq.w	#1,d7
+.t:		move.l	(a0),(a1)+			; where it is now, where it goes, when
+		move.l	(a2)+,(a1)+
+		move.w	d5,(a1)+
+		moveq	#2,d0				; (its blob: R 1, 2 if it was bigger)
+		cmp.b	#2,4(a0)
+		blo.s	.r
+		moveq	#3,d0
+.r:		move.w	d0,(a1)+
+		add.w	#morphTorpGap,d5
+		addq.l	#8,a0
+		dbf		d7,.t
+		move.w	morphPlayN,morphLnS
+		clr.w	morphLnV			; its engine, as it is heard now (it
+		tst.b	sfxDroneOn+1		; dies away as it flies on: morphLnFrame)
+		beq.s	.e
+		move.w	sfxDroneVol+2,morphLnV
+		move.w	sfxDronePer+2,morphLnP
+.e:		st		morphLean
+.no:	rts
+
+; a frame of the torpedoes alone: on their straight ways (morphPTorps, as
+; the record had them: a gone one's place kept, not burning - no blob);
+; the fighter's engine far behind us dies away (its volume * 512 / (512 +
+; frames), as the record had it: further and further off), on 3 as well
+; while it is loud enough (as morphPlayFrame)
+morphLnFrame:
+		lea		sfxDroneOn,a2
+		sf		1(a2)
+		sf		3(a2)
+		move.w	morphPlayN,d0
+		sub.w	morphLnS,d0
+		add.w	#512,d0
+		move.w	morphLnV,d1
+		mulu	#512,d1
+		divu	d0,d1
+		cmp.w	#2,d1
+		blo.s	.q
+		move.w	d1,sfxDroneVol+2
+		move.w	morphLnP,d0
+		move.w	d0,sfxDronePer+2
+		st		1(a2)
+		tst.b	sfxEng3
+		beq.s	.s9
+		cmp.w	#morphSnd2V*3/4,d1
+		blo.s	.q
+		move.w	d1,sfxDroneVol+6
+		move.w	d0,d1
+		lsr.w	#6,d1
+		add.w	d1,d0
+		move.w	d0,sfxDronePer+6
+		st		3(a2)
+		bra.s	.s9
+.q:		sf		sfxEng3
+.s9:	sf		morphPGlow
+		sf		morphPShip
+		move.w	morphPlayN,d4		; (this frame)
+		addq.w	#1,morphPlayN
+		lea		morphLnT,a1
+		lea		morphPTorps,a0
+		moveq	#0,d7				; (on their way still)
+		move.w	morphLnN,d6
+		subq.w	#1,d6
+.t:		move.w	8(a1),d3			; there: gone
+		cmp.w	d3,d4
+		bhs.s	.gone
+		move.w	d4,d0				; t / T of its way
+		sub.w	morphLnS,d0
+		sub.w	morphLnS,d3
+		move.w	4(a1),d1
+		sub.w	(a1),d1
+		muls	d0,d1
+		divs	d3,d1
+		add.w	(a1),d1
+		move.w	d1,(a0)+
+		move.w	6(a1),d1
+		sub.w	2(a1),d1
+		muls	d0,d1
+		divs	d3,d1
+		add.w	2(a1),d1
+		move.w	d1,(a0)+
+		move.b	11(a1),(a0)+
+		move.b	#1<<TF_BURN,(a0)+
+		clr.w	(a0)+
+		addq.w	#1,d7
+		bra.s	.n
+.gone:	clr.l	4(a0)
+		addq.l	#8,a0
+.n:		lea		12(a1),a1
+		dbf		d6,.t
+		tst.w	d7
+		bne.s	.on
+		move.b	#MP_GONE,morphPhase	; all there: as the record's end
+		clr.w	morphPT
+		clr.w	morphPTorpN
+		st		morphRecFree
+.on:	rts
+	endc
 
 ;---------------------------------------------
 ; obj_move comes here for the ship while morphOn is set: a0 the ship, a5
@@ -907,8 +1622,12 @@ morphDraw:
 ; the edges whose faces are seen (d5 the faces' bits) into the table at a6:
 ; a1 the points, a3 morphEM, a4 morphEdges, d7 edges-1
 morphEdgeLines:
+		movem.l	a0/a2,-(a7)
+		move.w	d5,a0				; (the faces, the count: in a0, a2 - set_line
+		move.w	d7,a2				; keeps them, no saving them a line)
 .k:		move.w	(a3)+,d0
-		and.w	d5,d0
+		move.w	a0,d1
+		and.w	d1,d0
 		beq.s	.kn
 		moveq	#0,d0
 		move.b	(a4),d0
@@ -916,16 +1635,21 @@ morphEdgeLines:
 		move.b	1(a4),d2
 		movem.w	(a1,d0.w),d0/d1
 		movem.w	(a1,d2.w),d2/d3
-		movem.w	d5/d7,-(a7)
-		jsr		set_line			; (keeps a1-a4)
-		movem.w	(a7)+,d5/d7
+		jsr		set_line			; (keeps a0-a4)
 .kn:	addq.l	#me_len,a4
-		dbf		d7,.k
+		subq.w	#1,a2
+		move.w	a2,d0
+		bpl.s	.k
+		movem.l	(a7)+,a0/a2
 		rts
 
 ; the play's picture: the torpedoes, the glow, the ship
 morphPlayDraw:
 		bsr		morphSprFrame		; (the glows: sprites)
+	ifne	showdownLean
+		tst.b	morphLean			; (the torpedoes alone: blobs, no lines)
+		bne.s	.none
+	endc
 		bsr		morphPTorpDraw
 		tst.b	morphPShip
 		beq.s	.none
@@ -937,6 +1661,12 @@ morphPlayDraw:
 		move.w	morphPMask,d5
 		moveq	#morphNE-1,d7
 		bsr		morphEdgeLines
+	ifne	ENC_HATN
+		tst.b	morphPHatOn			; the bay's doors (cine.i)
+		beq.s	.nh
+		jsr		morphHatDraw
+.nh:
+	endc
 	ifne	AB_DEBUG
 		tst.b	morphChDbg			; (the thrust axis: the plate's middle to
 		beq.s	.nd					; the flame's tip)
@@ -969,7 +1699,259 @@ morphPlayDraw:
 ;   torpedoes about: 0, 1, 2 their glows (once they burn), 3 the ship's
 ;     small flame - over morphTm frames the chain fades out of 0..2 into
 ;     that (and the colours go over), and back once they are gone
+;   (switches.i escortMux) the chain stays all the time, and a torpedo's
+;     glow (abImg as well, the chain's flicker, its colours) goes into a
+;     sprite of it above or below the chain's glow there - multiplexed: the
+;     sim (simTorps) keeps them clear of each other (morphMxSpr)
 ; keeps all
+	ifne	escortMux
+morphSprFrame:
+	ifne	sprTest
+		rts
+	endc
+		movem.l	d0-d7/a0-a6,-(a7)
+		addq.b	#1,morphFrame
+		not.b	morphSprB
+		lea		morphSprBuf,a2
+		tst.b	morphSprB
+		beq.s	.b0
+		lea		4*MSPR_LEN(a2),a2
+.b0:
+	ifne	showdownLean
+		tst.b	morphLean			; (the ship gone: the torpedoes' blobs
+		bne		.lean				; alone)
+	endc
+		bsr		morphFlRand			; (the flicker's numbers)
+		bsr		morphFlGeo
+		move.w	morphFlBoost,d0		; the ignition's overshoot dies away
+		move.w	d0,d1
+		lsr.w	#3,d1
+		addq.w	#1,d1
+		sub.w	d1,d0
+		bpl.s	.bo
+		moveq	#0,d0
+.bo:	move.w	d0,morphFlBoost
+		bsr		morphChain
+	ifne	launchSeq
+		lea		elSpr,a3			; 0..3: the chain's glows
+		moveq	#0,d7
+.cs:	bsr		morphChGeo
+		tst.w	d5
+		beq.s	.cn
+		moveq	#4,d4
+		moveq	#0,d3
+		bsr		morphSprPut
+		bra.s	.cp
+.cn:	move.l	#s3Null,d0
+.cp:	bsr		morphSprPtr
+		lea		MSPR1(a2),a2
+		addq.w	#1,d7
+		cmp.w	#4,d7
+		blo.s	.cs
+		lea		morphPTorps,a4		; 4..6: a torpedo's each (the chain's
+		moveq	#0,d7				; blobs, flicker, colours)
+.ts:	bsr		morphMxTGeo
+		tst.w	d5
+		beq.s	.tn
+		moveq	#4,d4
+		moveq	#0,d3
+		bsr		morphSprPut
+		bra.s	.tp
+.tn:	move.l	#s3Null,d0
+.tp:	bsr		morphSprPtr
+		lea		MSPR1(a2),a2
+		addq.l	#8,a4
+		addq.w	#1,d7
+		cmp.w	#3,d7
+		blo.s	.ts
+		lea		morphColAb,a0		; (their colours 25-27, 29-31: the
+		lea		elSprCol+2+8*4,a4	; afterburner's)
+		move.w	(a0),(a4)
+		move.w	2(a0),4(a4)
+		move.w	4(a0),8(a4)
+		move.w	(a0),16(a4)
+		move.w	2(a0),20(a4)
+		move.w	4(a0),24(a4)
+		move.w	#morphLsCol,d0		; a torpedo out: the fighter's lines
+		tst.b	morphLsFl			; flash (colours 8-15)
+		beq.s	.lc
+		subq.b	#1,morphLsFl
+		move.w	#morphLsFlC,d0
+.lc:	lea		elCol0+28+2,a4
+		moveq	#8-1,d7
+.lc1:	move.w	d0,(a4)
+		addq.l	#4,a4
+		dbf		d7,.lc1
+	else
+		lea		elSpr,a3			; 0..3: the chain's glows, 0..2 a
+		lea		morphPTorps,a4		; torpedo's as well
+		moveq	#0,d7
+.s:		bsr		morphMxSpr
+		bsr		morphSprPtr
+		lea		MSPR_LEN(a2),a2
+		addq.l	#8,a4
+		addq.w	#1,d7
+		cmp.w	#4,d7
+		blo.s	.s
+	endc
+		lea		morphColAb,a0		; the colours 17-19, 21-23: the
+		lea		elSprCol+2,a4		; afterburner's
+		moveq	#7-1,d7
+.ca:	move.w	(a0)+,(a4)
+		addq.l	#4,a4
+		dbf		d7,.ca
+		tst.b	morphFlash			; (it fires: white hot, a frame or two)
+		beq.s	.out
+		subq.b	#1,morphFlash
+		lea		elSprCol+2,a4
+		move.w	#$0fff,4(a4)
+		move.w	#$0fff,8(a4)
+.out:	movem.l	(a7)+,d0-d7/a0-a6
+		rts
+	ifne	showdownLean
+.lean:	lea		elSpr,a3			; 0..2: a torpedo's blob, nothing else
+		lea		morphPTorps,a4
+		moveq	#0,d7
+.ls:	bsr		morphMxTGeo
+		tst.w	d5
+		beq.s	.ln
+		moveq	#4,d4
+		moveq	#0,d3
+		bsr		morphSprPut
+		bra.s	.lp
+.ln:	move.l	#s3Null,d0
+.lp:	bsr		morphSprPtr
+		lea		MSPR_LEN(a2),a2
+		addq.l	#8,a4
+		addq.w	#1,d7
+		cmp.w	#4,d7
+		blo.s	.ls
+	ifne	launchSeq
+		move.l	#s3Null,d0			; (4..6: none now)
+		bsr		morphSprPtr
+		bsr		morphSprPtr
+		bsr		morphSprPtr
+	endc
+		bra.s	.out
+	endc
+
+; sprite d7 (a2 its buffer, a4 the torpedo with it): the chain's glow and
+; the torpedo's, the higher one first, a line between them at least (the
+; sprite fetches the next one's control words there) - else the torpedo's
+; is left out (morphMxSkip: the sim keeps it 0) -> d0 = its pointer.
+; uses d0-d6/a0/a1
+morphMxSpr:
+		bsr		morphMxTGeo			; the torpedo's: d0/d1, a1, d5
+		movem.w	d0/d1/d5,morphMxT
+		move.l	a1,morphMxT+6
+		bsr		morphChGeo			; the chain's
+		tst.w	morphMxT+4
+		beq.s	.one				; (no torpedo's: the chain's alone)
+		tst.w	d5
+		bne.s	.two
+		movem.w	morphMxT,d0/d1/d5	; (no chain's: the torpedo's alone)
+		move.l	morphMxT+6,a1
+.one:	tst.w	d5
+		beq.s	.null
+		moveq	#4,d4
+		moveq	#0,d3
+		bra		morphSprPut
+.null:	move.l	#s3Null,d0
+		rts
+.two:	movem.w	d0/d1/d5,morphMxC	; both: the higher one first
+		move.l	a1,morphMxC+6
+		lea		morphMxC,a0
+		lea		morphMxT,a1
+		move.w	2(a1),d2
+		cmp.w	d1,d2
+		bge.s	.ord
+		exg		a0,a1
+.ord:	move.w	2(a0),d2			; the lower one a line below the higher
+		add.w	4(a0),d2			; one's end at least
+		cmp.w	2(a1),d2
+		blt.s	.fit
+		addq.w	#1,morphMxSkip		; (touching: the chain's alone)
+		movem.w	morphMxC,d0/d1/d5
+		move.l	morphMxC+6,a1
+		bra.s	.one
+.fit:	addq.w	#1,morphMxTwo
+		move.l	a1,-(a7)
+		movem.w	(a0),d0/d1/d5
+		move.l	6(a0),a1
+		moveq	#4,d4
+		moveq	#0,d3
+		bsr		morphSprPut			; (a0: its end now)
+		move.l	(a7)+,a1
+		cmp.l	#s3Null,d0
+		beq.s	.lo					; (the higher one off the screen)
+		move.l	d0,-(a7)
+		move.l	a2,-(a7)
+		move.l	a0,a2				; the lower one after it
+		movem.w	(a1),d0/d1/d5
+		move.l	6(a1),a1
+		bsr		morphSprPut
+		move.l	(a7)+,a2
+		move.l	(a7)+,d0
+		rts
+.lo:	movem.w	(a1),d0/d1/d5
+		move.l	6(a1),a1
+		bra		morphSprPut
+morphMxT:	ds.w	5			; (morphMxSpr) the torpedo's: left, top, rows,
+morphMxC:	ds.w	5			; its first row; the chain's
+
+; a4 = the torpedo with sprite d7 (morphPTorps) -> its glow: d0/d1 = its
+; left, top, a1 = its first row (abImg: the nozzle's kind, the chain's frame
+; and flicker for that glow), d5 = rows (0: none - not burning, left out by
+; the sim, flickered off). uses d2/d6/a1
+morphMxTGeo:
+		moveq	#0,d5
+		cmp.w	morphPTorpN,d7
+		bhs.s	.no
+		move.b	5(a4),d2
+		btst	#TF_BURN,d2
+		beq.s	.no
+		btst	#TF_NOSPR,d2
+		bne.s	.no
+	ifne	AB_FLICK
+		moveq	#3,d6				; (the chain's flicker: its next glow's)
+		and.b	morphFrame,d6
+		lea		morphChFlk+1,a1
+		btst	d6,(a1,d7.w)
+		beq.s	.no
+	endc
+		moveq	#0,d6				; R: inside its diamond (the flash: bigger)
+		move.b	4(a4),d6
+		subq.w	#1,d6
+		btst	#TF_FLASH,d2
+		beq.s	.r0
+		addq.w	#4,d6
+.r0:	cmp.w	#1,d6
+		bge.s	.r1
+		moveq	#1,d6
+.r1:	cmp.w	#MSPR_RMAX,d6
+		ble.s	.r2
+		moveq	#MSPR_RMAX,d6
+.r2:	lea		morphChF,a1			; its rows: the nozzle's kind (0), the
+		moveq	#0,d2				; chain's frame for that glow, R
+		move.b	(a1,d7.w),d2
+		add.w	d2,d2
+		lea		morphChKf(pc),a1
+		move.w	(a1,d2.w),d2
+		move.w	d6,d5
+		add.w	d5,d5
+		lea		morphChRr-2(pc),a1
+		add.w	(a1,d5.w),d2
+		lea		abImg,a1
+		add.w	d2,a1
+		movem.w	(a4),d0/d1			; its middle -> its left, top
+		subq.w	#7,d0
+		sub.w	d6,d1
+		move.w	d6,d5
+		add.w	d5,d5
+		addq.w	#1,d5
+.no:	rts
+
+	else
 morphSprFrame:
 	ifne	sprTest
 		rts
@@ -1102,6 +2084,7 @@ morphColMix:
 		bne.s	.n
 		move.w	d4,d0
 		rts
+	endc
 
 ; the chain (no special cases): the tip = the plate's middle + its way out
 ; behind it (morphFlVX/VY: the nose to the plate on the screen) * f - f
@@ -1278,7 +2261,11 @@ morphChain:
 	ifne	AB_FLICK
 		move.b	morphFrame,d6
 		and.w	#3,d6
+	ifeq	escortMux
 		lea		.flk(pc),a3
+	else
+		lea		morphChFlk(pc),a3
+	endc
 		move.b	(a3,d7.w),d5
 		btst	d6,d5
 		seq		d6
@@ -1294,14 +2281,24 @@ morphChain:
 		rts
 .want:	ds.w	4
 .max:	dc.w	4*16,5*16,6*16,7*16	; (R * 16 at most: 4, 5, 6, 7)
+	ifeq	escortMux
 .flk:	dc.b	%1111,%0101,%0110,%1001	; (frame & 3 -> bit: shown)
+	else
+morphChFlk:	dc.b	%1111,%0101,%0110,%1001	; (frame & 3 -> bit: shown; the
+	endc								; torpedoes' glows too: morphMxTGeo)
 morphChC:	dc.b	0,1,0,2			; frames till a glow's next frame ...
 morphChF:	dc.b	0,1,2,3			; ... its frame now
 		even
 
+	ifeq	escortMux
 ; d7 = a glow of the chain (0..3): into the sprite at a2 -> d0 = its
 ; pointer (s3Null: none - too small, flickered off, off the screen)
 morphChPut:
+	else
+; d7 = a glow of the chain (0..3) -> d0/d1 = its left, top, a1 = its first
+; row, d5 = rows (0: none - too small, flickered off). uses d2/d3/d6/a0
+morphChGeo:
+	endc
 		move.w	d7,d0
 		lsl.w	#3,d0
 		lea		morphChP,a0
@@ -1324,11 +2321,19 @@ morphChPut:
 		lea		morphChF,a1
 		add.b	(a1,d7.w),d2
 		add.w	d2,d2
+	ifeq	escortMux
 		lea		.kf(pc),a1
+	else
+		lea		morphChKf(pc),a1
+	endc
 		move.w	(a1,d2.w),d2
 		move.w	d6,d3
 		add.w	d3,d3
+	ifeq	escortMux
 		lea		.rr-2(pc),a1
+	else
+		lea		morphChRr-2(pc),a1
+	endc
 		add.w	(a1,d3.w),d2
 		lea		abImg,a1
 		add.w	d2,a1
@@ -1338,23 +2343,38 @@ morphChPut:
 		move.w	d6,d5
 		add.w	d5,d5
 		addq.w	#1,d5
+	ifeq	escortMux
 		moveq	#4,d4
 		moveq	#0,d3
 		bra		morphSprPut
 .null:	move.l	#s3Null,d0
 		rts
+	else
+		rts
+.null:	moveq	#0,d5
+		rts
+	endc
+	ifeq	escortMux
 .kf:
+	else
+morphChKf:							; (the torpedoes' glows too)
+	endc
 MCHI	set		0
 	rept	4*4					; (a kind's frame: its first byte; abFrames 4)
 		dc.w	MCHI*63*4
 MCHI	set		MCHI+1
 	endr
+	ifeq	escortMux
 .rr:
+	else
+morphChRr:
+	endc
 MCHI	set		1
 	rept	MSPR_RMAX				; (R: its first row's byte)
 		dc.w	(MCHI*MCHI-1)*4
 MCHI	set		MCHI+1
 	endr
+	ifeq	escortMux
 ; d0/d1 = the middle, d6 = R (clamped to 1..MSPR_RMAX): a glow (morphSprImg)
 ; into the sprite at a2 -> d0 = its pointer
 morphGlowPut:
@@ -1378,6 +2398,7 @@ morphGlowPut:
 		add.w	d5,d5
 		addq.w	#1,d5
 		bra		morphSprPut
+	endc
 
 ; d0 = a sprite's pointer -> into elSpr at a3, a3 on to the next
 morphSprPtr:
@@ -1438,10 +2459,20 @@ morphSprPut:
 		bset	#0,d2
 .c2:	move.w	d2,2(a2)
 		lea		4(a2),a0
+	ifeq	escortMux
 		subq.w	#1,d5
 .r:		move.l	(a1),(a0)+
 		add.w	d4,a1
 		dbf		d5,.r
+	else
+		neg.w	d5					; (rows one after the other, 15 at most:
+		add.w	d5,d5				; into the run)
+		jmp		.r9(pc,d5.w)
+	rept	15
+		move.l	(a1)+,(a0)+
+	endr
+.r9:
+	endc
 		clr.l	(a0)
 		move.l	a2,d0
 		rts
@@ -1566,13 +2597,17 @@ morphFlRand:
 		rts
 morphFlRn:	dc.l	$6c8e9cf5
 
+	ifeq	escortMux
 ; the sprite colours 17..31: the torpedoes' (17-19, 21-23: rim, middle,
 ; core) ...
 morphColTorp:	dc.w	$0a20,$0f60,$0ffe,0,$0a20,$0f60,$0ffe,0,0,0,0,0,0,0,0
+	endc
 ; ... the afterburner's (17-19: white, light yellow, yellow - glows 0, 1;
 ; 21-23: orange, red, dark red - glows 2, 3)
 morphColAb:		dc.w	$0fff,$0ffb,$0fe4,0,$0f80,$0e30,$0810
 
+	ifeq	escortMux				; (escortMux: none - the torpedoes' glows
+									; are abImg's, no small flame)
 ; once (morphInit): the glows' rows - the torpedoes' and the small flame's
 ; (rim, middle, core: 1, 2, 3) by the distance from the middle. (the
 ; afterburner's: abgen.py -> abflame.i)
@@ -1640,6 +2675,7 @@ morphSqD:
 		add.l	d4,d2
 		move.w	(a7)+,d4
 		rts
+	endc
 
 ; the torpedoes into the draw table: a plasma ball - a diamond that
 ; twinkles, its size by its distance - then a spark, then a dot; and its
@@ -2212,7 +3248,9 @@ morphLine:
 ; of a unit apart (4.12) - no division a point once the ship is unfolded
 morphInit:
 		jsr		s3Init				; (stars3d.i: its tables)
+	ifeq	escortMux
 		bsr		morphSprMake		; (the torpedoes' glows)
+	endc
 		lea		morphRcp,a0
 		moveq	#0,d1
 .r:		move.w	d1,d2
@@ -2323,6 +3361,9 @@ simEvHr:		dc.w	0		; ... what it had of a heading (dying away)
 simJkT:			dc.w	0		; (the pass) frames into its swerves, + 1
 simSpK:			dc.w	morphSpK	; the spring its place follows (simSpringP)
 simSpD:			dc.w	morphSpD
+	ifne	launchSeq
+simLsMH:		dc.w	0		; (MV_AIM) its nose's correction, softly
+	endc
 simJX:			dc.w	0		; ... its offset (1/16 units)
 simJY:			dc.w	0
 simRnd:			dc.l	$2545f491	; its own random numbers: the same flight always
@@ -2422,6 +3463,19 @@ morphSimInit::
 		sf		morphPShip
 		sf		morphPark
 		move.w	#256,morphVz
+	ifne	recV2
+		clr.w	encHead				; (the encoding: an empty ring, the first
+		clr.w	encCount			; frame as it is)
+		clr.w	encR
+		clr.w	encK
+		st		encComp
+		sf		encFlush
+		st		encMaskF
+		st		encTatF
+		clr.w	rpR
+		clr.w	rpN
+		sf		rpComp
+	endc
 		st		morphSimOn
 		movem.l	(a7)+,d0-d1/a0
 .out:	rts
@@ -2482,7 +3536,17 @@ morphSimStep:
 		jmp		.tab(pc,d0.w)
 .tab:	dc.w	.s0-.tab,.s1-.tab,.s2-.tab,.s3-.tab,.s4-.tab,.s5-.tab
 		dc.w	.s6-.tab
-.s0:	bsr		morphSimTick
+	ifne	recV2
+		dc.w	.s7-.tab,.s8-.tab,.s9-.tab
+	endc
+.s0:
+	ifne	recV2
+		tst.b	encFlush			; (the last frame taken: only the writing)
+		beq.s	.s0t
+		bra.s	.s9
+.s0t:
+	endc
+		bsr		morphSimTick
 		rts
 .s1:	tst.b	simHidden
 		bne.s	.skip
@@ -2502,9 +3566,28 @@ morphSimStep:
 		bne.s	.skip
 		bsr		morphFaceVis
 		rts
+	ifne	recV2
+.s6:
+	ifne	cineFight
+		jsr		cineHatPts			; (the bay's doors)
+	endc
+		rts
+.s7:	jsr		simCapture			; (into the ring)
+		rts
+.s8:	jsr		simCapTorps
+		rts
+.s9:	jsr		simEncStep			; (the ring's oldest out) d0 = 0: again
+		tst.w	d0
+		bne.s	.s9d
+		move.w	#9,morphSimStepN
+		rts
+.s9d:	clr.w	morphSimStepN
+		rts
+	else
 .s6:	clr.w	morphSimStepN
 		bsr		simEncode
 		rts
+	endc
 .skip:	rts
 
 ; the points, quicker (the sim): the fighter is the same left and right,
@@ -2516,6 +3599,8 @@ morphPtsF:
 		mulu	#10,d6
 		lea		morphPF,a1
 		add.w	d6,a1
+; (the same from a1 on: a table of pairs as morphPF's)
+morphPtsFa:
 .e:		movem.w	(a1)+,d0-d2			; x, y, z (1/16 units)
 		lea		morphM,a3
 		move.w	(a3),d3				; A = x col0 + z col2
@@ -3165,6 +4250,9 @@ simLoop:
 ;     faster than we are,
 ;     slowing down to our speed ahead of us; we speed up with it
 simEntry:
+	ifne	cineFight			; (cine.i: as a real jet)
+		jmp		cineEntry
+	endc
 		move.w	simPT,d0
 		addq.w	#1,d0
 		move.w	#morphEntryT,d1
@@ -3199,6 +4287,17 @@ simEntry:
 		bsr.s	.mul
 		add.l	#morphEZ0<<8,d2
 		move.l	d2,simZ
+	ifne	escortMux*(1-launchSeq)
+		move.w	morphTorpNext,d0	; the torpedoes go, still high up
+		cmp.w	#morphTorpN,d0
+		bhs.s	.nt
+		mulu	#morphMxDropGap,d0
+		add.w	#morphMxDrop0,d0
+		cmp.w	simPT,d0
+		bne.s	.nt
+		bsr		morphTorpFire
+.nt:
+	endc
 		; rolling out of its loop
 		move.w	#-morphAtkRoll*16,d0
 		move.w	#256,d1
@@ -3244,6 +4343,20 @@ simEntry:
 
 ; --- the escort: the torpedoes go, it flies ahead of us (morphEscList)
 simEscort:
+	ifne	cineFight			; (cine.i: as a real jet)
+		jmp		cineEscort
+	endc
+	ifne	launchSeq				; (launchSeq: out of its top, a beat apart)
+		move.w	morphTorpNext,d0
+		cmp.w	#morphTorpN,d0
+		bhs.s	.t
+		mulu	#morphBeat,d0
+		add.w	#morphLsEj0,d0
+		cmp.w	simPT,d0
+		bne.s	.t
+		bsr		morphTorpFire
+	endc
+	ifeq	escortMux				; (escortMux: they went in the entry)
 		move.w	morphTorpNext,d0	; a torpedo every morphTorpGap frames
 		cmp.w	#morphTorpN,d0
 		bhs.s	.t
@@ -3251,6 +4364,7 @@ simEscort:
 		cmp.w	simPT,d0
 		bne.s	.t
 		bsr		morphTorpFire
+	endc
 .t:		bsr		simBlock
 		move.w	#morphEX1,d0
 		move.w	#morphEY1,d1
@@ -3270,6 +4384,9 @@ simEscort:
 ; --- the break: like a fighter it turns hard to the right, down and
 ;     round - past us on the lower right and away behind us
 simBreak:
+	ifne	cineFight			; (cine.i: as a real jet)
+		jmp		cineBreak
+	endc
 		tst.w	simPT
 		bne.s	.b
 		or.w	#1<<RB_BOOM,simEv
@@ -3379,9 +4496,17 @@ simEndP:
 ; the springs pull it there, plus a block's offset and the pilot's
 ; corrections
 simTargets:
+	ifne	launchSeq
+		cmp.w	#SP_ESCORT,simPhase	; (the escort: no small corrections - a
+		bne.s	.j					; heavy ship, steady)
+		clr.l	simJX
+		bra.s	.j9
+.j:
+	endc
 		movem.w	d0-d2,-(a7)
 		bsr		simJitter
 		movem.w	(a7)+,d0-d2
+.j9:
 		add.w	simMX,d0
 		add.w	simJX,d0
 		add.w	simBX,d0
@@ -3597,6 +4722,9 @@ simBlock:
 		dc.w	mvTurnTo-.tab,mvFish-.tab,mvBarrel-.tab,mvBack-.tab
 		dc.w	mvKnife-.tab,mvHold-.tab,mvVRoll-.tab,mvSalute-.tab
 		dc.w	mvMove-.tab,mvClimb-.tab,mvWeave-.tab
+	ifne	launchSeq
+		dc.w	mvArc-.tab,mvAim-.tab
+	endc
 
 ; d0 = frames in, d1 = frames -> d5 = the smoothstep of (d0+1)/d1 (0..4096,
 ; fine: no steps from a table). keeps d0/d1
@@ -3725,6 +4853,9 @@ mvFeint:
 ; --- hard round to a heading: a spring (it overshoots a little, then it
 ;     sits), banked into the turn by how fast it turns
 mvTurnTo:
+	ifne	fixQmarks				; (not in the lists: room for asteroids.s
+		rts							; seq_qfire - the total must not grow)
+	else
 		tst.w	d0
 		bne.s	.t
 		move.w	simHead,d2
@@ -3754,11 +4885,15 @@ mvTurnTo:
 .b1:	neg.w	d0
 		move.w	d0,simRoll
 		rts
+	endc
 
 ; --- fishtail: it swings from side to side, a human hand on it - the
 ;     swings not quite even, the yaw kicked in with each, the spring's
 ;     overshoot and catch
 mvFish:
+	ifne	fixQmarks				; (not in the lists either)
+		rts
+	else
 		tst.w	d0
 		bne.s	.f
 		move.w	#1,simFishS
@@ -3791,6 +4926,7 @@ mvFish:
 		add.w	d0,simFishH
 		move.w	simFishH,simMH
 		rts
+	endc
 
 ; --- barrel roll: a full roll and a circle round its way
 mvBarrel:
@@ -3965,6 +5101,96 @@ simWave2:
 		move.l	(a7)+,d1
 		rts
 
+	ifne	launchSeq
+; --- (launchSeq) a big arc, eased in and out (the smoothstep's round):
+;     across p1 and back (sin), up p2 and down again ((1 - cos) / 2),
+;     banked into it (the bank simFly gives it, and morphLsBank more), the
+;     thrust up with the climb
+mvArc:
+		bsr		simU
+		move.w	d5,d0
+		mulu	#360*16,d0
+		lsr.l	#8,d0
+		lsr.l	#4,d0				; the round so far
+		bsr		morphSinCos16		; d0 sin, d1 cos
+		move.w	4(a2),d2
+		lsl.w	#4,d2
+		muls	d0,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,simMX			; across
+		asr.w	#1,d1				; ((cos - 1) / 2)
+		sub.w	#16384,d1
+		move.w	6(a2),d2
+		lsl.w	#4,d2
+		muls	d1,d2
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,simMY			; up (-)
+		move.w	d0,d2				; banked into it (turning right: the
+		muls	#morphLsBank*16,d2	; right wing down, -)
+		add.l	d2,d2
+		swap	d2
+		move.w	d2,simMR
+		muls	#48,d0				; the thrust with the climb
+		add.l	d0,d0
+		swap	d0
+		add.w	simThrT,d0
+		cmp.w	#256,d0
+		bls.s	.t0
+		move.w	#256,d0
+.t0:	move.w	d0,simThrT
+		rts
+
+; --- (launchSeq) it lines up: its escort place across to p1 (from where it
+;     is: past it by half the way, back short of it by a quarter, then
+;     there - a third of the block each, eased; the spring, stiffer and
+;     less damped meanwhile, swings and settles), the nose p2 degrees one
+;     way, half the other, straight
+mvAim:
+		tst.w	d0
+		bne.s	.a
+		move.w	simBX,simA0
+		clr.w	simLsMH
+		move.w	#morphLsAimK,simSpK
+		move.w	#morphLsAimD,simSpD
+.a:		move.w	d0,d2				; the third
+		mulu	#3,d2
+		divu	d1,d2
+		move.w	4(a2),d3			; there
+		lsl.w	#4,d3
+		move.w	d3,d4
+		sub.w	simA0,d4			; (the way)
+		move.w	6(a2),d5			; the nose
+		lsl.w	#4,d5
+		tst.w	d2
+		bne.s	.q1
+		asr.w	#1,d4				; past it
+		add.w	d4,d3
+		bra.s	.q9
+.q1:	neg.w	d5
+		asr.w	#1,d5
+		cmp.w	#1,d2
+		bne.s	.q2
+		asr.w	#2,d4				; short of it
+		sub.w	d4,d3
+		bra.s	.q9
+.q2:	moveq	#0,d5
+.q9:	sub.w	simBX,d3			; (eased: an eighth a frame)
+		asr.w	#3,d3
+		add.w	d3,simBX
+		sub.w	simLsMH,d5
+		asr.w	#3,d5
+		add.w	d5,simLsMH
+		move.w	simLsMH,simMH
+		addq.w	#1,d0				; the last frame: the spring as it was
+		cmp.w	d1,d0
+		bne.s	.o
+		move.w	#morphSpK2,simSpK
+		move.w	#morphSpD2,simSpD
+.o:		rts
+	endc
+
 ; --- its place in the escort from here on (the springs follow)
 mvMove:
 		tst.w	d0
@@ -4007,11 +5233,30 @@ morphTorpFire:
 		add.w	d0,a1
 		move.w	#1,tp_age(a1)
 		clr.w	tp_burn(a1)
+	ifne	launchSeq
+		move.w	d2,d0				; its hit: as it was
+		mulu	#morphLsHitStep,d0
+		add.w	#morphLsHit0,d0
+		move.w	d0,tp_hit(a1)
+	else
+	ifne	escortMux
+		move.w	d2,d0				; its hit: where it was (each a beat later)
+		mulu	#morphMxHitStep,d0
+		add.w	#morphTorpHitAge,d0
+		move.w	d0,tp_hit(a1)
+	endc
+	endc
 		move.l	simX,d0				; (1/4096 -> 1/256 units)
 		asr.l	#4,d0
 		move.l	d0,tp_x(a1)
 		move.l	simY,d0
+	ifne	launchSeq
+		sub.l	#morphLsTop<<8,d0	; (out of its top)
+		add.l	#morphLsKickY,simVY	; the fighter kicks back (its springs)
+		add.l	#morphLsKickZ,simVZ
+	else
 		add.l	#morphTorpBelow<<8,d0
+	endc
 		asr.l	#4,d0
 		move.l	d0,tp_y(a1)
 		move.l	simZ,d0
@@ -4031,7 +5276,15 @@ morphTorpFire:
 		divs	#morphF,d0
 		move.w	d0,tp_ky(a1)
 		move.l	(a2,d2.w),tp_ax(a1)	; (its aim on the screen too)
+	ifne	launchSeq
+		move.w	#-morphLsPopV,tp_fv(a1)	; (it jumps up)
+	else
+	ifeq	escortMux
 		move.w	#morphTorpDropV,tp_fv(a1)
+	else
+		move.w	#morphMxDropV,tp_fv(a1)
+	endc
+	endc
 		or.w	#1<<RB_DROP,simEv
 		rts
 
@@ -4042,11 +5295,51 @@ morphTorpMove:
 .t:		move.w	tp_age(a1),d0
 		ble.s	.n
 		addq.w	#1,tp_age(a1)
+	ifne	cineFight
+		tst.w	tp_lift(a1)			; (on the lift in the bay: with the ship)
+		beq.s	.free
+		movem.l	d7/a1,-(a7)
+		jsr		cineTorpCarry
+		movem.l	(a7)+,d7/a1
+		bra		.n
+.free:
+	endc
 		move.w	tp_fv(a1),d1		; falling out (once it burns: its fall
 		ext.l	d1					; dies away)
 		add.l	d1,tp_y(a1)
 		tst.w	tp_burn(a1)
 		bne.s	.burn
+	ifne	launchSeq
+		move.w	tp_fv(a1),d2		; its jump dies away (3/16 a frame): it
+		asr.w	#3,d2				; glides on, cold
+		move.w	d2,d3
+		asr.w	#1,d3
+		add.w	d3,d2
+		sub.w	d2,tp_fv(a1)
+	ifne	cineFight
+		cmp.w	#CT_LIFT+CT_GLIDE,d0	; (cine.i: off the lift, glided)
+	else
+		cmp.w	#morphLsIgnT,d0		; clear of the ship: its engine fires
+	endc
+		blo		.n
+		bra.s	.fire
+	endc
+	ifne	escortMux
+		addq.w	#morphMxDropG,tp_fv(a1)
+		cmp.w	#morphMxFireT1,d0	; its engine fires: the fighter (its
+		bhs.s	.late				; afterburner) safely below it, or late
+		cmp.w	#morphTorpDropT0,d0	; anyway
+		blo.s	.n
+		bsr		simMxTorpLo
+		cmp.w	simMxTop,d3
+		bgt.s	.n
+		bra.s	.fire
+.late:	bsr		simMxTorpLo
+		cmp.w	simMxTop,d3
+		ble.s	.fire
+		addq.w	#1,simMxLate
+		bra.s	.fire
+	else
 		addq.w	#morphTorpDropG,tp_fv(a1)
 		cmp.w	#morphTorpDropT1,d0	; its engine fires: far enough from the
 		bhs.s	.fire				; ship (it maneuvers), or late anyway
@@ -4066,11 +5359,20 @@ morphTorpMove:
 		add.l	d2,d4
 		cmp.l	#morphTorpFireD<<8,d4
 		blo.s	.n
+	endc
 .fire:	or.w	#1<<RB_IGN,simEv
 .burn:	addq.w	#1,tp_burn(a1)
 		asr.w	#3,d1
 		sub.w	d1,tp_fv(a1)
+	ifne	launchSeq
+	ifne	cineFight
+		add.l	#CT_ACC,tp_vz(a1)	; (cine.i: a rocket)
+	else
+		add.l	#morphLsAcc,tp_vz(a1)
+	endc
+	else
 		add.l	#morphTorpAcc,tp_vz(a1)
+	endc
 		move.l	tp_vz(a1),d0
 		add.l	d0,tp_z(a1)
 		move.w	d0,d1				; (the way ahead this frame, a word)
@@ -4082,19 +5384,112 @@ morphTorpMove:
 		asr.l	#8,d1
 		asr.l	#4,d1
 		add.l	d1,tp_y(a1)
+	ifeq	escortMux
 		cmp.w	#morphTorpHitAge,tp_age(a1)
 		blo.s	.n
+	else
+		move.w	tp_age(a1),d0
+		cmp.w	tp_hit(a1),d0
+		blo.s	.n
+	endc
 		move.w	#-1,tp_age(a1)		; there (the hits: the next scene)
 		subq.w	#1,morphTorpLeft
 .n:		lea		tp_len(a1),a1
 		dbf		d7,.t
 		rts
+	ifeq	escortMux
 ; d2 = the torpedo's (1/256 units), d3 = the ship's (1/4096) -> d2 = |d2-d3|
 .d:		asr.l	#4,d3
 		sub.l	d3,d2
 		bpl.s	.d0
 		neg.l	d2
 .d0:	rts
+	else
+; a1 = a torpedo -> d3 = the row below its glow at its biggest, and the
+; gaps ($7fff: not ahead of us). keeps the rest
+simMxTorpLo:
+		movem.l	d4/d5,-(a7)
+		move.l	tp_z(a1),d5
+		move.l	tp_y(a1),d4
+.sh:	cmp.l	#32000,d5
+		blt.s	.s0
+		asr.l	#1,d5
+		asr.l	#1,d4
+		bra.s	.sh
+.s0:	move.w	#$7fff,d3
+		tst.l	d5
+		ble.s	.o
+		muls	#morphF,d4
+		divs	d5,d4
+		move.w	d4,d3
+		add.w	#morphVY+MSPR_RMAX+2+morphMxGap,d3
+.o:		movem.l	(a7)+,d4/d5
+		rts
+
+; the afterburner's rows on the screen, about (simEncode, d7 its flags:
+; the points this frame): each glow of the chain somewhere on the way out
+; from the plate's middle (morphChain: 1/8, 3/8, 11/16, all of it - times
+; f, 0.25 .. 1.15), its size round that -> simMxR (a glow's top, bottom),
+; all of them simMxTop..simMxBot. kept on for a while once it is gone (its
+; glows die away). uses d0-d6/a1/a2
+simMxRange:
+		moveq	#RF_MODE,d0
+		and.w	d7,d0
+		beq.s	.old
+		btst	#RB_GLOW,d7
+		beq.s	.old
+		lea		morphXY+7*4,a1		; the plate's middle (y, * 4)
+		move.w	2(a1),d1
+		add.w	6(a1),d1
+		add.w	10(a1),d1
+		add.w	14(a1),d1
+		asr.w	#2,d1
+		move.w	d1,d2				; the way: the middle - the nose
+		sub.w	morphXY+2,d2
+		lea		simMxR,a1
+		move.l	#$7fff8000,simMxTop
+		lea		.c(pc),a2
+		moveq	#4-1,d6
+.g:		move.w	(a2)+,d3			; (its share of the way, 1/16)
+		muls	d2,d3
+		move.l	d3,d4
+		muls	#65,d3				; f at its least ...
+		asr.l	#8,d3
+		asr.l	#4,d3
+		muls	#295,d4				; ... and most (* 256)
+		asr.l	#8,d4
+		asr.l	#4,d4
+		add.w	d1,d3
+		add.w	d1,d4
+		cmp.w	d3,d4
+		bge.s	.o0
+		exg		d3,d4
+.o0:	sub.w	#MSPR_RMAX+1,d3		; (the glows: R 7 at most)
+		add.w	#MSPR_RMAX+1,d4
+		move.w	d3,(a1)+
+		move.w	d4,(a1)+
+		cmp.w	simMxTop,d3
+		bge.s	.o1
+		move.w	d3,simMxTop
+.o1:	cmp.w	simMxBot,d4
+		ble.s	.o2
+		move.w	d4,simMxBot
+.o2:	dbf		d6,.g
+		move.w	#24,simMxHold		; (the glows' sizes follow softly)
+		rts
+.old:	tst.w	simMxHold
+		beq.s	.none
+		subq.w	#1,simMxHold
+		rts
+.none:	move.l	#$7fff8000,d0
+		move.l	d0,simMxTop
+		lea		simMxR,a1
+		moveq	#4-1,d6
+.n:		move.l	d0,(a1)+
+		dbf		d6,.n
+		rts
+.c:		dc.w	2,6,11,16
+	endc
 
 ;---------------------------------------------
 ; the sound: the fighter's engine (music.s drone on channel 1, the music's
@@ -4238,6 +5633,572 @@ simSound:
 		move.w	#1000,d0
 .p1:	rts
 
+	ifne	recV2
+		section "morphcode",data	; (CPU only: any memory; "data", so vlink does not put it first - DOS starts at the first hunk)
+;---------------------------------------------
+; (switches.i recV2) the frame as the sim made it into the encoding's ring
+; (it looks ahead: simEncStep writes the oldest once the ring is full)
+simCapture:
+		move.w	encCount,d0
+		bsr		encSlot
+		move.l	a1,a4
+		moveq	#0,d6				; (the composition)
+		lea		fs_vec(a4),a1
+		move.w	simVz,(a1)+			; the stars' speed
+		move.w	simSnd1V,d0			; the engine
+		cmp.w	#2,d0
+		blo.s	.n1
+		bset	#RC_S1,d6
+		move.w	d0,(a1)+
+		move.w	simSnd1P,(a1)+
+.n1:	move.w	simSnd3V,d0			; a hiss
+		beq.s	.n3
+		bset	#RC_S3,d6
+		move.w	d0,(a1)+
+		move.w	simSnd3P,(a1)+
+.n3:	; the ship: not drawn, or all of it off the screen, or too near
+		sf		fs_glow(a4)
+		clr.w	fs_mask(a4)
+		tst.b	simHidden
+		bne.s	.noShip
+		tst.b	morphClip
+		bne.s	.gone
+		moveq	#$f,d0				; (the sides all its points are off)
+		and.b	morphOutAnd,d0
+		beq.s	.on
+.gone:	cmp.w	#SP_PASS,simPhase	; (gone past us in the pass)
+		bne.s	.noShip
+		st		simGone
+		bra.s	.noShip
+.on:	bset	#RC_VIS,d6
+		move.w	morphFMask,d0
+		move.w	d0,fs_mask(a4)
+		tst.b	simEngine			; the engine burning, its plate seen: the
+		beq.s	.m0					; glow
+		btst	#6,d0
+		beq.s	.m0
+		st		fs_glow(a4)
+.m0:	lea		morphXY,a2
+		moveq	#2*morphNP-1,d0
+.p:		move.w	(a2)+,(a1)+
+		dbf		d0,.p
+		bsr		simGlowRT
+		move.w	d0,(a1)+
+		move.w	d1,(a1)+
+	ifne	ENC_HATN
+		tst.b	cfHatVis			; (the bay's doors' points)
+		beq.s	.noShip
+		bset	#RC_HAT,d6
+		lea		morphXY+morphNP*4,a2
+		moveq	#ENC_HATN-1,d0
+.h:		move.w	(a2)+,(a1)+
+		dbf		d0,.h
+	endc
+.noShip:
+		move.l	a1,capPtr			; (the torpedoes: the next step)
+		move.b	d6,capComp
+		rts
+
+; the frame on (simCapture): the torpedoes, the rest
+simCapTorps:
+		move.w	encCount,d0
+		bsr		encSlot
+		move.l	a1,a4
+		move.l	capPtr,a1
+		moveq	#0,d6
+		move.b	capComp,d6
+		bsr		simTorps2			; the torpedoes -> d0 how many
+		lsl.w	#RC_N,d0
+		or.w	d0,d6
+		move.b	d6,fs_comp(a4)
+		move.l	a1,d0
+		sub.l	a4,d0
+		sub.w	#fs_vec,d0
+		lsr.w	#1,d0
+		move.w	d0,fs_n(a4)
+		move.w	simEv,d0
+		and.w	#RB_EVENTS,d0
+	ifne	cineFight
+		cmp.w	#CH_APART,cfHat		; (the doors apart)
+		blo.s	.ha
+		bset	#RB_HOPEN,d0
+.ha:
+	endc
+		move.w	d0,fs_ev(a4)
+		cmp.w	#SP_END,simPhase
+		seq		fs_end(a4)
+		beq.s	.fl
+		addq.w	#1,encCount
+		rts
+.fl:	addq.w	#1,encCount			; the last one: write them all out
+		st		encFlush
+		rts
+
+; the glow: 9 units across at its depth, bigger with the thrust -> d0 its
+; radius, d1 the thrust (0..255 each). uses d2
+simGlowRT:
+		move.l	morphSZ,d2
+		lsr.l	#4,d2
+		bne.s	.g
+		move.w	#255,d0
+		bra.s	.t
+.g:		cmp.l	#$ffff,d2
+		bls.s	.g0
+		move.l	#$ffff,d2
+.g0:	move.l	#9*morphF,d0
+		divu	d2,d0
+		move.w	simThrust,d1
+		lsr.w	#1,d1
+		add.w	#256,d1
+		mulu	d1,d0
+		lsr.l	#8,d0
+		cmp.l	#255,d0
+		bls.s	.t
+		move.w	#255,d0
+.t:		move.w	simThrust,d1
+		cmp.w	#255,d1
+		bls.s	.t0
+		move.w	#255,d1
+.t0:	rts
+
+; the torpedoes on the screen: x, y into the vector at a1 (on), their size
+; by the distance and their kind (burning, its engine's first frame, its aim
+; in bits 6-7) into the frame's fs_tat (a4) -> d0 = how many
+simTorps2:
+		movem.l	d2-d7/a2-a4,-(a7)
+		lea		fs_tat(a4),a3
+		lea		morphTorps,a4
+		moveq	#0,d7				; how many
+		moveq	#0,d6				; which
+.t:		tst.w	tp_age(a4)
+		ble.s	.n
+		move.l	tp_z(a4),d5
+		move.l	tp_x(a4),d3
+		move.l	tp_y(a4),d4
+		moveq	#0,d2
+.sh:	cmp.l	#32000,d5
+		blt.s	.s0
+		asr.l	#1,d5
+		asr.l	#1,d3
+		asr.l	#1,d4
+		addq.w	#1,d2
+		bra.s	.sh
+.s0:	tst.l	d5
+		ble.s	.n
+		muls	#morphF,d3
+		divs	d5,d3
+		add.w	#morphVX,d3			; x
+		muls	#morphF,d4
+		divs	d5,d4
+		add.w	#morphVY,d4			; y
+		move.l	#morphTorpR*16*morphF,d0	; the radius
+		lsr.l	d2,d0
+		divu	d5,d0				; px
+		cmp.w	#127,d0
+		bls.s	.r0
+		moveq	#127,d0
+.r0:	move.w	d3,(a1)+
+		move.w	d4,(a1)+
+		move.w	d6,d1				; its flare's way: from its aim through
+		lsl.w	#2,d1				; the ball, * 256 by the bigger of the two
+		lea		morphTorpAim,a2
+		sub.w	(a2,d1.w),d3
+		sub.w	2(a2,d1.w),d4
+		move.w	d3,d1
+		bpl.s	.a0
+		neg.w	d1
+.a0:	move.w	d4,d2
+		bpl.s	.a1
+		neg.w	d2
+.a1:	cmp.w	d2,d1
+		bhs.s	.a2
+		move.w	d2,d1
+.a2:	tst.w	d1
+		beq.s	.a3
+		ext.l	d3
+		asl.l	#8,d3
+		divs	d1,d3
+		ext.l	d4
+		asl.l	#8,d4
+		divs	d1,d4
+		bra.s	.a4
+.a3:	moveq	#0,d3
+		moveq	#0,d4
+.a4:	move.w	d3,(a1)+
+		move.w	d4,(a1)+
+		move.b	d0,(a3)+
+		move.w	d6,d1				; its kind
+		lsl.w	#6,d1
+		move.w	tp_burn(a4),d2
+		beq.s	.f9
+		bset	#TF_BURN,d1
+		cmp.w	#1,d2
+		bne.s	.f9
+		bset	#TF_FLASH,d1
+.f9:	move.b	d1,(a3)+
+		addq.w	#1,d7
+.n:		lea		tp_len(a4),a4
+		addq.w	#1,d6
+		cmp.w	#morphTorpN,d6
+		blo.s	.t
+		move.w	d7,d0
+		movem.l	(a7)+,d2-d7/a2-a4
+		rts
+
+; d0 = frames after the oldest (0..8) -> a1 = that frame (the ring). uses d0
+encSlot:
+		add.w	encHead,d0
+		cmp.w	#ENC_RING,d0
+		blo.s	.r
+		sub.w	#ENC_RING,d0
+.r:		lsl.w	#2,d0
+		move.l	.t(pc,d0.w),a1
+		rts
+.t:
+ESI		set		0
+		rept	ENC_RING
+		dc.l	encRing+ESI*fs_len
+ESI		set		ESI+1
+		endr
+
+;---------------------------------------------
+; (switches.i recV2) a step of the encoding: the oldest frame of the ring
+; written - on in the segment it is in, or as it is (a new composition), or
+; the start of a new segment: the longest of 8, 4, 2 frames whose frames
+; between all come out within ENC_TOL of the sim's (the checks a few values
+; a step), else 1. -> d0 = 0: again (a step more for this frame)
+simEncStep:
+		tst.w	encK				; checking a segment?
+		bne		.chk
+		move.w	encCount,d0
+		beq		.done
+		tst.b	encFlush
+		bne.s	.go
+		cmp.w	#ENC_RING,d0
+		blo		.done				; (the ring not full yet)
+.go:	moveq	#0,d0
+		bsr.s	encSlot
+		move.l	a1,a4				; the oldest frame
+		tst.w	encR				; in a segment still: on
+		beq.s	.new
+		subq.w	#1,encR
+		moveq	#0,d5
+		bra		encEmit
+.new:	move.b	fs_comp(a4),d0		; a new composition: as it is
+		cmp.b	encComp,d0
+		beq.s	.same
+		moveq	#3,d5
+		bra		encEmit
+.same:	lea		fs_vec(a4),a1		; just as shown: a hold
+		lea		encB,a2
+		move.w	fs_n(a4),d6
+		subq.w	#1,d6
+.h:		cmpm.w	(a1)+,(a2)+
+		bne.s	.mv
+		dbf		d6,.h
+		moveq	#0,d5
+		bra		encEmit
+.mv:	moveq	#3,d0				; the longest first
+.k:		move.w	d0,encK
+		bsr		encSetup
+		bne.s	.kok
+		move.w	encK,d0
+		subq.w	#1,d0
+		bne.s	.k
+		clr.w	encK				; (k 0: one frame)
+		moveq	#0,d0
+		bra		encSeg
+.kok:	clr.w	encI
+		moveq	#0,d0				; (again)
+		rts
+.chk:	bsr		encCheck			; d0: -1 failed, 0 more to check, 1 good
+		tst.w	d0
+		beq.s	.again
+		bpl.s	.good
+		move.w	encK,d0				; failed: shorter
+.k2:	subq.w	#1,d0
+		beq.s	.k0
+		move.w	d0,encK
+		bsr		encSetup
+		bne.s	.kok
+		move.w	encK,d0
+		bra.s	.k2
+.k0:	clr.w	encK
+		moveq	#0,d0
+		bra.s	.seg
+.good:	move.w	encK,d0
+		clr.w	encK
+.seg:	moveq	#0,d5
+		bra		encSeg
+.again:	moveq	#0,d0
+		rts
+.done:	moveq	#1,d0
+		rts
+
+; encK = k: are the frames of a segment of 2^k there (the ring), all of the
+; same composition? -> ne: yes (encS, encSl set). uses d0-d2/a1
+encSetup:
+		moveq	#1,d2
+		move.w	encK,d0
+		lsl.w	d0,d2				; s
+		cmp.w	encCount,d2
+		bhi.s	.no
+		move.w	d2,encS
+		moveq	#0,d0
+		bsr.s	encSlot
+		move.b	fs_comp(a1),d1
+		lea		encSl,a2
+		moveq	#0,d0
+.f:		movem.l	d0/d1,-(a7)
+		bsr.s	encSlot
+		movem.l	(a7)+,d0/d1
+		cmp.b	fs_comp(a1),d1
+		bne.s	.no
+		tst.b	fs_end(a1)			; (the last frame: no segment over it)
+		beq.s	.f0
+		addq.w	#1,d0
+		cmp.w	d2,d0
+		bne.s	.no
+		subq.w	#1,d0
+.f0:	lea		fs_vec(a1),a1
+		move.l	a1,(a2)+
+		addq.w	#1,d0
+		cmp.w	d2,d0
+		blo.s	.f
+		moveq	#1,d0
+		rts
+.no:	moveq	#0,d0
+		rts
+
+; a few values of the segment (encK, encS, encSl) from encI on: the frames
+; between its ends as the play will show them, against the sim's -> d0 = -1
+; one too far off, 0 more to check, 1 all of them good
+encCheck:
+		movem.l	d2-d7/a2-a4,-(a7)
+		lea		encSl,a3
+		move.w	encS,d7
+		subq.w	#1,d7				; (the frames between: s - 1)
+		move.w	d7,d0
+		lsl.w	#2,d0
+		move.l	(a3,d0.w),a4		; the segment's last frame
+		move.w	encK,d2
+		moveq	#0,d0				; the first frame's values
+		bsr		encSlot
+		move.w	fs_n(a1),d6			; (the values)
+		move.w	encI,d5
+		moveq	#0,d4				; (checks this step)
+.v:		cmp.w	d6,d5
+		bhs.s	.all
+		cmp.w	#ENC_CHK,d4
+		bhs.s	.more
+		move.w	d5,d0
+		add.w	d0,d0
+		lea		encB,a2
+		move.w	(a2,d0.w),d1		; from
+		move.w	(a4,d0.w),d3		; to
+		sub.w	d1,d3				; the change, a frame of it (16.16)
+		swap	d3
+		clr.w	d3
+		asr.l	d2,d3
+		swap	d1
+		move.w	#$8000,d1			; (rounded)
+		move.w	d7,-(a7)
+		subq.w	#1,d7
+		bmi.s	.vn
+		move.l	a3,a2
+.j:		add.l	d3,d1
+		move.l	d1,a1
+		swap	d1
+		move.l	(a2)+,a0
+		sub.w	(a0,d0.w),d1
+		addq.w	#ENC_TOL,d1
+		cmp.w	#2*ENC_TOL,d1
+		bhi.s	.bad
+		move.l	a1,d1
+		addq.w	#1,d4
+		dbf		d7,.j
+.vn:	move.w	(a7)+,d7
+		addq.w	#1,d5
+		bra.s	.v
+.bad:	addq.l	#2,a7
+		moveq	#-1,d0
+		bra.s	.out
+.more:	move.w	d5,encI
+		moveq	#0,d0
+		bra.s	.out
+.all:	moveq	#1,d0
+.out:	movem.l	(a7)+,d2-d7/a2-a4
+		rts
+
+; d0 = k: a segment of 2^k frames from the oldest one on (its change to its
+; last frame: bytes if they fit, else words)
+encSeg:
+		move.w	d0,encKs
+		moveq	#1,d1
+		lsl.w	d0,d1
+		subq.w	#1,d1
+		move.w	d1,encR				; (frames after this one)
+		move.w	d1,d0
+		bsr		encSlot
+		move.l	a1,encTo
+		moveq	#0,d0
+		bsr		encSlot
+		move.l	a1,a4
+		lea		fs_vec(a1),a1		; bytes or words?
+		move.l	encTo,a2
+		lea		fs_vec(a2),a2
+		lea		encB,a3
+		move.w	fs_n(a4),d6
+		subq.w	#1,d6
+		moveq	#1,d5
+.b:		move.w	(a2)+,d0
+		sub.w	(a3)+,d0
+		cmp.w	#127,d0
+		bgt.s	.w
+		cmp.w	#-128,d0
+		blt.s	.w
+		dbf		d6,.b
+		bra.s	encEmit
+.w:		moveq	#2,d5
+; a4 = the oldest frame, d5 = the mode (0 on/hold, 1 bytes, 2 words, 3 as
+; it is; 1/2: encKs, encTo): into morphRec, the ring on
+encEmit:
+		move.l	morphSimW,a0
+		cmp.l	#morphRecEnd-256,a0	; (full: the end here)
+		blo.s	.room
+		move.w	#1<<RB_END,(a0)+
+		bra		.last
+.room:	move.l	a0,a3				; (the flags: at the end)
+		addq.l	#2,a0
+		move.w	fs_ev(a4),d7
+		or.w	d5,d7
+		tst.b	fs_end(a4)
+		beq.s	.e0
+		bset	#RB_END,d7
+.e0:	tst.b	fs_glow(a4)
+		beq.s	.e1
+		bset	#RB_GLOW,d7
+.e1:	cmp.w	#3,d5				; a new composition
+		bne.s	.e2
+		move.b	fs_comp(a4),d0
+		move.b	d0,encComp
+		move.b	d0,(a0)+
+		clr.b	(a0)+
+		st		encMaskF			; (the faces, the torpedoes' kinds: anew)
+		st		encTatF
+.e2:	btst	#RC_VIS,fs_comp(a4)	; the faces seen
+		beq.s	.e3
+		move.w	fs_mask(a4),d0
+		tst.b	encMaskF
+		bne.s	.em
+		cmp.w	encMask,d0
+		beq.s	.e3
+.em:	sf		encMaskF
+		move.w	d0,encMask
+		move.w	d0,(a0)+
+		bset	#RB_MASK,d7
+.e3:	move.w	fs_n(a4),d6			; the vector
+		subq.w	#1,d6
+		lea		encB,a2
+		tst.w	d5
+		beq.s	.v9
+		cmp.w	#3,d5
+		bne.s	.vs
+		lea		fs_vec(a4),a1		; as it is
+.va:	move.w	(a1),(a0)+
+		move.w	(a1)+,(a2)+
+		dbf		d6,.va
+		clr.w	encR
+		bra.s	.v9
+.vs:	move.w	encKs,d0			; a segment: to its last frame
+		lsl.w	#RB_K,d0
+		or.w	d0,d7
+		move.l	encTo,a1
+		lea		fs_vec(a1),a1
+		cmp.w	#2,d5
+		beq.s	.vw
+.vb:	move.w	(a1)+,d0
+		move.w	d0,d1
+		sub.w	(a2),d0
+		move.w	d1,(a2)+
+		move.b	d0,(a0)+
+		dbf		d6,.vb
+		move.w	a0,d0				; (padded to even)
+		btst	#0,d0
+		beq.s	.v9
+		clr.b	(a0)+
+		bra.s	.v9
+.vw:	move.w	(a1)+,d0
+		move.w	d0,d1
+		sub.w	(a2),d0
+		move.w	d1,(a2)+
+		move.w	d0,(a0)+
+		dbf		d6,.vw
+.v9:	moveq	#0,d0				; the torpedoes' sizes, kinds
+		move.b	fs_comp(a4),d0
+		lsr.b	#RC_N,d0
+		add.w	d0,d0
+		subq.w	#1,d0
+		bmi.s	.t9
+		lea		fs_tat(a4),a1
+		lea		encTat,a2
+		tst.b	encTatF
+		bne.s	.tw
+		move.w	d0,d1
+.tc:	cmpm.b	(a1)+,(a2)+
+		bne.s	.tw0
+		dbf		d1,.tc
+		bra.s	.t9
+.tw0:	lea		fs_tat(a4),a1
+		lea		encTat,a2
+.tw:	sf		encTatF
+		bset	#RB_TATTR,d7
+.tw1:	move.b	(a1),(a0)+
+		move.b	(a1)+,(a2)+
+		dbf		d0,.tw1
+.t9:	move.w	d7,(a3)
+		addq.w	#1,encHead			; the ring on
+		cmp.w	#ENC_RING,encHead
+		blo.s	.h0
+		clr.w	encHead
+.h0:	subq.w	#1,encCount
+.last:	move.l	a0,morphSimW
+		addq.w	#1,morphSimN
+		btst	#RB_END,d7
+		beq.s	.o
+		st		morphSimEnd
+		moveq	#1,d0
+		rts
+.o:		moveq	#1,d0				; (the next frame: a new one first -
+		tst.b	encFlush			; or, the last one taken, the next of
+		beq.s	.o1					; the ring)
+		moveq	#0,d0
+.o1:	rts
+
+encHead:	dc.w	0			; (the encoding) the oldest frame in the ring
+encCount:	dc.w	0			; ... frames in it
+encR:		dc.w	0			; ... frames of the segment still to go
+encK:		dc.w	0			; ... the segment checked: k (0: none)
+encI:		dc.w	0			; ... the value checked next
+encS:		dc.w	0			; ... its frames
+encKs:		dc.w	0			; ... (encSeg) the one written
+encTo:		dc.l	0			; ... its last frame
+encMask:	dc.w	0			; ... the faces as written last
+encComp:	dc.b	-1			; ... the composition
+encFlush:	dc.b	0			; ... the last frame taken: all out
+encMaskF:	dc.b	-1			; ... the faces to be written anew
+encTatF:	dc.b	-1			; ... the torpedoes' kinds too
+encTat:		ds.b	2*morphTorpN	; ... as written last
+			even
+encSl:		ds.l	8			; ... (encSetup) a segment's frames' values
+capPtr:		dc.l	0			; (simCapture -> simCapTorps) the vector so far
+capComp:	dc.b	0			; ... the composition
+			even
+	ifne	cineFight
+		include	"cine.i"		; (the end fight as a film)
+	endc
+		section "code",data,chip
+	else
 ;---------------------------------------------
 ; the frame into morphRec (see morphPlayFrame for its form)
 simEncode:
@@ -4387,6 +6348,9 @@ simEncode:
 		dbf		d6,.pn0
 .p8:	sf		simPrevHid
 .p9:	; the torpedoes: onto the screen
+	ifne	escortMux*(1-launchSeq)
+		bsr		simMxRange			; (their glows clear of the afterburner's)
+	endc
 		bsr		simTorps
 		lsl.w	#8,d0
 		lsl.w	#3,d0
@@ -4466,6 +6430,37 @@ simTorps:
 		bne.s	.f1
 		bset	#TF_FLASH,d2
 .f1:
+	ifne	escortMux*(1-launchSeq)
+		movem.l	d0/d5/a1,-(a7)		; its glow (as morphMxTGeo): clear of the
+		move.l	d7,d5				; afterburner's glow in the same sprite
+		swap	d5					; (its place in the frame's list), else
+		lsl.w	#2,d5				; left out
+		lea		simMxR,a1
+		add.w	d5,a1
+		subq.w	#1,d0
+		btst	#TF_FLASH,d2
+		beq.s	.mx0
+		addq.w	#4,d0
+.mx0:	cmp.w	#MSPR_RMAX,d0
+		ble.s	.mx1
+		moveq	#MSPR_RMAX,d0
+.mx1:	cmp.w	#1,d0
+		bge.s	.mx2
+		moveq	#1,d0
+.mx2:	move.w	d4,d5				; (above it)
+		add.w	d0,d5
+		addq.w	#2+morphMxGap,d5
+		cmp.w	(a1),d5
+		ble.s	.mx9
+		move.w	d4,d5				; (below it)
+		sub.w	d0,d5
+		subq.w	#2+morphMxGap,d5
+		cmp.w	2(a1),d5
+		bge.s	.mx9
+		bset	#TF_NOSPR,d2
+		addq.w	#1,simMxSkip
+.mx9:	movem.l	(a7)+,d0/d5/a1
+	endc
 		btst	#0,d1				; (every other frame: it flickers)
 		bne.s	.f9
 		; the flare: 2r + 0..3 long, from its aim through the ball
@@ -4510,6 +6505,8 @@ simTorps:
 		movem.l	(a7)+,d7/a3
 		rts
 
+	endc
+
 		section "morphchip",bss_c
 morphSprBuf:	ds.b	2*4*MSPR_LEN	; (morphSprFrame) two frames' sprites 0..3
 
@@ -4517,10 +6514,36 @@ morphSprBuf:	ds.b	2*4*MSPR_LEN	; (morphSprFrame) two frames' sprites 0..3
 		include	"abflame.i"
 
 		section "morphbss",bss
+	ifeq	escortMux
 morphSprImg:	ds.l	3+5+7+9+11+13+15	; (morphSprMake) the glows' rows
+	endc
+	ifne	showdownLean
+morphLean::		ds.b	1		; the ship gone: the torpedoes alone (morphLnFrame)
+morphRecFree::	ds.b	1		; ... all there: sdOvl free
+morphLnN:		ds.w	1		; ... how many (the record's last frame)
+morphLnS:		ds.w	1		; ... the frame they set off
+morphLnV:		ds.w	1		; ... the engine then: volume (0: not heard),
+morphLnP:		ds.w	1		; period
+morphLnT:		ds.w	6*morphTorpN	; ... each: from (x, y), to, its hit's
+									; frame, its blob (R + 1)
+	endc
 
+	ifne	recV2
+encRing:	ds.b	ENC_RING*fs_len	; (the encoding) the frames ahead
+encB:		ds.w	ENC_NMAX	; ... the values as the play shows them
+rpP:		ds.l	ENC_NMAX	; (the play) the values now (16.16)
+rpV:		ds.l	ENC_NMAX	; ... a frame's step in the segment
+	endc
 morphRcp:	ds.w	morphRcpN
 ; the flight, frame by frame (the sim writes, the play reads)
+	ifeq	escortMux
 morphRecSize	= 64*1024
+	else
+	ifne	recV2
+morphRecSize	= 62*1024-16*spr8-RECV2COST	; (recV2: its code and tables -
+	else							; the total must not grow)
+morphRecSize	= 62*1024-16*spr8	; (escortMux: 58.1 KB of it written - the
+	endc					; total memory must not grow: spr8's code)
+	endc
 morphRec:	ds.b	morphRecSize
 morphRecEnd:

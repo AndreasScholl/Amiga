@@ -49,7 +49,7 @@
 				"command": "${config:amiga-assembly.binDir}/vlink",
 				"includes": "*.{s,S,asm,ASM}",
 				"excludes": "",
-				"exefilename": "../uae/dh0/d",
+				"exefilename": "../uae/d_debug",
 				"entrypoint": "main.s",
 				"args": [
 					"-bamigahunk",
@@ -59,6 +59,35 @@
 			"problemMatcher": [],
 			"label": "amigaassembly: build debug",
 			"group": "build"
+		},
+		{
+			"type": "process",
+			"label": "F5 strip",
+			"command": "${env:USERPROFILE}/.vscode/extensions/prb28.amiga-assembly-1.8.13/resources/bin/win32/vlink.exe",
+			"args": [
+				"-bamigahunk",
+				"-Bstatic",
+				"-s",
+				"-o",
+				"../uae/dh0/d",
+				"main.o",
+				"scroller.o",
+				"music.o",
+				"asteroids.o"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/build"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "F5 build",
+			"dependsOrder": "sequence",
+			"dependsOn": [
+				"amigaassembly: build debug",
+				"F5 strip"
+			],
+			"problemMatcher": []
 		}
 	]
 }
